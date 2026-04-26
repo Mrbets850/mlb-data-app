@@ -1,2 +1,0 @@
-# mlb-data-app
-Mlbprops 

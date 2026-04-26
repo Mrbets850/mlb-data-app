@@ -29,132 +29,286 @@ def raw_github_url(path: str) -> str:
 
 CSV_URLS = {label: raw_github_url(name) for label, name in CSV_FILES.items()}
 
-st.set_page_config(page_title="MLB Matchup Board", layout="centered")
+# ---------------------------------------------------------------------------
+# Page config + global styles
+# ---------------------------------------------------------------------------
+st.set_page_config(
+    page_title="MrBets850 — MLB Matchup Board",
+    page_icon="⚾",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 st.markdown("""
 <style>
+/* ---------- base ---------- */
 .block-container {
-    padding-top: 1rem;
+    padding-top: 0.6rem;
     padding-bottom: 3rem;
-    max-width: 860px;
+    max-width: 1180px;
 }
 html, body, [class*="css"] {
-    font-family: Arial, Helvetica, sans-serif;
-}
-.main-title {
-    font-size: 2.1rem;
-    font-weight: 800;
-    margin-bottom: 0.2rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Arial, sans-serif;
     color: #0f172a;
 }
-.sub-title {
-    color: #475569;
-    margin-bottom: 1rem;
-    font-size: 1.05rem;
-}
-.top-card, .section-card {
-    background: linear-gradient(180deg, #08152f 0%, #0a1d44 100%);
-    border: 1px solid #18305f;
-    border-radius: 20px;
-    padding: 16px;
-    margin-bottom: 14px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.14);
-}
-.section-label {
-    color: #dbeafe;
-    font-size: 0.88rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 8px;
-}
-.big-matchup {
-    font-size: 2rem;
-    font-weight: 800;
-    color: #ffffff;
-    margin-bottom: 6px;
-}
-.mid-text {
-    color: #dbeafe;
-    font-size: 1rem;
-    line-height: 1.45;
-}
-.pill-row {
+
+/* ---------- brand bar ---------- */
+.brand-bar {
     display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 12px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 22px;
+    border-radius: 18px;
+    background: linear-gradient(110deg, #0b1437 0%, #0a2d6e 55%, #0b4ea2 100%);
+    box-shadow: 0 12px 28px rgba(7,18,55,0.22);
+    margin-bottom: 16px;
+    color: #ffffff;
 }
-.pill-good {
-    background: #123d2b;
-    color: #dcfce7;
-    border: 1px solid #1f7a52;
-    border-radius: 999px;
-    padding: 8px 12px;
-    font-size: 0.95rem;
-    font-weight: 800;
+.brand-name {
+    font-size: 1.55rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    color: #ffffff;
+    line-height: 1.05;
 }
-.pill-bad {
-    background: #4c1d1d;
-    color: #fee2e2;
-    border: 1px solid #b91c1c;
-    border-radius: 999px;
-    padding: 8px 12px;
-    font-size: 0.95rem;
-    font-weight: 800;
-}
-.pill-neutral {
-    background: #4b3a12;
-    color: #fef3c7;
-    border: 1px solid #a16207;
-    border-radius: 999px;
-    padding: 8px 12px;
-    font-size: 0.95rem;
-    font-weight: 800;
-}
-.metric-box {
-    background: #091325;
-    border: 1px solid #1e3a5f;
-    border-radius: 14px;
-    padding: 12px;
-    margin-bottom: 10px;
-}
-.metric-k {
-    color: #bfdbfe;
-    font-size: 0.84rem;
-    margin-bottom: 3px;
+.brand-tag {
+    color: #c7dafe;
+    font-size: 0.78rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
     font-weight: 700;
 }
-.metric-v {
-    color: #ffffff;
-    font-size: 1.08rem;
-    font-weight: 800;
-    line-height: 1.35;
+.brand-meta {
+    text-align: right;
+    color: #dbeafe;
+    font-size: 0.92rem;
+    font-weight: 700;
 }
+.brand-meta .big { font-size: 1.15rem; color: #ffffff; font-weight: 800; }
+
+/* ---------- section card ---------- */
+.section-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 18px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+    box-shadow: 0 6px 18px rgba(15,23,42,0.05);
+}
+/* Hide Streamlit's empty wrapper divs that ship with empty markdown blocks */
+.element-container:has(> .stMarkdown:only-child > [data-testid="stMarkdownContainer"]:empty) { display: none; }
+.stMarkdown div[data-testid="stMarkdownContainer"] > div:empty { display: none; }
+.section-card.dark {
+    background: linear-gradient(180deg, #0b1437 0%, #0a2350 100%);
+    border: 1px solid #1e3a8a;
+    color: #ffffff;
+}
+.section-card.dark .section-label,
+.section-card.dark .metric-k { color: #c7dafe; }
+.section-card.dark .metric-v { color: #ffffff; }
+
+.section-label {
+    color: #64748b;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 10px;
+    font-weight: 800;
+}
+.section-title {
+    color: #0f172a;
+    font-size: 1.25rem;
+    font-weight: 900;
+    margin-bottom: 12px;
+    letter-spacing: -0.01em;
+}
+
+/* ---------- game card ---------- */
+.game-card {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 14px;
+    align-items: center;
+}
+.matchup {
+    font-size: 2.4rem;
+    font-weight: 900;
+    color: #ffffff;
+    letter-spacing: 0.01em;
+    line-height: 1.1;
+}
+.matchup .vs { color: #94b8ff; font-weight: 700; padding: 0 10px; }
+.game-meta {
+    color: #c7dafe;
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-top: 4px;
+}
+.kpi-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+}
+.kpi {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 12px;
+    padding: 8px 12px;
+    color: #ffffff;
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+.kpi .k {
+    color: #c7dafe;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 2px;
+    font-weight: 700;
+}
+
+/* ---------- tier pills (Elite / Strong / OK / Avoid) ---------- */
+.tier {
+    display: inline-block;
+    padding: 4px 11px;
+    border-radius: 999px;
+    font-weight: 800;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+}
+.tier-elite   { background:#dcfce7; color:#14532d; border-color:#86efac; }
+.tier-strong  { background:#d1fae5; color:#065f46; border-color:#6ee7b7; }
+.tier-ok      { background:#fef3c7; color:#78350f; border-color:#fcd34d; }
+.tier-avoid   { background:#fee2e2; color:#7f1d1d; border-color:#fca5a5; }
+.tier-neutral { background:#e2e8f0; color:#334155; border-color:#cbd5e1; }
+
+/* ---------- hot batter tile ---------- */
+.batter-tile {
+    border-radius: 14px;
+    padding: 14px 14px 12px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    height: 100%;
+    box-shadow: 0 4px 10px rgba(15,23,42,0.04);
+}
+.batter-tile.elite  { border-left: 6px solid #16a34a; background: #f0fdf4; }
+.batter-tile.strong { border-left: 6px solid #22c55e; background: #f7fee7; }
+.batter-tile.ok     { border-left: 6px solid #f59e0b; background: #fffbeb; }
+.batter-tile.avoid  { border-left: 6px solid #ef4444; background: #fef2f2; }
+
+.batter-tile .rank {
+    color: #64748b;
+    font-size: 0.7rem;
+    letter-spacing: 0.18em;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+.batter-tile .name {
+    font-size: 1.15rem;
+    font-weight: 900;
+    color: #0f172a;
+    margin: 2px 0 2px;
+    line-height: 1.15;
+}
+.batter-tile .vs {
+    color: #475569;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.batter-tile .score {
+    font-size: 1.7rem;
+    font-weight: 900;
+    color: #0f172a;
+    letter-spacing: -0.02em;
+    margin: 4px 0 6px;
+}
+.batter-tile .stats {
+    color: #334155;
+    font-size: 0.8rem;
+    font-weight: 700;
+    line-height: 1.5;
+}
+.batter-tile .angle {
+    margin-top: 8px;
+    background: #ffffff;
+    border: 1px dashed #cbd5e1;
+    border-radius: 10px;
+    padding: 7px 10px;
+    color: #0f172a;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+/* ---------- pitcher tile ---------- */
+.pitcher-tile {
+    border-radius: 14px;
+    padding: 14px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    box-shadow: 0 4px 10px rgba(15,23,42,0.04);
+}
+.pitcher-tile.vuln-elite { border-left: 6px solid #ef4444; background: #fef2f2; }
+.pitcher-tile.vuln-strong{ border-left: 6px solid #f59e0b; background: #fffbeb; }
+.pitcher-tile.vuln-ok    { border-left: 6px solid #94a3b8; background: #f8fafc; }
+.pitcher-tile.vuln-avoid { border-left: 6px solid #16a34a; background: #f0fdf4; }
+.pitcher-tile h4 {
+    margin: 0 0 4px; font-size: 1.05rem; font-weight: 900; color: #0f172a;
+}
+.pitcher-tile .meta { color:#475569; font-size:0.85rem; font-weight:600; }
+.pitcher-tile .grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 10px; margin-top: 10px;
+}
+.pitcher-tile .k { color:#64748b; font-size:0.72rem; letter-spacing:0.08em; text-transform:uppercase; font-weight:700; }
+.pitcher-tile .v { color:#0f172a; font-size:0.95rem; font-weight:800; }
+
+/* ---------- inputs ---------- */
 div[data-baseweb="select"] > div,
 div[data-baseweb="base-input"] > div {
-    border-radius: 14px !important;
+    border-radius: 12px !important;
     border: 1px solid #cbd5e1 !important;
     background: #ffffff !important;
 }
-.stDateInput label, .stSelectbox label {
+.stDateInput label, .stSelectbox label, .stRadio label {
     font-weight: 800 !important;
     color: #0f172a !important;
 }
-[data-testid="stDataFrame"] {
-    border-radius: 14px;
-    overflow: hidden;
+.stButton > button {
+    border-radius: 12px;
+    font-weight: 800;
+    border: 1px solid #1d4ed8;
+    background: #1d4ed8;
+    color: #ffffff;
+    padding: 8px 16px;
 }
-thead tr th {
-    font-size: 0.95rem !important;
-    font-weight: 800 !important;
-}
-tbody tr td {
-    font-size: 1rem !important;
-    font-weight: 700 !important;
+.stButton > button:hover { background: #1e40af; border-color: #1e40af; color:#ffffff; }
+
+/* ---------- dataframe polish ---------- */
+[data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; }
+thead tr th { font-size: 0.92rem !important; font-weight: 800 !important; }
+tbody tr td { font-size: 0.95rem !important; font-weight: 700 !important; }
+
+/* ---------- footer ---------- */
+.footer {
+    margin-top: 18px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 0.82rem;
+    text-align: center;
+    font-weight: 600;
 }
 </style>
 """, unsafe_allow_html=True)
 
+# ---------------------------------------------------------------------------
+# Reference data
+# ---------------------------------------------------------------------------
 TEAM_INFO = {
     "Arizona Diamondbacks": {"abbr": "ARI", "lat": 33.4484, "lon": -112.0740},
     "Atlanta Braves": {"abbr": "ATL", "lat": 33.7490, "lon": -84.3880},
@@ -203,6 +357,62 @@ DEFAULT_PARK_FACTORS = {
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
+# ---------------------------------------------------------------------------
+# Tier system (single source of truth — used in tiles, tables, and props)
+# ---------------------------------------------------------------------------
+def score_tier(score):
+    """Return (tier_key, label, css_class) for any matchup score."""
+    try:
+        v = float(score)
+    except Exception:
+        return ("neutral", "N/A", "tier-neutral")
+    if v >= 90:  return ("elite",  "Elite",  "tier-elite")
+    if v >= 78:  return ("strong", "Strong", "tier-strong")
+    if v >= 65:  return ("ok",     "OK",     "tier-ok")
+    return ("avoid", "Avoid", "tier-avoid")
+
+def hr_tier(score, barrel, hr):
+    """HR-likelihood tier using score + barrel% + HR count."""
+    try:
+        s = float(score); b = float(barrel); h = float(hr)
+    except Exception:
+        return ("neutral", "N/A")
+    if s >= 88 and b >= 12:                   return ("elite",  "Elite HR")
+    if s >= 78 and (b >= 10 or h >= 8):       return ("strong", "Strong HR")
+    if s >= 65:                               return ("ok",     "OK HR")
+    return ("avoid", "Cold")
+
+def hit_tier(score, hardhit):
+    try:
+        s = float(score); h = float(hardhit)
+    except Exception:
+        return ("neutral", "N/A")
+    if s >= 85 and h >= 45: return ("elite",  "Elite Hit")
+    if s >= 75 and h >= 40: return ("strong", "Strong Hit")
+    if s >= 62:             return ("ok",     "OK Hit")
+    return ("avoid", "Avoid")
+
+def suggested_angle(score, barrel, hr, hardhit):
+    """Quick prop angle for clients."""
+    try:
+        s = float(score); b = float(barrel); h = float(hr); hh = float(hardhit)
+    except Exception:
+        return "—"
+    if s >= 90 and b >= 12 and h >= 8:
+        return "🎯 HR + Over 1.5 TB"
+    if s >= 85 and b >= 10:
+        return "💣 HR / Over 1.5 TB"
+    if s >= 78 and hh >= 42:
+        return "✅ Over 1.5 Total Bases"
+    if s >= 70:
+        return "👀 Hit + RBI lean"
+    if s >= 60:
+        return "Pass / lineup-only"
+    return "❌ Fade"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 def clean_name(name):
     if pd.isna(name):
         return ""
@@ -326,8 +536,6 @@ def load_remote_csv(url):
     if df.empty:
         return df
 
-    # Baseball Savant exports name as 'last_name, first_name' --- flip it so
-    # downstream name matching against the MLB StatsAPI works correctly.
     name_col = None
     for c in df.columns:
         if str(c).strip().lower() in ("last_name, first_name", "player_name", "name", "player"):
@@ -341,7 +549,6 @@ def load_remote_csv(url):
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_all_csvs():
-    """Load every CSV defined in CSV_URLS and return a dict of label -> DataFrame."""
     return {label: load_remote_csv(url) for label, url in CSV_URLS.items()}
 
 @st.cache_data(ttl=1800)
@@ -364,8 +571,9 @@ def get_schedule(selected_date):
 
             rows.append({
                 "game_pk": game.get("gamePk"),
-                "label": f'{away_info["abbr"]} @ {home_info["abbr"]} - {game_time_ct.strftime("%I:%M %p CT")}',
-                "game_time_ct": game_time_ct.strftime("%Y-%m-%d %I:%M %p CT"),
+                "label": f'{away_info["abbr"]} @ {home_info["abbr"]} · {game_time_ct.strftime("%-I:%M %p CT")}',
+                "short_label": f'{away_info["abbr"]} @ {home_info["abbr"]}',
+                "game_time_ct": game_time_ct.strftime("%a %b %-d · %-I:%M %p CT"),
                 "game_time_utc": game_time_utc,
                 "status": game.get("status", {}).get("detailedState"),
                 "away_team": away_name,
@@ -385,18 +593,18 @@ def get_schedule(selected_date):
 def get_weather(lat, lon, game_time_utc):
     if lat is None or lon is None or not game_time_utc:
         return {"temp_f": None, "wind_mph": None, "rain_pct": None}
-
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
-        "latitude": lat,
-        "longitude": lon,
+        "latitude": lat, "longitude": lon,
         "hourly": "temperature_2m,wind_speed_10m,precipitation_probability",
-        "forecast_days": 7,
-        "timezone": "UTC"
+        "forecast_days": 7, "timezone": "UTC"
     }
-    r = requests.get(url, params=params, headers=HEADERS, timeout=30)
-    r.raise_for_status()
-    data = r.json()
+    try:
+        r = requests.get(url, params=params, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return {"temp_f": None, "wind_mph": None, "rain_pct": None}
 
     hourly = pd.DataFrame(data.get("hourly", {}))
     if hourly.empty or "time" not in hourly.columns:
@@ -408,7 +616,6 @@ def get_weather(lat, lon, game_time_utc):
     row = hourly.loc[idx]
     temp_c = row.get("temperature_2m")
     temp_f = None if pd.isna(temp_c) else round((temp_c * 9/5) + 32, 1)
-
     return {
         "temp_f": temp_f,
         "wind_mph": row.get("wind_speed_10m"),
@@ -513,19 +720,14 @@ def find_pitcher_row(df, pitcher_name):
     return None
 
 def handedness_label(bat_side, pitch_hand):
-    b = str(bat_side).upper()
-    p = str(pitch_hand).upper()
-    if b == "S" and p:
-        return f"SH vs {p}HP"
-    if b and p:
-        return f"{b}HB vs {p}HP"
+    b = str(bat_side).upper(); p = str(pitch_hand).upper()
+    if b == "S" and p: return f"SH vs {p}HP"
+    if b and p:        return f"{b}HB vs {p}HP"
     return "Unknown"
 
 def platoon_value(bat_side, pitch_hand):
-    b = str(bat_side).upper()
-    p = str(pitch_hand).upper()
-    if b == "S" and p in ["L", "R"]:
-        return 1.0
+    b = str(bat_side).upper(); p = str(pitch_hand).upper()
+    if b == "S" and p in ["L", "R"]: return 1.0
     if b in ["L", "R"] and p in ["L", "R"]:
         return 0.8 if b != p else -0.35
     return 0.0
@@ -568,12 +770,34 @@ def matchup_score(batter_row, pitcher_row, lineup_spot, weather, park_factor, ba
     )
     return round(score, 2)
 
+def pitcher_vulnerability(pitcher_row):
+    """Score 0-100: higher = more vulnerable (good for hitters)."""
+    if pitcher_row is None:
+        return (60, "ok", "OK")
+    p_xslg = safe_float(pitcher_row.get("xSLG"), 0.420)
+    p_barrel = safe_float(pitcher_row.get("Barrel%"), 8.0)
+    p_hardhit = safe_float(pitcher_row.get("HardHit%"), 38.0)
+    p_k = safe_float(pitcher_row.get("K%"), 22.0)
+    p_hr = safe_float(pitcher_row.get("HR"), 0)
+    score = (
+        (p_xslg - 0.380) * 120
+        + (p_barrel - 7.0) * 3.0
+        + (p_hardhit - 35.0) * 0.6
+        - (p_k - 22.0) * 0.8
+        + p_hr * 0.4
+        + 60
+    )
+    score = max(0, min(100, score))
+    if score >= 78:  return (round(score,1), "elite",  "Highly Vulnerable")
+    if score >= 65:  return (round(score,1), "strong", "Exploitable")
+    if score >= 50:  return (round(score,1), "ok",     "Average")
+    return (round(score,1), "avoid", "Tough")
+
 def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, park_factor):
     empty_cols = [
-        "Spot", "Player", "Pos", "Bat", "Split", "Edge",
-        "HR", "ISO", "xSLG", "Barrel%", "HardHit%", "Score"
+        "Spot", "Player", "Pos", "Bat", "Split", "Tier",
+        "HR", "ISO", "xSLG", "Barrel%", "HardHit%", "Score", "Angle"
     ]
-
     if lineup_df.empty:
         return pd.DataFrame(columns=empty_cols)
 
@@ -593,6 +817,8 @@ def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, 
             batter_row, pitch_row, row["lineup_spot"], weather,
             park_factor, row["bat_side"], opp_pitch_hand
         )
+        _, tier_label, _ = score_tier(score)
+        angle = suggested_angle(score, barrel, hr, hardhit)
 
         out_rows.append({
             "Spot": int(row["lineup_spot"]) if pd.notna(row["lineup_spot"]) else 99,
@@ -600,13 +826,14 @@ def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, 
             "Pos": row["position"],
             "Bat": row["bat_side"],
             "Split": handedness_label(row["bat_side"], opp_pitch_hand),
-            "Edge": "Good" if platoon_value(row["bat_side"], opp_pitch_hand) > 0 else "Bad",
+            "Tier": tier_label,
             "HR": hr,
             "ISO": iso,
             "xSLG": xslg,
             "Barrel%": barrel,
             "HardHit%": hardhit,
-            "Score": score
+            "Score": score,
+            "Angle": angle,
         })
 
     df = pd.DataFrame(out_rows)
@@ -616,41 +843,56 @@ def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, 
         df = df.sort_values("Spot")
     return df
 
+# ---------------------------------------------------------------------------
+# Styling helpers (color cells in dataframes by tier)
+# ---------------------------------------------------------------------------
+TIER_BG = {
+    "Elite":  "background-color: #dcfce7; color: #14532d; font-weight: 800;",
+    "Strong": "background-color: #d1fae5; color: #065f46; font-weight: 800;",
+    "OK":     "background-color: #fef3c7; color: #78350f; font-weight: 800;",
+    "Avoid":  "background-color: #fee2e2; color: #7f1d1d; font-weight: 800;",
+    "N/A":    "background-color: #e2e8f0; color: #334155; font-weight: 800;",
+}
+
 def color_metric(value, low, high):
     try:
         v = float(value)
     except:
         return ""
     if v >= high:
-        return "background-color: #bbf7d0; color: #14532d; font-weight: 800;"
+        return "background-color: #dcfce7; color: #14532d; font-weight: 800;"
     if v >= low:
         return "background-color: #fef3c7; color: #78350f; font-weight: 800;"
-    return "background-color: #fecaca; color: #7f1d1d; font-weight: 800;"
+    return "background-color: #fee2e2; color: #7f1d1d; font-weight: 800;"
 
-def color_edge(value):
-    if value == "Good":
-        return "background-color: #bbf7d0; color: #14532d; font-weight: 800;"
-    return "background-color: #fecaca; color: #7f1d1d; font-weight: 800;"
+def color_score(value):
+    try:
+        v = float(value)
+    except:
+        return ""
+    if v >= TIER_ELITE:  return "background-color: #16a34a; color: #ffffff; font-weight: 900;"
+    if v >= TIER_STRONG: return "background-color: #86efac; color: #14532d; font-weight: 900;"
+    if v >= TIER_OK:     return "background-color: #fde68a; color: #78350f; font-weight: 900;"
+    return "background-color: #fecaca; color: #7f1d1d; font-weight: 900;"
 
-def style_table(df):
+def color_tier_cell(value):
+    return TIER_BG.get(str(value), "")
+
+def style_lineup_table(df):
     if df.empty:
         return df
-
     styler = df.style.format({
-        "ISO": "{:.3f}",
-        "xSLG": "{:.3f}",
-        "Barrel%": "{:.1f}",
-        "HardHit%": "{:.1f}",
-        "Score": "{:.1f}",
-        "HR": "{:.0f}",
+        "ISO": "{:.3f}", "xSLG": "{:.3f}",
+        "Barrel%": "{:.1f}", "HardHit%": "{:.1f}",
+        "Score": "{:.1f}", "HR": "{:.0f}",
     })
-
     base_text = [
-        {"selector": "th", "props": [("color", "#111827"), ("font-size", "15px"), ("font-weight", "800"), ("background-color", "#f8fafc")]},
-        {"selector": "td", "props": [("color", "#111827"), ("font-size", "16px"), ("font-weight", "700")]},
+        {"selector": "th", "props": [("color", "#0f172a"), ("font-size", "13px"),
+                                     ("font-weight", "800"), ("background-color", "#f1f5f9"),
+                                     ("text-transform", "uppercase"), ("letter-spacing", "0.05em")]},
+        {"selector": "td", "props": [("color", "#0f172a"), ("font-size", "14px"), ("font-weight", "700")]},
     ]
     styler = styler.set_table_styles(base_text)
-
     if "ISO" in df.columns:
         styler = styler.map(lambda x: color_metric(x, 0.170, 0.220), subset=["ISO"])
     if "xSLG" in df.columns:
@@ -660,60 +902,181 @@ def style_table(df):
     if "HardHit%" in df.columns:
         styler = styler.map(lambda x: color_metric(x, 38.0, 45.0), subset=["HardHit%"])
     if "Score" in df.columns:
-        styler = styler.map(lambda x: color_metric(x, 70, 85), subset=["Score"])
-    if "Edge" in df.columns:
-        styler = styler.map(color_edge, subset=["Edge"])
-
+        styler = styler.map(color_score, subset=["Score"])
+    if "Tier" in df.columns:
+        styler = styler.map(color_tier_cell, subset=["Tier"])
     return styler
 
-def top_targets(df):
-    if df.empty or "Score" not in df.columns or "Player" not in df.columns:
-        return []
-    return df.sort_values("Score", ascending=False).head(3)[["Player", "Score"]].values.tolist()
+# ---------------------------------------------------------------------------
+# UI components
+# ---------------------------------------------------------------------------
+def render_brand_bar(slate_count):
+    st.markdown(f"""
+    <div class="brand-bar">
+        <div>
+            <div class="brand-tag">⚾ MrBets850 · MLB Edge</div>
+            <div class="brand-name">MLB Matchup Board</div>
+        </div>
+        <div class="brand-meta">
+            <div class="big">{slate_count} {'game' if slate_count == 1 else 'games'} on slate</div>
+            <div>Live data · Auto-refresh 30 min</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-def pill_class(val, good_when="Confirmed"):
-    if val == good_when:
-        return "pill-good"
-    if val in ["Neutral", "Watch"]:
-        return "pill-neutral"
-    return "pill-bad"
+def render_game_card(game_row, context, weather):
+    rain = weather.get("rain_pct"); rain_str = f"{int(rain)}%" if rain is not None else "N/A"
+    temp = weather.get("temp_f");   temp_str = f"{temp}°F" if temp is not None else "N/A"
+    wind = weather.get("wind_mph"); wind_str = f"{round(float(wind))} mph" if wind is not None else "N/A"
+    away_status = context["away_status"]; home_status = context["home_status"]
+    away_pill = "tier-strong" if away_status == "Confirmed" else "tier-ok"
+    home_pill = "tier-strong" if home_status == "Confirmed" else "tier-ok"
 
-st.markdown('<div class="main-title">MLB Matchup Board</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">Pick one game at the top, then scroll down for a clean vertical breakdown.</div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="section-card dark">
+        <div class="game-card">
+            <div>
+                <div class="matchup">
+                    {game_row["away_abbr"]} <span class="vs">@</span> {game_row["home_abbr"]}
+                </div>
+                <div class="game-meta">{game_row["game_time_ct"]} · {game_row["venue"]} · {game_row["status"]}</div>
+            </div>
+            <div style="text-align:right;">
+                <div style="color:#c7dafe; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">Probables</div>
+                <div style="color:#fff; font-weight:800; font-size:0.95rem; margin-top:2px;">
+                    {game_row["away_probable"]} <span style="color:#94b8ff;">({context["away_pitch_hand"] or "?"})</span>
+                </div>
+                <div style="color:#fff; font-weight:800; font-size:0.95rem;">
+                    vs {game_row["home_probable"]} <span style="color:#94b8ff;">({context["home_pitch_hand"] or "?"})</span>
+                </div>
+            </div>
+        </div>
+        <div class="kpi-row">
+            <div class="kpi"><span class="k">Park Factor</span>{game_row["park_factor"]}</div>
+            <div class="kpi"><span class="k">Temp</span>{temp_str}</div>
+            <div class="kpi"><span class="k">Wind</span>{wind_str}</div>
+            <div class="kpi"><span class="k">Rain</span>{rain_str}</div>
+            <div class="kpi"><span class="tier {away_pill}">{game_row["away_abbr"]}: {away_status}</span></div>
+            <div class="kpi"><span class="tier {home_pill}">{game_row["home_abbr"]}: {home_status}</span></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-selected_date = st.date_input("Slate date", value=date.today())
+def render_hot_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
+    score = float(row.get("Score", 0) or 0)
+    barrel = float(row.get("Barrel%", 0) or 0)
+    hardhit = float(row.get("HardHit%", 0) or 0)
+    hr = float(row.get("HR", 0) or 0)
+    iso = float(row.get("ISO", 0) or 0)
+    tier_key, tier_label, _ = score_tier(score)
+    hr_key, hr_label = hr_tier(score, barrel, hr)
+    angle = suggested_angle(score, barrel, hr, hardhit)
+    spot = int(row.get("Spot", 0) or 0)
 
-if st.button("Refresh data now"):
-    st.cache_data.clear()
-    st.rerun()
+    st.markdown(f"""
+    <div class="batter-tile {tier_key}">
+        <div class="rank">#{rank} · {tier_label} · Bat {spot}</div>
+        <div class="name">{row.get("Player", "")}</div>
+        <div class="vs">vs {opposing_pitcher} ({opposing_team_abbr})</div>
+        <div class="score">{score:.1f}<span style="font-size:0.7rem; color:#64748b; font-weight:700; margin-left:6px;">SCORE</span></div>
+        <div class="stats">
+            HR <b>{int(hr)}</b> · ISO <b>{iso:.3f}</b> · Barrel <b>{barrel:.1f}%</b> · HardHit <b>{hardhit:.1f}%</b>
+        </div>
+        <div class="angle">{angle} · <span class="tier tier-{hr_key}" style="font-size:0.7rem; padding:2px 8px;">{hr_label}</span></div>
+    </div>
+    """, unsafe_allow_html=True)
 
+def render_pitcher_tile(label, pitcher_name, pitch_hand, pitcher_row):
+    score, key, verdict = pitcher_vulnerability(pitcher_row)
+    if pitcher_row is None:
+        k = bb = era_w = barrel = hardhit = "—"
+        sub = "No Savant data"
+    else:
+        k = f"{safe_float(pitcher_row.get('K%')):.1f}%"
+        bb = f"{safe_float(pitcher_row.get('BB%')):.1f}%"
+        era_w = f"{safe_float(pitcher_row.get('xwOBA')):.3f}"
+        barrel = f"{safe_float(pitcher_row.get('Barrel%')):.1f}%"
+        hardhit = f"{safe_float(pitcher_row.get('HardHit%')):.1f}%"
+        sub = "Baseball Savant"
+
+    st.markdown(f"""
+    <div class="pitcher-tile vuln-{key}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+            <div>
+                <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">{label}</div>
+                <h4>{pitcher_name or "TBD"} <span style="color:#64748b; font-size:0.85rem;">({pitch_hand or "?"})</span></h4>
+                <div class="meta">{sub}</div>
+            </div>
+            <div style="text-align:right;">
+                <div style="font-size:1.6rem; font-weight:900; color:#0f172a; line-height:1;">{score}</div>
+                <span class="tier tier-{('elite' if key=='elite' else 'strong' if key=='strong' else 'ok' if key=='ok' else 'avoid')}">{verdict}</span>
+            </div>
+        </div>
+        <div class="grid">
+            <div><div class="k">K%</div><div class="v">{k}</div></div>
+            <div><div class="k">BB%</div><div class="v">{bb}</div></div>
+            <div><div class="k">xwOBA</div><div class="v">{era_w}</div></div>
+            <div><div class="k">Barrel%</div><div class="v">{barrel}</div></div>
+            <div><div class="k">HardHit%</div><div class="v">{hardhit}</div></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Main app
+# ---------------------------------------------------------------------------
 with st.spinner("Loading Baseball Savant data from GitHub..."):
     csvs = load_all_csvs()
 batters_df = standardize_columns(csvs.get("batters", pd.DataFrame()))
 pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
 
-if batters_df.empty and pitchers_df.empty:
-    st.error(
-        "No CSV data could be loaded from GitHub. Check that the repo "
-        f"https://github.com/{GITHUB_USER}/{GITHUB_REPO} is public and the "
-        "file paths in CSV_FILES are correct."
-    )
+# --- Top controls row -------------------------------------------------------
+top_cols = st.columns([2.2, 1, 1])
+with top_cols[0]:
+    selected_date = st.date_input("📅 Slate date", value=date.today(), label_visibility="collapsed")
+with top_cols[1]:
+    if st.button("🔄 Refresh data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+with top_cols[2]:
+    show_avoids = st.toggle("Show 'Avoid' tier", value=True, help="Hide red-tier batters from the Hot board")
 
+# --- Schedule ---------------------------------------------------------------
 try:
     schedule_df = get_schedule(selected_date)
 except Exception as e:
+    render_brand_bar(0)
     st.error(f"Schedule load failed: {e}")
     st.stop()
+
+render_brand_bar(len(schedule_df))
+
+if batters_df.empty and pitchers_df.empty:
+    st.error(
+        f"No CSV data could be loaded from GitHub. Verify the repo "
+        f"https://github.com/{GITHUB_USER}/{GITHUB_REPO} is public and CSV_FILES paths are correct."
+    )
 
 if schedule_df.empty:
     st.warning("No games found for this date.")
     st.stop()
 
-game_label = st.selectbox("Choose game", schedule_df["label"].tolist(), index=0)
+# --- Game picker (radio pills) ---------------------------------------------
+st.markdown('<div class="section-label">Choose a game</div>', unsafe_allow_html=True)
+game_label = st.radio(
+    "Choose game",
+    schedule_df["label"].tolist(),
+    horizontal=True,
+    label_visibility="collapsed",
+)
 game_row = schedule_df[schedule_df["label"] == game_label].iloc[0]
 context = build_game_context(game_row)
 weather = context["weather"]
 
+# --- Selected game card -----------------------------------------------------
+render_game_card(game_row, context, weather)
+
+# --- Build tables for both teams -------------------------------------------
 away_table = build_team_table(
     context["away_lineup"], batters_df, pitchers_df,
     game_row["home_probable"], weather, game_row["park_factor"]
@@ -723,74 +1086,142 @@ home_table = build_team_table(
     game_row["away_probable"], weather, game_row["park_factor"]
 )
 
-st.markdown(f"""
-<div class="top-card">
-    <div class="section-label">Selected Game</div>
-    <div class="big-matchup">{game_row["away_abbr"]} @ {game_row["home_abbr"]}</div>
-    <div class="mid-text">{game_row["game_time_ct"]} · {game_row["venue"]} · Status: {game_row["status"]}</div>
-    <div class="pill-row">
-        <div class="{pill_class(context["away_status"])}">{game_row["away_abbr"]} Lineup: {context["away_status"]}</div>
-        <div class="{pill_class(context["home_status"])}">{game_row["home_abbr"]} Lineup: {context["home_status"]}</div>
-        <div class="pill-neutral">Park Factor: {game_row["park_factor"]}</div>
-        <div class="pill-neutral">Temp: {weather.get("temp_f") if weather.get("temp_f") is not None else "N/A"} F</div>
-        <div class="pill-neutral">Wind: {weather.get("wind_mph") if weather.get("wind_mph") is not None else "N/A"} mph</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+# Tag combined for hot-batter board
+combined_rows = []
+for _, r in away_table.iterrows():
+    rr = r.to_dict(); rr["TeamAbbr"] = game_row["away_abbr"]
+    rr["OppPitcher"] = game_row["home_probable"]; rr["OppTeamAbbr"] = game_row["home_abbr"]
+    combined_rows.append(rr)
+for _, r in home_table.iterrows():
+    rr = r.to_dict(); rr["TeamAbbr"] = game_row["home_abbr"]
+    rr["OppPitcher"] = game_row["away_probable"]; rr["OppTeamAbbr"] = game_row["away_abbr"]
+    combined_rows.append(rr)
+combined_df = pd.DataFrame(combined_rows)
 
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="section-label">Game Notes</div>', unsafe_allow_html=True)
-for label, value in [
-    ("Away Probable", game_row["away_probable"]),
-    ("Home Probable", game_row["home_probable"]),
-    ("Away Pitch Hand", context["away_pitch_hand"] if context["away_pitch_hand"] else "N/A"),
-    ("Home Pitch Hand", context["home_pitch_hand"] if context["home_pitch_hand"] else "N/A"),
-    ("Rain %", weather.get("rain_pct") if weather.get("rain_pct") is not None else "N/A"),
-]:
-    st.markdown(f"""
-    <div class="metric-box">
-        <div class="metric-k">{label}</div>
-        <div class="metric-v">{value}</div>
-    </div>
-    """, unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+# --- 🔥 Hot Batters board (top 8 by score) ----------------------------------
+st.markdown(
+    '<div class="section-card">'
+    '<div class="section-title">🔥 Hot Batters · Top Targets This Game</div>'
+    '<div style="margin-bottom:10px;">'
+    '<span class="tier tier-elite">Elite ≥130</span> &nbsp;'
+    '<span class="tier tier-strong">Strong 110-129</span> &nbsp;'
+    '<span class="tier tier-ok">OK 95-109</span> &nbsp;'
+    '<span class="tier tier-avoid">Avoid &lt;95</span>'
+    '</div></div>', unsafe_allow_html=True
+)
 
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.markdown('<div class="section-label">Top Targets</div>', unsafe_allow_html=True)
-away_targets = top_targets(away_table)
-home_targets = top_targets(home_table)
-
-st.markdown(f"""
-<div class="metric-box">
-    <div class="metric-k">{game_row["away_abbr"]} best bats vs {game_row["home_probable"]}</div>
-    <div class="metric-v">{", ".join([f"{p} ({round(s,1)})" for p, s in away_targets]) if away_targets else "No lineup yet"}</div>
-</div>
-<div class="metric-box">
-    <div class="metric-k">{game_row["home_abbr"]} best bats vs {game_row["away_probable"]}</div>
-    <div class="metric-v">{", ".join([f"{p} ({round(s,1)})" for p, s in home_targets]) if home_targets else "No lineup yet"}</div>
-</div>
-""", unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown(f'<div class="section-card"><div class="section-label">{game_row["away_abbr"]} lineup breakdown</div></div>', unsafe_allow_html=True)
-if away_table.empty or "Spot" not in away_table.columns:
-    st.warning(f"{game_row['away_abbr']} lineup not posted yet.")
+if combined_df.empty:
+    st.info("Lineups not posted yet. Hot batters will appear once today's lineups are confirmed.")
 else:
-    st.dataframe(style_table(away_table), use_container_width=True, hide_index=True)
+    df_hot = combined_df.copy()
+    if not show_avoids:
+        df_hot = df_hot[df_hot["Score"] >= 65]
+    df_hot = df_hot.sort_values("Score", ascending=False).head(8).reset_index(drop=True)
+    if df_hot.empty:
+        st.info("No qualifying batters at this filter level. Toggle 'Show Avoid tier' to see all.")
+    else:
+        cols_per_row = 4
+        rows = [df_hot.iloc[i:i+cols_per_row] for i in range(0, len(df_hot), cols_per_row)]
+        for row_chunk in rows:
+            cols = st.columns(len(row_chunk))
+            for i, (_, r) in enumerate(row_chunk.iterrows()):
+                with cols[i]:
+                    render_hot_batter_tile(
+                        rank=int(r.name)+1 if hasattr(r, 'name') else i+1,
+                        row=r,
+                        opposing_pitcher=r["OppPitcher"],
+                        opposing_team_abbr=r["OppTeamAbbr"],
+                    )
 
-st.markdown(f'<div class="section-card"><div class="section-label">{game_row["home_abbr"]} lineup breakdown</div></div>', unsafe_allow_html=True)
-if home_table.empty or "Spot" not in home_table.columns:
-    st.warning(f"{game_row['home_abbr']} lineup not posted yet.")
-else:
-    st.dataframe(style_table(home_table), use_container_width=True, hide_index=True)
+# --- Pitcher Vulnerability panel -------------------------------------------
+st.markdown(
+    '<div class="section-card">'
+    '<div class="section-title">🎯 Pitcher Vulnerability · Who To Attack</div>'
+    '</div>', unsafe_allow_html=True
+)
+pcols = st.columns(2)
+with pcols[0]:
+    render_pitcher_tile(
+        label=f"Away SP — {game_row['away_abbr']}",
+        pitcher_name=game_row["away_probable"],
+        pitch_hand=context["away_pitch_hand"],
+        pitcher_row=find_pitcher_row(pitchers_df, game_row["away_probable"]),
+    )
+with pcols[1]:
+    render_pitcher_tile(
+        label=f"Home SP — {game_row['home_abbr']}",
+        pitcher_name=game_row["home_probable"],
+        pitch_hand=context["home_pitch_hand"],
+        pitcher_row=find_pitcher_row(pitchers_df, game_row["home_probable"]),
+    )
 
-with st.expander("Data status"):
-    st.write("Batters loaded:", len(batters_df))
-    st.write("Pitchers loaded:", len(pitchers_df))
-    st.write("Source: raw GitHub URLs (auto-refreshes every 30 min)")
+# --- Lineup tables ----------------------------------------------------------
+def render_lineup_section(team_abbr, opp_pitcher, table):
+    st.markdown(
+        f'<div class="section-card">'
+        f'<div class="section-title">📋 {team_abbr} Lineup vs {opp_pitcher}</div>'
+        f'</div>', unsafe_allow_html=True
+    )
+    if table.empty or "Spot" not in table.columns:
+        st.info(f"{team_abbr} lineup not posted yet — check back closer to first pitch.")
+    else:
+        display = table[["Spot", "Player", "Pos", "Bat", "Split", "Tier",
+                         "HR", "ISO", "xSLG", "Barrel%", "HardHit%", "Score", "Angle"]]
+        st.dataframe(style_lineup_table(display), use_container_width=True, hide_index=True)
+
+render_lineup_section(game_row["away_abbr"], game_row["home_probable"], away_table)
+render_lineup_section(game_row["home_abbr"], game_row["away_probable"], home_table)
+
+# --- Slate-wide hot board (across all games) -------------------------------
+with st.expander("🌡️ Slate-wide Hot Batter Board (all games today)", expanded=False):
+    st.caption("Top batters across the entire slate, regardless of game. Loads only when expanded.")
+    slate_rows = []
+    progress = st.progress(0.0, text="Scoring slate...")
+    for idx, (_, g_row) in enumerate(schedule_df.iterrows()):
+        try:
+            ctx = build_game_context(g_row)
+            wx = ctx["weather"]
+            at = build_team_table(ctx["away_lineup"], batters_df, pitchers_df, g_row["home_probable"], wx, g_row["park_factor"])
+            ht = build_team_table(ctx["home_lineup"], batters_df, pitchers_df, g_row["away_probable"], wx, g_row["park_factor"])
+            for _, r in at.iterrows():
+                d = r.to_dict(); d["TeamAbbr"] = g_row["away_abbr"]; d["Game"] = g_row["short_label"]
+                d["OppPitcher"] = g_row["home_probable"]; d["OppTeamAbbr"] = g_row["home_abbr"]
+                slate_rows.append(d)
+            for _, r in ht.iterrows():
+                d = r.to_dict(); d["TeamAbbr"] = g_row["home_abbr"]; d["Game"] = g_row["short_label"]
+                d["OppPitcher"] = g_row["away_probable"]; d["OppTeamAbbr"] = g_row["away_abbr"]
+                slate_rows.append(d)
+        except Exception:
+            pass
+        progress.progress((idx+1)/max(len(schedule_df),1), text=f"Scored {idx+1}/{len(schedule_df)} games")
+    progress.empty()
+
+    slate_df = pd.DataFrame(slate_rows)
+    if slate_df.empty:
+        st.info("No lineups posted yet across the slate.")
+    else:
+        slate_df = slate_df.sort_values("Score", ascending=False).head(15).reset_index(drop=True)
+        slate_display = slate_df[["Game", "TeamAbbr", "Player", "Spot", "Tier",
+                                  "HR", "ISO", "Barrel%", "HardHit%", "Score", "Angle"]].rename(
+            columns={"TeamAbbr": "Team"}
+        )
+        st.dataframe(style_lineup_table(slate_display), use_container_width=True, hide_index=True)
+
+# --- Footer / data status ---------------------------------------------------
+with st.expander("📊 Data status & sources", expanded=False):
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Batters loaded", len(batters_df))
+    with c2:
+        st.metric("Pitchers loaded", len(pitchers_df))
+    st.caption("Source: raw GitHub URLs (auto-refreshes every 30 min). To update data, commit new CSVs to the repo and click 'Refresh data'.")
     for label, url in CSV_URLS.items():
         st.markdown(f"- **{label}**: [{CSV_FILES[label]}]({url})")
-    st.caption(
-        "To update data: commit new CSVs to the GitHub repo and click "
-        "'Refresh data now'. No redeploy required."
-    )
+
+st.markdown(
+    '<div class="footer">⚾ <b>MrBets850 MLB Edge</b> · '
+    'Powered by Baseball Savant + MLB StatsAPI + Open-Meteo · '
+    'Color tiers: Elite 🟢 (≥130) · Strong 🟢 (110-129) · OK 🟡 (95-109) · Avoid 🔴 (&lt;95) · '
+    'For research purposes only.</div>',
+    unsafe_allow_html=True,
+)

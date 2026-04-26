@@ -1093,6 +1093,19 @@ def style_lineup_table(df):
 # ---------------------------------------------------------------------------
 # UI components
 # ---------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def _load_logo_b64():
+    """Load and cache the MrBets850 logo as a base64 data URI so it can be
+    embedded directly in HTML without needing a static-file route."""
+    import base64, os
+    path = os.path.join(os.path.dirname(__file__), "assets", "mrbets850_logo.jpg")
+    try:
+        with open(path, "rb") as f:
+            data = base64.b64encode(f.read()).decode("ascii")
+        return f"data:image/jpeg;base64,{data}"
+    except Exception:
+        return ""
+
 def render_brand_bar(slate_count):
     # Central time stamp so the user can see when data was last pulled
     import datetime as _dtm
@@ -1103,11 +1116,21 @@ def render_brand_bar(slate_count):
         # crude UTC->CT fallback (CDT = UTC-5, ignore DST edge cases)
         now_ct = _dtm.datetime.utcnow() - _dtm.timedelta(hours=5)
     stamp = now_ct.strftime("%-I:%M %p CT")
+    logo_uri = _load_logo_b64()
+    logo_html = (
+        f'<img src="{logo_uri}" alt="MrBets850" '
+        f'style="height:62px; width:62px; border-radius:12px; object-fit:cover; '
+        f'margin-right:14px; box-shadow:0 4px 12px rgba(0,0,0,0.35);" />'
+        if logo_uri else ""
+    )
     st.markdown(f"""
     <div class="brand-bar">
-        <div>
-            <div class="brand-tag">⚾ MrBets850 · MLB Edge</div>
-            <div class="brand-name">MLB Matchup Board</div>
+        <div style="display:flex; align-items:center;">
+            {logo_html}
+            <div>
+                <div class="brand-tag">MrBets850 · MLB Edge</div>
+                <div class="brand-name">MLB Matchup Board</div>
+            </div>
         </div>
         <div class="brand-meta">
             <div class="big">{slate_count} {'game' if slate_count == 1 else 'games'} on slate</div>

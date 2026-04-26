@@ -1074,11 +1074,25 @@ def render_hot_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
                 f'</div>'
             )
 
+    # Player headshot (MLB's CDN, falls back gracefully if missing)
+    headshot_html = ""
+    if mlb_id:
+        headshot_html = (
+            f'<img src="https://img.mlbstatic.com/mlb-photos/image/upload/'
+            f'd_people:generic:headshot:67:current.png/w_120,q_auto:best/'
+            f'v1/people/{int(mlb_id)}/headshot/67/current" '
+            f'style="position:absolute; top:10px; right:10px; width:56px; height:56px; '
+            f'border-radius:50%; object-fit:cover; background:#f1f5f9; '
+            f'border:2px solid #e2e8f0;" '
+            f'onerror="this.style.display=&#39;none&#39;" alt="" />'
+        )
+
     st.markdown(f"""
-    <div class="batter-tile {tier_key}">
+    <div class="batter-tile {tier_key}" style="position:relative;">
+        {headshot_html}
         <div class="rank">#{rank} · {tier_label} · Bat {spot}</div>
-        <div class="name">{row.get("Player", "")}</div>
-        <div class="vs">vs {opposing_pitcher} ({opposing_team_abbr})</div>
+        <div class="name" style="padding-right:64px;">{row.get("Player", "")}</div>
+        <div class="vs" style="padding-right:64px;">vs {opposing_pitcher} ({opposing_team_abbr})</div>
         <div class="score">{score:.1f}<span style="font-size:0.7rem; color:#64748b; font-weight:700; margin-left:6px;">SCORE</span></div>
         <div class="stats">
             HR <b>{int(hr)}</b> · ISO <b>{iso:.3f}</b> · Barrel <b>{barrel:.1f}%</b> · HardHit <b>{hardhit:.1f}%</b>

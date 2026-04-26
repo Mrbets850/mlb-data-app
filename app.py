@@ -854,6 +854,12 @@ TIER_BG = {
     "N/A":    "background-color: #e2e8f0; color: #334155; font-weight: 800;",
 }
 
+# Score thresholds used by color_score() — must match the legend at the
+# bottom of the page (Elite ≥130 · Strong 110-129 · OK 95-109 · Avoid <95)
+TIER_ELITE  = 130
+TIER_STRONG = 110
+TIER_OK     = 95
+
 def color_metric(value, low, high):
     try:
         v = float(value)
@@ -1035,7 +1041,7 @@ top_cols = st.columns([2.2, 1, 1])
 with top_cols[0]:
     selected_date = st.date_input("📅 Slate date", value=date.today(), label_visibility="collapsed")
 with top_cols[1]:
-    if st.button("🔄 Refresh data", use_container_width=True):
+    if st.button("🔄 Refresh data", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 with top_cols[2]:
@@ -1167,7 +1173,7 @@ def render_lineup_section(team_abbr, opp_pitcher, table):
     else:
         display = table[["Spot", "Player", "Pos", "Bat", "Split", "Tier",
                          "HR", "ISO", "xSLG", "Barrel%", "HardHit%", "Score", "Angle"]]
-        st.dataframe(style_lineup_table(display), use_container_width=True, hide_index=True)
+        st.dataframe(style_lineup_table(display), width="stretch", hide_index=True)
 
 render_lineup_section(game_row["away_abbr"], game_row["home_probable"], away_table)
 render_lineup_section(game_row["home_abbr"], game_row["away_probable"], home_table)
@@ -1205,7 +1211,7 @@ with st.expander("🌡️ Slate-wide Hot Batter Board (all games today)", expand
                                   "HR", "ISO", "Barrel%", "HardHit%", "Score", "Angle"]].rename(
             columns={"TeamAbbr": "Team"}
         )
-        st.dataframe(style_lineup_table(slate_display), use_container_width=True, hide_index=True)
+        st.dataframe(style_lineup_table(slate_display), width="stretch", hide_index=True)
 
 # --- Footer / data status ---------------------------------------------------
 with st.expander("📊 Data status & sources", expanded=False):

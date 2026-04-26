@@ -4,7 +4,30 @@ import requests
 import os
 import re
 import unicodedata
+import urllib.parse
 from datetime import date
+
+# ---------------------------------------------------------------------------
+# Remote CSV configuration
+# ---------------------------------------------------------------------------
+# All Baseball Savant "trash" CSV exports are hosted in the public GitHub repo
+# https://github.com/Mrbets850/mlb-data-app and pulled at runtime via raw URLs.
+# Filenames contain a colon, which must be URL-encoded for raw.githubusercontent.com.
+GITHUB_USER = "Mrbets850"
+GITHUB_REPO = "mlb-data-app"
+GITHUB_BRANCH = "main"
+
+CSV_FILES = {
+    "batters":  "Data:savant_batters.csv.csv",
+    "pitchers": "Data:savant_pitchers.csv.csv",
+}
+
+def raw_github_url(path: str) -> str:
+    """Build a raw.githubusercontent.com URL with proper percent-encoding."""
+    encoded = urllib.parse.quote(path, safe="/")
+    return f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/{encoded}"
+
+CSV_URLS = {label: raw_github_url(name) for label, name in CSV_FILES.items()}
 
 st.set_page_config(page_title="MLB Matchup Board", layout="centered")
 
@@ -223,14 +246,24 @@ def standardize_columns(df):
 
     rename_map = {
         "hr": "HR",
+        "home_run": "HR",
+        "home_runs": "HR",
         "avg": "AVG",
+        "batting_avg": "AVG",
         "obp": "OBP",
+        "on_base_percent": "OBP",
         "slg": "SLG",
+        "slg_percent": "SLG",
         "ops": "OPS",
+        "on_base_plus_slg": "OPS",
         "iso": "ISO",
+        "isolated_power": "ISO",
+        "xiso": "xISO",
         "woba": "wOBA",
         "xwoba": "xwOBA",
+        "xobp": "xOBP",
         "xslg": "xSLG",
+        "xba": "xBA",
         "barrel%": "Barrel%",
         "barrel_batted_rate": "Barrel%",
         "barrels_per_bbe_percent": "Barrel%",
@@ -239,10 +272,16 @@ def standardize_columns(df):
         "hard_hit_rate": "HardHit%",
         "exit_velocity_avg": "EV",
         "avg_hit_speed": "EV",
+        "avg_best_speed": "EV",
         "launch_angle_avg": "LA",
         "launch_angle": "LA",
         "k_percent": "K%",
         "bb_percent": "BB%",
+        "sweet_spot_percent": "SweetSpot%",
+        "whiff_percent": "Whiff%",
+        "swing_percent": "Swing%",
+        "avg_swing_speed": "SwingSpeed",
+        "avg_hyper_speed": "HyperSpeed",
         "p_throws": "pitch_hand",
         "throws": "pitch_hand",
         "stand": "bat_side",
@@ -262,11 +301,48 @@ def standardize_columns(df):
     df["team_key"] = df["Team"].apply(norm_team)
     return df
 
-@st.cache_data(ttl=1800)
-def load_local_csv(path):
-    if os.path.exists(path):
-        return pd.read_csv(path)
-    return pd.DataFrame()
+def _flip_last_first(name):
+    """Convert 'Last, First' (Baseball Savant default) to 'First Last'."""
+    if pd.isna(name):
+        return ""
+    s = str(name).strip()
+    if "," in s:
+        parts = [p.strip() for p in s.split(",", 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            return f"{parts[1]} {parts[0]}"
+    return s
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_remote_csv(url):
+    """Fetch a CSV from a public URL using pandas.read_csv. Returns empty
+    DataFrame on failure so the rest of the app can still render.
+    """
+    try:
+        df = pd.read_csv(url)
+    except Exception as exc:
+        st.warning(f"Failed to load CSV from {url}: {exc}")
+        return pd.DataFrame()
+
+    if df.empty:
+        return df
+
+    # Baseball Savant exports name as 'last_name, first_name' --- flip it so
+    # downstream name matching against the MLB StatsAPI works correctly.
+    name_col = None
+    for c in df.columns:
+        if str(c).strip().lower() in ("last_name, first_name", "player_name", "name", "player"):
+            name_col = c
+            break
+    if name_col is not None:
+        df[name_col] = df[name_col].apply(_flip_last_first)
+        if name_col != "Name":
+            df = df.rename(columns={name_col: "Name"})
+    return df
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_all_csvs():
+    """Load every CSV defined in CSV_URLS and return a dict of label -> DataFrame."""
+    return {label: load_remote_csv(url) for label, url in CSV_URLS.items()}
 
 @st.cache_data(ttl=1800)
 def get_schedule(selected_date):
@@ -611,8 +687,17 @@ if st.button("Refresh data now"):
     st.cache_data.clear()
     st.rerun()
 
-batters_df = standardize_columns(load_local_csv("data/savant_batters.csv"))
-pitchers_df = standardize_columns(load_local_csv("data/savant_pitchers.csv"))
+with st.spinner("Loading Baseball Savant data from GitHub..."):
+    csvs = load_all_csvs()
+batters_df = standardize_columns(csvs.get("batters", pd.DataFrame()))
+pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
+
+if batters_df.empty and pitchers_df.empty:
+    st.error(
+        "No CSV data could be loaded from GitHub. Check that the repo "
+        f"https://github.com/{GITHUB_USER}/{GITHUB_REPO} is public and the "
+        "file paths in CSV_FILES are correct."
+    )
 
 try:
     schedule_df = get_schedule(selected_date)
@@ -702,6 +787,10 @@ else:
 with st.expander("Data status"):
     st.write("Batters loaded:", len(batters_df))
     st.write("Pitchers loaded:", len(pitchers_df))
-    st.write("Expected files:")
-    st.code("data/savant_batters.csv\ndata/savant_pitchers.csv")
-    st.write("Automation tip: replace local CSVs daily or move to auto URLs / GitHub Action.")
+    st.write("Source: raw GitHub URLs (auto-refreshes every 30 min)")
+    for label, url in CSV_URLS.items():
+        st.markdown(f"- **{label}**: [{CSV_FILES[label]}]({url})")
+    st.caption(
+        "To update data: commit new CSVs to the GitHub repo and click "
+        "'Refresh data now'. No redeploy required."
+    )

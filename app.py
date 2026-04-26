@@ -1073,13 +1073,19 @@ if schedule_df.empty:
     st.warning("No games found for this date.")
     st.stop()
 
-# ----- Game selector: HTML carousel + invisible radio for state -----
-# Streamlit needs a real widget for state; we render the pretty carousel above
-# and a compact radio below it that drives selection.
+# ----- Game selector: compact selectbox + decorative HTML carousel -----
+# Streamlit needs a real widget to drive state. We use a small selectbox for the
+# actual selection, and render the pretty pill carousel below it as a visual aid.
 labels = schedule_df["label"].tolist()
-selected_label = st.radio("Game selector", labels, horizontal=True, label_visibility="collapsed", key="game_pick")
+prev_idx = st.session_state.get("_selected_idx", 0)
+selected_label = st.selectbox(
+    "Active game",
+    labels,
+    index=min(prev_idx, len(labels) - 1),
+    key="game_pick_sb",
+)
 selected_idx = labels.index(selected_label) if selected_label in labels else 0
-
+st.session_state["_selected_idx"] = selected_idx
 render_game_carousel(schedule_df, selected_idx)
 
 game_row = schedule_df.iloc[selected_idx]

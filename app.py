@@ -165,12 +165,16 @@ html, body, [class*="css"] {
     text-align: center;
     cursor: pointer;
     transition: all 0.15s ease;
+    display: block;
+    text-decoration: none !important;
+    color: inherit !important;
+    user-select: none;
 }
-.game-pill:hover { border-color: #94a3b8; background: #f1f5f9; }
+.game-pill:hover { border-color: #94a3b8; background: #eef2f7; transform: translateY(-1px); }
 .game-pill.active {
     border-color: #1d4ed8;
     background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
-    box-shadow: 0 4px 14px rgba(29,78,216,0.18);
+    box-shadow: 0 4px 14px rgba(29,78,216,0.22);
 }
 .game-pill .logos {
     display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -179,9 +183,11 @@ html, body, [class*="css"] {
 .game-pill .logos img { width: 38px; height: 38px; object-fit: contain; }
 .game-pill .at { color: #64748b; font-weight: 800; font-size: 1.05rem; }
 .game-pill .matchup-text {
+    display: block;
     color: #0f172a; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.02em;
 }
 .game-pill .time {
+    display: block;
     color: #64748b; font-size: 0.76rem; font-weight: 700; margin-top: 2px;
     letter-spacing: 0.02em;
 }
@@ -929,8 +935,8 @@ def render_brand_bar(slate_count):
     """, unsafe_allow_html=True)
 
 def render_game_carousel(schedule_df, selected_idx):
-    """Horizontal scrolling logo carousel — display-only (HTML).
-    Selection itself is handled by a hidden radio below to keep Streamlit reactive."""
+    """Horizontal scrolling logo carousel. Pills are anchor links that set the
+    `?g=<idx>` query parameter, which the app reads to drive game selection."""
     if schedule_df.empty:
         return
     pills = []
@@ -939,15 +945,15 @@ def render_game_carousel(schedule_df, selected_idx):
         away_logo = logo_url(g["away_id"]) if g["away_id"] else ""
         home_logo = logo_url(g["home_id"]) if g["home_id"] else ""
         pills.append(
-            f'<div class="game-pill {active}">'
-            f'<div class="logos">'
+            f'<a class="game-pill {active}" href="?g={i}" target="_self">'
+            f'<span class="logos">'
             f'<img src="{away_logo}" alt="{g["away_abbr"]}" />'
             f'<span class="at">@</span>'
             f'<img src="{home_logo}" alt="{g["home_abbr"]}" />'
-            f'</div>'
-            f'<div class="matchup-text">{g["away_abbr"]} @ {g["home_abbr"]}</div>'
-            f'<div class="time">{g["time_short"]}</div>'
-            f'</div>'
+            f'</span>'
+            f'<span class="matchup-text">{g["away_abbr"]} @ {g["home_abbr"]}</span>'
+            f'<span class="time">{g["time_short"]}</span>'
+            f'</a>'
         )
     st.markdown(
         '<div class="carousel-wrap"><div class="carousel-strip">' + "".join(pills) + '</div></div>',
@@ -1073,20 +1079,27 @@ if schedule_df.empty:
     st.warning("No games found for this date.")
     st.stop()
 
-# ----- Game selector: compact selectbox + decorative HTML carousel -----
-# Streamlit needs a real widget to drive state. We use a small selectbox for the
-# actual selection, and render the pretty pill carousel below it as a visual aid.
+# ----- Game selector: clickable HTML pill carousel driven by ?g=<idx> query param -----
 labels = schedule_df["label"].tolist()
-prev_idx = st.session_state.get("_selected_idx", 0)
-selected_label = st.selectbox(
-    "Active game",
-    labels,
-    index=min(prev_idx, len(labels) - 1),
-    key="game_pick_sb",
-)
-selected_idx = labels.index(selected_label) if selected_label in labels else 0
+n_games = len(labels)
+
+# Read selection from query params (set by clicking a carousel pill)
+try:
+    qp = st.query_params
+    raw_g = qp.get("g", None)
+except Exception:
+    qp = None
+    raw_g = st.experimental_get_query_params().get("g", [None])[0] if hasattr(st, "experimental_get_query_params") else None
+
+try:
+    selected_idx = int(raw_g) if raw_g is not None else st.session_state.get("_selected_idx", 0)
+except (TypeError, ValueError):
+    selected_idx = 0
+selected_idx = max(0, min(selected_idx, n_games - 1))
 st.session_state["_selected_idx"] = selected_idx
+
 render_game_carousel(schedule_df, selected_idx)
+st.caption(f"Tap any game above to switch · currently viewing **{labels[selected_idx]}**")
 
 game_row = schedule_df.iloc[selected_idx]
 ctx = build_game_context(game_row)
@@ -1098,8 +1111,8 @@ away_matchup = build_matchup_table(ctx["away_lineup"], batters_df, pitchers_df, 
 home_matchup = build_matchup_table(ctx["home_lineup"], batters_df, pitchers_df, game_row["away_probable"], weather, game_row["park_factor"])
 
 # ----- Tabs -----
-tab_matchup, tab_rolling, tab_p_zones, tab_h_zones, tab_export = st.tabs(
-    ["📊 Matchup", "📈 Rolling", "🎯 Pitcher Zones", "🌡️ Hitter Zones", "💾 Exports"]
+tab_matchup, tab_rolling, tab_p_zones, tab_h_zones, tab_hot, tab_cold = st.tabs(
+    ["📊 Matchup", "📈 Rolling", "🎯 Pitcher Zones", "🌡️ Hitter Zones", "🔥 Hot Batters", "🧊 Cold Batters"]
 )
 
 # ============== Matchup tab ==============
@@ -1167,46 +1180,75 @@ with tab_h_zones:
     else: st.dataframe(style_zones_table(home_zones, "hitter"), use_container_width=True, hide_index=True)
     st.caption("Pull/Oppo/FB/LD/GB tells you where each hitter does damage. Green columns = strengths to exploit.")
 
-# ============== Exports tab ==============
-with tab_export:
-    st.markdown(f'<div class="section-title">💾 Download Game Data</div>', unsafe_allow_html=True)
-    st.caption("Export the current game's tables as CSV for client decks, parlays, or further analysis.")
-    cols_dl = st.columns(2)
-    if not away_matchup.empty:
-        with cols_dl[0]:
-            csv = away_matchup.drop(columns=[c for c in away_matchup.columns if c.startswith("_")], errors="ignore").to_csv(index=False)
-            st.download_button(f"⬇️ {game_row['away_abbr']} Matchup CSV", csv, file_name=f"{selected_date}_{game_row['away_abbr']}_matchup.csv", mime="text/csv", use_container_width=True)
-    if not home_matchup.empty:
-        with cols_dl[1]:
-            csv = home_matchup.drop(columns=[c for c in home_matchup.columns if c.startswith("_")], errors="ignore").to_csv(index=False)
-            st.download_button(f"⬇️ {game_row['home_abbr']} Matchup CSV", csv, file_name=f"{selected_date}_{game_row['home_abbr']}_matchup.csv", mime="text/csv", use_container_width=True)
+# ============== Hot / Cold Batters tabs (slate-wide) ==============
+@st.cache_data(ttl=600, show_spinner=False)
+def _build_slate_dataframe(_schedule_df, _batters_df, _pitchers_df, cache_key):
+    """Score every batter in every posted lineup across the slate. Returns a single DataFrame.
+    cache_key is a string used to invalidate the cache when the slate or data changes."""
+    rows = []
+    for _, g in _schedule_df.iterrows():
+        try:
+            cc = build_game_context(g)
+            a = build_matchup_table(cc["away_lineup"], _batters_df, _pitchers_df, g["home_probable"], cc["weather"], g["park_factor"])
+            h = build_matchup_table(cc["home_lineup"], _batters_df, _pitchers_df, g["away_probable"], cc["weather"], g["park_factor"])
+            for _, r in a.iterrows():
+                d = r.to_dict(); d["Game"] = g["short_label"]; d["OppPitcher"] = g["home_probable"]; rows.append(d)
+            for _, r in h.iterrows():
+                d = r.to_dict(); d["Game"] = g["short_label"]; d["OppPitcher"] = g["away_probable"]; rows.append(d)
+        except Exception:
+            pass
+    slate = pd.DataFrame(rows)
+    if slate.empty:
+        return slate
+    return slate.drop(columns=[c for c in slate.columns if c.startswith("_")], errors="ignore")
 
-    # Slate-wide export (top targets across all games)
-    st.markdown('<div class="section-title" style="margin-top:18px;">🌡️ Slate-wide Top Targets</div>', unsafe_allow_html=True)
-    if st.button("Compute slate-wide rankings (all games)"):
-        with st.spinner("Scoring all games..."):
-            rows = []
-            for _, g in schedule_df.iterrows():
-                try:
-                    cc = build_game_context(g)
-                    a = build_matchup_table(cc["away_lineup"], batters_df, pitchers_df, g["home_probable"], cc["weather"], g["park_factor"])
-                    h = build_matchup_table(cc["home_lineup"], batters_df, pitchers_df, g["away_probable"], cc["weather"], g["park_factor"])
-                    for _, r in a.iterrows():
-                        d = r.to_dict(); d["Game"] = g["short_label"]; d["OppPitcher"] = g["home_probable"]; rows.append(d)
-                    for _, r in h.iterrows():
-                        d = r.to_dict(); d["Game"] = g["short_label"]; d["OppPitcher"] = g["away_probable"]; rows.append(d)
-                except Exception:
-                    pass
-            slate = pd.DataFrame(rows)
-            if slate.empty:
-                st.info("No lineups posted yet across the slate.")
-            else:
-                slate = slate.drop(columns=[c for c in slate.columns if c.startswith("_")], errors="ignore")
-                slate = slate.sort_values("Matchup", ascending=False).head(25).reset_index(drop=True)
-                show = slate[["Game", "Hitter", "Team", "Spot", "Matchup", "Test Score", "Ceiling", "Zone Fit", "HR Form", "kHR"]]
-                st.dataframe(style_matchup_table(show.assign(Bat="").rename(columns={"Game":"Game"}).drop(columns=["Bat"], errors="ignore")), use_container_width=True, hide_index=True)
-                csv = show.to_csv(index=False)
-                st.download_button("⬇️ Download slate top-25 CSV", csv, file_name=f"{selected_date}_slate_top25.csv", mime="text/csv", use_container_width=True)
+_slate_cache_key = f"{selected_date}_{len(schedule_df)}"
+_slate_df = _build_slate_dataframe(schedule_df, batters_df, pitchers_df, _slate_cache_key)
+
+def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
+    if df.empty:
+        st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
+        return
+    if sort_col not in df.columns:
+        st.warning(f"Sort column '{sort_col}' missing from slate data.")
+        return
+    ranked = df.sort_values(sort_col, ascending=not top).head(n).reset_index(drop=True)
+    ranked.insert(0, "#", range(1, len(ranked) + 1))
+    show_cols = [c for c in ["#", "Hitter", "Team", "Game", "Spot", "Bat", "OppPitcher",
+                              "Matchup", "Test Score", "Ceiling", "Zone Fit", "HR Form", "kHR",
+                              "ISO", "Barrel%", "HardHit%"] if c in ranked.columns]
+    out = ranked[show_cols]
+    st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
+    st.dataframe(
+        style_matchup_table(out),
+        use_container_width=True,
+        hide_index=True,
+        height=min(640, 60 + 38 * len(out)),
+    )
+    csv = out.to_csv(index=False)
+    st.download_button(
+        f"⬇️ Download {title} CSV",
+        csv,
+        file_name=f"{selected_date}_{'hot' if top else 'cold'}_top{n}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+with tab_hot:
+    st.markdown(
+        '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Top 15 hitters across the entire slate — ranked by Matchup score (combines opposing pitcher, '
+        'hand split, park, weather, recent form). These are the most exploitable spots tonight.'
+        '</div>', unsafe_allow_html=True)
+    _render_leaderboard(_slate_df, "🔥 Hot Batters — Top 15", top=True, n=15, sort_col="Matchup")
+
+with tab_cold:
+    st.markdown(
+        '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Bottom 15 hitters across the slate — toughest matchups. Useful for fade lists, '
+        'unders, and pitcher-side bets.'
+        '</div>', unsafe_allow_html=True)
+    _render_leaderboard(_slate_df, "🧊 Cold Batters — Bottom 15", top=False, n=15, sort_col="Matchup")
 
 # ----- Data status -----
 with st.expander("📊 Data status & sources", expanded=False):

@@ -1,7 +1,0 @@
-streamlit
-pandas
-requests
-pybaseball
-lxml
-beautifulsoup4
-html5lib

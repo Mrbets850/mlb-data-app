@@ -1147,10 +1147,41 @@ PITCH_NAME_TO_CAT = {
 CATEGORY_COLOR = {"Fastball": "#ef4444", "Offspeed": "#22c55e",
                   "Breaking": "#3b82f6", "Other":    "#94a3b8"}
 
+# Mapping from the Savant CSV's n_*_formatted columns to a display name and
+# Savant-style color. Velocity column name is included so chips can show MPH.
+CSV_ARSENAL_COLS = [
+    # (usage_col,             velocity_col,    display_name,       color)
+    ("n_ff_formatted",        "ff_avg_speed",  "4-Seam Fastball",  "#D22D49"),
+    ("n_si_formatted",        "si_avg_speed",  "Sinker",           "#FE9D00"),
+    ("n_fc_formatted",        "fc_avg_speed",  "Cutter",           "#933F2C"),
+    ("n_sl_formatted",        "sl_avg_speed",  "Slider",           "#C3BD0E"),
+    ("n_cu_formatted",        "cu_avg_speed",  "Curveball",        "#00D1ED"),
+    ("n_ch_formatted",        "ch_avg_speed",  "Changeup",         "#1DBE3A"),
+]
+
+def arsenal_from_pitcher_row(pitcher_row):
+    """Build the same (name, pct, category, color, velo) tuple list directly
+    from the Savant pitcher CSV row. Returns [] if no usage data is found,
+    so the caller can fall back to the web scraper."""
+    if pitcher_row is None:
+        return []
+    out = []
+    for usage_col, velo_col, name, color in CSV_ARSENAL_COLS:
+        pct = safe_float(pitcher_row.get(usage_col), 0)
+        if pct <= 0:
+            continue
+        velo = safe_float(pitcher_row.get(velo_col), 0)
+        cat, _ = PITCH_NAME_TO_CAT.get(name, ("Other", ""))
+        out.append((name, float(pct), cat, color, float(velo) if velo > 0 else None))
+    out.sort(key=lambda x: x[1], reverse=True)
+    return out
+
 @st.cache_data(ttl=21600, show_spinner=False)  # 6 hours
 def get_pitch_arsenal(mlb_id):
     """Return list[(pitch_name, usage_pct, category, color_hex)] for a pitcher,
-    most recent season first. Returns [] on any failure."""
+    most recent season first. Returns [] on any failure.
+    Used only as a fallback when the pitcher row in the CSV has no n_*_formatted
+    data (rare — e.g. brand-new call-ups)."""
     if not mlb_id:
         return []
     url = f"https://baseballsavant.mlb.com/savant-player/{int(mlb_id)}?stats=statcast-r-pitching-mlb"
@@ -1185,13 +1216,21 @@ def get_pitch_arsenal(mlb_id):
             break
         seen.add(clean)
         cat, _abbr = PITCH_NAME_TO_CAT.get(clean, ("Other", ""))
-        out.append((clean, float(pct), cat, f"#{color}"))
+        # 5-tuple to match arsenal_from_pitcher_row (no velocity from HTML)
+        out.append((clean, float(pct), cat, f"#{color}", None))
     # sort high -> low usage
     out.sort(key=lambda x: x[1], reverse=True)
     return out
 
-def render_pitch_mix_tile(pitcher_name, mlb_id):
-    arsenal = get_pitch_arsenal(mlb_id)
+def render_pitch_mix_tile(pitcher_name, mlb_id, pitcher_row=None):
+    """Render the pitch-mix card. Tries the CSV row first (fast, includes
+    velocity), then falls back to scraping the Savant player page."""
+    arsenal = arsenal_from_pitcher_row(pitcher_row)
+    source = "Baseball Savant CSV"
+    if not arsenal:
+        arsenal = get_pitch_arsenal(mlb_id)
+        source = "Baseball Savant (live)"
+
     if not arsenal:
         st.markdown(f"""
         <div class="section-card" style="padding:14px 18px;">
@@ -1205,22 +1244,25 @@ def render_pitch_mix_tile(pitcher_name, mlb_id):
     bar_segments = "".join(
         f'<div title="{name} {pct:.1f}%" style="flex:{pct}; background:{color}; '
         f'min-width:1px; border-right:1px solid #fff;"></div>'
-        for (name, pct, _cat, color) in arsenal
+        for (name, pct, _cat, color, _velo) in arsenal
     )
+    # Each chip optionally shows the average velocity (MPH) from the CSV.
     chips = "".join(
         f'<span style="display:inline-flex; align-items:center; gap:6px; '
         f'padding:4px 10px; border-radius:999px; background:#f1f5f9; '
         f'border:1px solid #e2e8f0; font-size:0.82rem; font-weight:700; '
         f'color:#0f172a; margin:3px 4px 3px 0;">'
         f'<span style="width:10px; height:10px; border-radius:2px; background:{color};"></span>'
-        f'{name} <b style="color:#475569;">{pct:.1f}%</b></span>'
-        for (name, pct, _cat, color) in arsenal
+        f'{name} <b style="color:#475569;">{pct:.1f}%</b>'
+        + (f' <span style="color:#94a3b8; font-weight:600;">· {velo:.1f} mph</span>' if velo else '')
+        + '</span>'
+        for (name, pct, _cat, color, velo) in arsenal
     )
     st.markdown(f"""
     <div class="section-card" style="padding:14px 18px;">
         <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
             <div style="font-size:0.78rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">Pitch Mix · {pitcher_name}</div>
-            <div style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Current season · Baseball Savant</div>
+            <div style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Current season · {source}</div>
         </div>
         <div style="display:flex; height:14px; border-radius:7px; overflow:hidden; box-shadow:inset 0 0 0 1px #e2e8f0;">
             {bar_segments}
@@ -1402,10 +1444,12 @@ st.markdown(
 mcols = st.columns(2)
 with mcols[0]:
     away_id = lookup_pitcher_mlb_id(context.get("away_roster"), pitchers_df, game_row["away_probable"])
-    render_pitch_mix_tile(game_row["away_probable"], away_id)
+    away_p_row = find_pitcher_row(pitchers_df, game_row["away_probable"])
+    render_pitch_mix_tile(game_row["away_probable"], away_id, away_p_row)
 with mcols[1]:
     home_id = lookup_pitcher_mlb_id(context.get("home_roster"), pitchers_df, game_row["home_probable"])
-    render_pitch_mix_tile(game_row["home_probable"], home_id)
+    home_p_row = find_pitcher_row(pitchers_df, game_row["home_probable"])
+    render_pitch_mix_tile(game_row["home_probable"], home_id, home_p_row)
 
 # --- Lineup tables ----------------------------------------------------------
 def render_lineup_section(team_abbr, opp_pitcher, table):

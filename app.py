@@ -169,7 +169,7 @@ html, body, [class*="css"] {
     font-weight: 700;
 }
 
-/* ---------- tier pills (Elite / Strong / OK / Avoid) ---------- */
+/* ---------- tier pills (Elite / Contender / Underdog / Fade) ---------- */
 .tier {
     display: inline-block;
     padding: 4px 11px;
@@ -181,9 +181,9 @@ html, body, [class*="css"] {
     border: 1px solid transparent;
 }
 .tier-elite   { background:#dcfce7; color:#14532d; border-color:#86efac; }
-.tier-strong  { background:#d1fae5; color:#065f46; border-color:#6ee7b7; }
-.tier-ok      { background:#fef3c7; color:#78350f; border-color:#fcd34d; }
-.tier-avoid   { background:#fee2e2; color:#7f1d1d; border-color:#fca5a5; }
+.tier-strong  { background:#fef3c7; color:#78350f; border-color:#fcd34d; }
+.tier-ok      { background:#fee2e2; color:#7f1d1d; border-color:#fca5a5; }
+.tier-avoid   { background:#1f2937; color:#f3f4f6; border-color:#374151; }
 .tier-neutral { background:#e2e8f0; color:#334155; border-color:#cbd5e1; }
 
 /* ---------- hot batter tile ---------- */
@@ -361,15 +361,16 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 # Tier system (single source of truth — used in tiles, tables, and props)
 # ---------------------------------------------------------------------------
 def score_tier(score):
-    """Return (tier_key, label, css_class) for any matchup score."""
+    """Return (tier_key, label, css_class) for any matchup score.
+    Thresholds: Elite >=150, Contender 100-149, Underdog 50-99, Fade <50."""
     try:
         v = float(score)
     except Exception:
         return ("neutral", "N/A", "tier-neutral")
-    if v >= 90:  return ("elite",  "Elite",  "tier-elite")
-    if v >= 78:  return ("strong", "Strong", "tier-strong")
-    if v >= 65:  return ("ok",     "OK",     "tier-ok")
-    return ("avoid", "Avoid", "tier-avoid")
+    if v >= 150: return ("elite",     "Elite",     "tier-elite")
+    if v >= 100: return ("strong",    "Contender", "tier-strong")
+    if v >= 50:  return ("ok",        "Underdog",  "tier-ok")
+    return ("avoid", "Fade", "tier-avoid")
 
 def hr_tier(score, barrel, hr):
     """HR-likelihood tier using score + barrel% + HR count."""
@@ -377,9 +378,9 @@ def hr_tier(score, barrel, hr):
         s = float(score); b = float(barrel); h = float(hr)
     except Exception:
         return ("neutral", "N/A")
-    if s >= 88 and b >= 12:                   return ("elite",  "Elite HR")
-    if s >= 78 and (b >= 10 or h >= 8):       return ("strong", "Strong HR")
-    if s >= 65:                               return ("ok",     "OK HR")
+    if s >= 150 and b >= 12:                   return ("elite",  "Elite HR")
+    if s >= 110 and (b >= 10 or h >= 8):       return ("strong", "Strong HR")
+    if s >= 75:                                return ("ok",     "OK HR")
     return ("avoid", "Cold")
 
 def hit_tier(score, hardhit):
@@ -387,9 +388,9 @@ def hit_tier(score, hardhit):
         s = float(score); h = float(hardhit)
     except Exception:
         return ("neutral", "N/A")
-    if s >= 85 and h >= 45: return ("elite",  "Elite Hit")
-    if s >= 75 and h >= 40: return ("strong", "Strong Hit")
-    if s >= 62:             return ("ok",     "OK Hit")
+    if s >= 145 and h >= 45: return ("elite",  "Elite Hit")
+    if s >= 105 and h >= 40: return ("strong", "Strong Hit")
+    if s >= 70:              return ("ok",     "OK Hit")
     return ("avoid", "Avoid")
 
 def suggested_angle(score, barrel, hr, hardhit):
@@ -1003,18 +1004,18 @@ def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, 
 # Styling helpers (color cells in dataframes by tier)
 # ---------------------------------------------------------------------------
 TIER_BG = {
-    "Elite":  "background-color: #dcfce7; color: #14532d; font-weight: 800;",
-    "Strong": "background-color: #d1fae5; color: #065f46; font-weight: 800;",
-    "OK":     "background-color: #fef3c7; color: #78350f; font-weight: 800;",
-    "Avoid":  "background-color: #fee2e2; color: #7f1d1d; font-weight: 800;",
-    "N/A":    "background-color: #e2e8f0; color: #334155; font-weight: 800;",
+    "Elite":     "background-color: #dcfce7; color: #14532d; font-weight: 800;",
+    "Contender": "background-color: #fef3c7; color: #78350f; font-weight: 800;",
+    "Underdog":  "background-color: #fee2e2; color: #7f1d1d; font-weight: 800;",
+    "Fade":      "background-color: #1f2937; color: #f3f4f6; font-weight: 800;",
+    "N/A":       "background-color: #e2e8f0; color: #334155; font-weight: 800;",
 }
 
 # Score thresholds used by color_score() — must match the legend at the
-# bottom of the page (Elite ≥130 · Strong 110-129 · OK 95-109 · Avoid <95)
-TIER_ELITE  = 130
-TIER_STRONG = 110
-TIER_OK     = 95
+# bottom of the page (Elite >=150 · Contender 100-149 · Underdog 50-99 · Fade <50)
+TIER_ELITE  = 150
+TIER_STRONG = 100
+TIER_OK     = 50
 
 def color_metric(value, low, high):
     try:
@@ -1046,9 +1047,9 @@ def color_score(value):
     except:
         return ""
     if v >= TIER_ELITE:  return "background-color: #16a34a; color: #ffffff; font-weight: 900;"
-    if v >= TIER_STRONG: return "background-color: #86efac; color: #14532d; font-weight: 900;"
-    if v >= TIER_OK:     return "background-color: #fde68a; color: #78350f; font-weight: 900;"
-    return "background-color: #fecaca; color: #7f1d1d; font-weight: 900;"
+    if v >= TIER_STRONG: return "background-color: #fde68a; color: #78350f; font-weight: 900;"
+    if v >= TIER_OK:     return "background-color: #fecaca; color: #7f1d1d; font-weight: 900;"
+    return "background-color: #1f2937; color: #f3f4f6; font-weight: 900;"
 
 def color_tier_cell(value):
     return TIER_BG.get(str(value), "")
@@ -1240,9 +1241,9 @@ def cold_angle(score, k_pct, xwoba, barrel):
     """Suggest a fade angle for a cold-matchup batter. The lower the score and
     the higher the K% the more aggressive the fade language."""
     s = float(score or 0); k = float(k_pct or 22); x = float(xwoba or 0.310); b = float(barrel or 0)
-    if s < 70 and k >= 28:               return "🚫 Strong fade · K prop lean"
+    if s < 60 and k >= 28:                return "🚫 Strong fade · K prop lean"
     if s < 80 and (k >= 25 or x < 0.290): return "🚫 Fade HR · Under TB lean"
-    if s < 95:                            return "⚠️ Avoid · Tough matchup"
+    if s < 100:                           return "⚠️ Avoid · Tough matchup"
     return "⚠️ Below avg · Skip"
 
 def mlb_headshot_html(mlb_id, size_px=56, top=10, right=10):
@@ -1571,7 +1572,7 @@ with top_cols[1]:
         st.cache_data.clear()
         st.rerun()
 with top_cols[2]:
-    show_avoids = st.toggle("Show 'Avoid' tier", value=True, help="Hide red-tier batters from the Hot board")
+    show_avoids = st.toggle("Show 'Underdog' tier", value=True, help="Hide red-tier batters from the Hot board")
 
 # --- Schedule ---------------------------------------------------------------
 try:
@@ -1654,10 +1655,10 @@ st.markdown(
     '<div class="section-title">🔥 Hot Batters · Top Targets This Game</div>'
     + lineup_banner +
     '<div style="margin-bottom:10px;">'
-    '<span class="tier tier-elite">Elite ≥130</span> &nbsp;'
-    '<span class="tier tier-strong">Strong 110-129</span> &nbsp;'
-    '<span class="tier tier-ok">OK 95-109</span> &nbsp;'
-    '<span class="tier tier-avoid">Avoid &lt;95</span>'
+    '<span class="tier tier-elite">Elite ≥150</span> &nbsp;'
+    '<span class="tier tier-strong">Contender 100-149</span> &nbsp;'
+    '<span class="tier tier-ok">Underdog 50-99</span> &nbsp;'
+    '<span class="tier tier-avoid">Fade &lt;50</span>'
     '</div></div>', unsafe_allow_html=True
 )
 
@@ -1666,10 +1667,10 @@ if combined_df.empty:
 else:
     df_hot = combined_df.copy()
     if not show_avoids:
-        df_hot = df_hot[df_hot["Score"] >= 65]
+        df_hot = df_hot[df_hot["Score"] >= 100]
     df_hot = df_hot.sort_values("Score", ascending=False).head(8).reset_index(drop=True)
     if df_hot.empty:
-        st.info("No qualifying batters at this filter level. Toggle 'Show Avoid tier' to see all.")
+        st.info("No qualifying batters at this filter level. Toggle 'Show Underdog tier' to see all.")
     else:
         cols_per_row = 4
         rows = [df_hot.iloc[i:i+cols_per_row] for i in range(0, len(df_hot), cols_per_row)]
@@ -1820,7 +1821,7 @@ with st.expander("📊 Data status & sources", expanded=False):
 st.markdown(
     '<div class="footer">⚾ <b>MrBets850 MLB Edge</b> · '
     'Powered by Baseball Savant + MLB StatsAPI + Open-Meteo · '
-    'Color tiers: Elite 🟢 (≥130) · Strong 🟢 (110-129) · OK 🟡 (95-109) · Avoid 🔴 (&lt;95) · '
+    'Color tiers: Elite 🟢 (≥150) · Contender 🟡 (100-149) · Underdog 🔴 (50-99) · Fade ⚫ (&lt;50) · '
     'For research purposes only.</div>',
     unsafe_allow_html=True,
 )

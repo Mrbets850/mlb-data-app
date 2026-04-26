@@ -638,6 +638,7 @@ def roster_df_from_box(team_box, fallback_team):
         rows.append({
             "player_name": person.get("fullName", ""),
             "name_key": clean_name(person.get("fullName", "")),
+            "player_id": person.get("id", ""),  # MLB Stats API id (= Savant id)
             "team": norm_team(fallback_team),
             "position": pdata.get("position", {}).get("abbreviation", ""),
             "bat_side": pdata.get("batSide", {}).get("code", ""),
@@ -645,6 +646,29 @@ def roster_df_from_box(team_box, fallback_team):
             "lineup_spot": lineup_spot
         })
     return pd.DataFrame(rows)
+
+def lookup_pitcher_mlb_id(roster_df, pitchers_df, pitcher_name):
+    """Resolve a probable pitcher's MLB/Savant numeric id, preferring the
+    live boxscore roster (always current) and falling back to the Savant
+    pitchers CSV which already carries player_id."""
+    if not pitcher_name or pitcher_name == "TBD":
+        return None
+    key = clean_name(pitcher_name)
+    if roster_df is not None and not roster_df.empty:
+        hit = roster_df[roster_df["name_key"] == key]
+        if not hit.empty and hit.iloc[0].get("player_id"):
+            try:
+                return int(hit.iloc[0]["player_id"])
+            except Exception:
+                pass
+    if pitchers_df is not None and not pitchers_df.empty and "player_id" in pitchers_df.columns:
+        hit = pitchers_df[pitchers_df["name_key"] == key]
+        if not hit.empty:
+            try:
+                return int(hit.iloc[0]["player_id"])
+            except Exception:
+                pass
+    return None
 
 def lookup_pitch_hand(roster_df, pitcher_name):
     if roster_df.empty or not pitcher_name or pitcher_name == "TBD":
@@ -689,6 +713,8 @@ def build_game_context(game_row):
         "weather": weather,
         "away_lineup": away_lineup,
         "home_lineup": home_lineup,
+        "away_roster": away_roster,
+        "home_roster": home_roster,
         "away_status": "Confirmed" if len(away_lineup) >= 9 else "Not Confirmed",
         "home_status": "Confirmed" if len(home_lineup) >= 9 else "Not Confirmed",
         "home_pitch_hand": home_pitch_hand,
@@ -794,9 +820,13 @@ def pitcher_vulnerability(pitcher_row):
     return (round(score,1), "avoid", "Tough")
 
 def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, park_factor):
+    # NOTE: Bat/Split removed (StatsAPI lineup feed often returns blank batSide
+    # before lineups are official). Stats CSV now (Apr 2026 update) carries
+    # home_run / xslg / xba / exit_velocity_avg, so HR + xSLG are real numbers
+    # again, not defaults. Columns: HR, ISO, xSLG, xwOBA, Barrel%, HardHit%, K%.
     empty_cols = [
-        "Spot", "Player", "Pos", "Bat", "Split", "Tier",
-        "HR", "ISO", "xSLG", "Barrel%", "HardHit%", "Score", "Angle"
+        "Spot", "Player", "Pos", "Tier",
+        "HR", "ISO", "xSLG", "xwOBA", "Barrel%", "HardHit%", "K%", "Score", "Angle"
     ]
     if lineup_df.empty:
         return pd.DataFrame(columns=empty_cols)
@@ -820,18 +850,22 @@ def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, 
         _, tier_label, _ = score_tier(score)
         angle = suggested_angle(score, barrel, hr, hardhit)
 
+        # extra populated stats from the (Apr 2026) batters CSV
+        xwoba = safe_float(batter_row.get("xwOBA") if batter_row is not None else None, 0.310)
+        k_pct = safe_float(batter_row.get("K%")    if batter_row is not None else None, 22.0)
+
         out_rows.append({
             "Spot": int(row["lineup_spot"]) if pd.notna(row["lineup_spot"]) else 99,
             "Player": row["player_name"],
             "Pos": row["position"],
-            "Bat": row["bat_side"],
-            "Split": handedness_label(row["bat_side"], opp_pitch_hand),
             "Tier": tier_label,
             "HR": hr,
             "ISO": iso,
             "xSLG": xslg,
+            "xwOBA": xwoba,
             "Barrel%": barrel,
             "HardHit%": hardhit,
+            "K%": k_pct,
             "Score": score,
             "Angle": angle,
         })
@@ -871,6 +905,19 @@ def color_metric(value, low, high):
         return "background-color: #fef3c7; color: #78350f; font-weight: 800;"
     return "background-color: #fee2e2; color: #7f1d1d; font-weight: 800;"
 
+def color_metric_inverse(value, good_max, bad_min):
+    """For stats where LOWER is better (e.g. K% from a hitter's perspective).
+    `good_max`: at-or-below this value = green. `bad_min`: at-or-above = red."""
+    try:
+        v = float(value)
+    except:
+        return ""
+    if v <= good_max:
+        return "background-color: #dcfce7; color: #14532d; font-weight: 800;"
+    if v <= bad_min:
+        return "background-color: #fef3c7; color: #78350f; font-weight: 800;"
+    return "background-color: #fee2e2; color: #7f1d1d; font-weight: 800;"
+
 def color_score(value):
     try:
         v = float(value)
@@ -887,11 +934,14 @@ def color_tier_cell(value):
 def style_lineup_table(df):
     if df.empty:
         return df
-    styler = df.style.format({
-        "ISO": "{:.3f}", "xSLG": "{:.3f}",
+    fmt = {
+        "ISO": "{:.3f}", "xSLG": "{:.3f}", "xwOBA": "{:.3f}",
         "Barrel%": "{:.1f}", "HardHit%": "{:.1f}",
-        "Score": "{:.1f}", "HR": "{:.0f}",
-    })
+        "K%": "{:.1f}", "Score": "{:.1f}", "HR": "{:.0f}",
+    }
+    # only format columns that actually exist in the slice being rendered
+    fmt = {k: v for k, v in fmt.items() if k in df.columns}
+    styler = df.style.format(fmt)
     base_text = [
         {"selector": "th", "props": [("color", "#0f172a"), ("font-size", "13px"),
                                      ("font-weight", "800"), ("background-color", "#f1f5f9"),
@@ -903,10 +953,15 @@ def style_lineup_table(df):
         styler = styler.map(lambda x: color_metric(x, 0.170, 0.220), subset=["ISO"])
     if "xSLG" in df.columns:
         styler = styler.map(lambda x: color_metric(x, 0.420, 0.500), subset=["xSLG"])
+    if "xwOBA" in df.columns:
+        styler = styler.map(lambda x: color_metric(x, 0.310, 0.360), subset=["xwOBA"])
     if "Barrel%" in df.columns:
         styler = styler.map(lambda x: color_metric(x, 8.0, 12.0), subset=["Barrel%"])
     if "HardHit%" in df.columns:
         styler = styler.map(lambda x: color_metric(x, 38.0, 45.0), subset=["HardHit%"])
+    if "K%" in df.columns:
+        # K% is INVERSE: lower is better for the hitter, so flip the thresholds
+        styler = styler.map(lambda x: color_metric_inverse(x, 18.0, 25.0), subset=["K%"])
     if "Score" in df.columns:
         styler = styler.map(color_score, subset=["Score"])
     if "Tier" in df.columns:
@@ -992,6 +1047,39 @@ def render_hot_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
     </div>
     """, unsafe_allow_html=True)
 
+def cold_angle(score, k_pct, xwoba, barrel):
+    """Suggest a fade angle for a cold-matchup batter. The lower the score and
+    the higher the K% the more aggressive the fade language."""
+    s = float(score or 0); k = float(k_pct or 22); x = float(xwoba or 0.310); b = float(barrel or 0)
+    if s < 70 and k >= 28:               return "🚫 Strong fade · K prop lean"
+    if s < 80 and (k >= 25 or x < 0.290): return "🚫 Fade HR · Under TB lean"
+    if s < 95:                            return "⚠️ Avoid · Tough matchup"
+    return "⚠️ Below avg · Skip"
+
+def render_cold_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
+    score = float(row.get("Score", 0) or 0)
+    barrel = float(row.get("Barrel%", 0) or 0)
+    hardhit = float(row.get("HardHit%", 0) or 0)
+    k_pct = float(row.get("K%", 0) or 0)
+    xwoba = float(row.get("xwOBA", 0) or 0)
+    iso = float(row.get("ISO", 0) or 0)
+    spot = int(row.get("Spot", 0) or 0)
+    angle = cold_angle(score, k_pct, xwoba, barrel)
+
+    # All cold-board tiles use the red/avoid styling regardless of underlying tier
+    st.markdown(f"""
+    <div class="batter-tile avoid">
+        <div class="rank">#{rank} · Cold · Bat {spot}</div>
+        <div class="name">{row.get("Player", "")}</div>
+        <div class="vs">vs {opposing_pitcher} ({opposing_team_abbr})</div>
+        <div class="score">{score:.1f}<span style="font-size:0.7rem; color:#64748b; font-weight:700; margin-left:6px;">SCORE</span></div>
+        <div class="stats">
+            K% <b>{k_pct:.1f}</b> · xwOBA <b>{xwoba:.3f}</b> · ISO <b>{iso:.3f}</b> · Barrel <b>{barrel:.1f}%</b>
+        </div>
+        <div class="angle">{angle}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 def render_pitcher_tile(label, pitcher_name, pitch_hand, pitcher_row):
     score, key, verdict = pitcher_vulnerability(pitcher_row)
     if pitcher_row is None:
@@ -1029,6 +1117,119 @@ def render_pitcher_tile(label, pitcher_name, pitch_hand, pitcher_row):
     """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
+# Pitch-mix (arsenal) lookup from Baseball Savant player page
+# ---------------------------------------------------------------------------
+# The savant-player HTML embeds the current-season pitch usage breakdown as
+# a series of paired <div> blocks: the pitch name (colored) followed by the
+# usage percentage in parentheses. We parse the most recent season block
+# (the page lists years descending). Cached for 6 hours so we make at most
+# two calls per game-card view per slate.
+# Note: Savant's player page uses friendly labels like "Four Seamer" (not
+# "4-Seam Fastball") for inline pitch breakdowns; we map both forms.
+PITCH_NAME_TO_CAT = {
+    "Four Seamer":         ("Fastball", "FF"),
+    "4-Seam Fastball":     ("Fastball", "FF"),
+    "Sinker":              ("Fastball", "SI"),
+    "Cutter":              ("Fastball", "FC"),
+    "Changeup":            ("Offspeed", "CH"),
+    "Splitter":            ("Offspeed", "FS"),
+    "Split-Finger":        ("Offspeed", "FS"),
+    "Forkball":            ("Offspeed", "FO"),
+    "Screwball":           ("Offspeed", "SC"),
+    "Slider":              ("Breaking", "SL"),
+    "Curveball":           ("Breaking", "CU"),
+    "Knuckle Curve":       ("Breaking", "KC"),
+    "Sweeper":             ("Breaking", "ST"),
+    "Slurve":              ("Breaking", "SV"),
+    "Knuckleball":         ("Breaking", "KN"),
+    "Eephus":              ("Other",    "EP"),
+}
+CATEGORY_COLOR = {"Fastball": "#ef4444", "Offspeed": "#22c55e",
+                  "Breaking": "#3b82f6", "Other":    "#94a3b8"}
+
+@st.cache_data(ttl=21600, show_spinner=False)  # 6 hours
+def get_pitch_arsenal(mlb_id):
+    """Return list[(pitch_name, usage_pct, category, color_hex)] for a pitcher,
+    most recent season first. Returns [] on any failure."""
+    if not mlb_id:
+        return []
+    url = f"https://baseballsavant.mlb.com/savant-player/{int(mlb_id)}?stats=statcast-r-pitching-mlb"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return []
+        html = resp.text
+    except Exception:
+        return []
+
+    # The page lists pitches as:
+    #   <div style="display: inline-block; color: #XXXXXX;">Sinker</div>
+    #   <div style="display: inline-block;">(18.2%) ...
+    pattern = re.compile(
+        r'<div style="display: inline-block; color: #([0-9A-Fa-f]{6});">'
+        r'([^<]+)</div>\s*<div style="display: inline-block;">\((\d+\.?\d*)%\)',
+        re.IGNORECASE
+    )
+    matches = pattern.findall(html)
+    if not matches:
+        return []
+
+    # The page repeats the block for each season (current year first). Cap at
+    # the first ~10 hits which represent the current-season arsenal.
+    seen = set()
+    out = []
+    for color, name, pct in matches:
+        clean = name.strip()
+        if clean in seen:
+            # second occurrence = previous season -> stop
+            break
+        seen.add(clean)
+        cat, _abbr = PITCH_NAME_TO_CAT.get(clean, ("Other", ""))
+        out.append((clean, float(pct), cat, f"#{color}"))
+    # sort high -> low usage
+    out.sort(key=lambda x: x[1], reverse=True)
+    return out
+
+def render_pitch_mix_tile(pitcher_name, mlb_id):
+    arsenal = get_pitch_arsenal(mlb_id)
+    if not arsenal:
+        st.markdown(f"""
+        <div class="section-card" style="padding:14px 18px;">
+            <div style="font-size:0.78rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">Pitch Mix</div>
+            <div style="color:#64748b; font-size:0.9rem; margin-top:4px;">No arsenal data available for {pitcher_name or "TBD"}.</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # Build a horizontal stacked-bar visualization
+    bar_segments = "".join(
+        f'<div title="{name} {pct:.1f}%" style="flex:{pct}; background:{color}; '
+        f'min-width:1px; border-right:1px solid #fff;"></div>'
+        for (name, pct, _cat, color) in arsenal
+    )
+    chips = "".join(
+        f'<span style="display:inline-flex; align-items:center; gap:6px; '
+        f'padding:4px 10px; border-radius:999px; background:#f1f5f9; '
+        f'border:1px solid #e2e8f0; font-size:0.82rem; font-weight:700; '
+        f'color:#0f172a; margin:3px 4px 3px 0;">'
+        f'<span style="width:10px; height:10px; border-radius:2px; background:{color};"></span>'
+        f'{name} <b style="color:#475569;">{pct:.1f}%</b></span>'
+        for (name, pct, _cat, color) in arsenal
+    )
+    st.markdown(f"""
+    <div class="section-card" style="padding:14px 18px;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+            <div style="font-size:0.78rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">Pitch Mix · {pitcher_name}</div>
+            <div style="font-size:0.72rem; color:#94a3b8; font-weight:700;">Current season · Baseball Savant</div>
+        </div>
+        <div style="display:flex; height:14px; border-radius:7px; overflow:hidden; box-shadow:inset 0 0 0 1px #e2e8f0;">
+            {bar_segments}
+        </div>
+        <div style="margin-top:10px;">{chips}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
 # Main app
 # ---------------------------------------------------------------------------
 with st.spinner("Loading Baseball Savant data from GitHub..."):
@@ -1039,7 +1240,7 @@ pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
 # --- Top controls row -------------------------------------------------------
 top_cols = st.columns([2.2, 1, 1])
 with top_cols[0]:
-    selected_date = st.date_input("📅 Slate date", value=date.today(), label_visibility="collapsed")
+    selected_date = st.date_input("📅 Slate date", value=date.today())
 with top_cols[1]:
     if st.button("🔄 Refresh data", width="stretch"):
         st.cache_data.clear()
@@ -1161,6 +1362,22 @@ with pcols[1]:
         pitcher_row=find_pitcher_row(pitchers_df, game_row["home_probable"]),
     )
 
+# --- Pitch Mix (arsenal) for both probable starters ------------------------
+st.markdown(
+    '<div class="section-card">'
+    '<div class="section-title">🎯 Pitch Mix · What They Throw</div>'
+    '<div style="font-size:0.78rem; color:#64748b;">'
+    'Current-season usage from Baseball Savant. Hover any segment for the exact percentage.'
+    '</div></div>', unsafe_allow_html=True
+)
+mcols = st.columns(2)
+with mcols[0]:
+    away_id = lookup_pitcher_mlb_id(context.get("away_roster"), pitchers_df, game_row["away_probable"])
+    render_pitch_mix_tile(game_row["away_probable"], away_id)
+with mcols[1]:
+    home_id = lookup_pitcher_mlb_id(context.get("home_roster"), pitchers_df, game_row["home_probable"])
+    render_pitch_mix_tile(game_row["home_probable"], home_id)
+
 # --- Lineup tables ----------------------------------------------------------
 def render_lineup_section(team_abbr, opp_pitcher, table):
     st.markdown(
@@ -1171,8 +1388,9 @@ def render_lineup_section(team_abbr, opp_pitcher, table):
     if table.empty or "Spot" not in table.columns:
         st.info(f"{team_abbr} lineup not posted yet — check back closer to first pitch.")
     else:
-        display = table[["Spot", "Player", "Pos", "Bat", "Split", "Tier",
-                         "HR", "ISO", "xSLG", "Barrel%", "HardHit%", "Score", "Angle"]]
+        display = table[["Spot", "Player", "Pos", "Tier",
+                         "HR", "ISO", "xSLG", "xwOBA",
+                         "Barrel%", "HardHit%", "K%", "Score", "Angle"]]
         st.dataframe(style_lineup_table(display), width="stretch", hide_index=True)
 
 render_lineup_section(game_row["away_abbr"], game_row["home_probable"], away_table)
@@ -1208,7 +1426,7 @@ with st.expander("🌡️ Slate-wide Hot Batter Board (all games today)", expand
     else:
         slate_df = slate_df.sort_values("Score", ascending=False).head(15).reset_index(drop=True)
         slate_display = slate_df[["Game", "TeamAbbr", "Player", "Spot", "Tier",
-                                  "HR", "ISO", "Barrel%", "HardHit%", "Score", "Angle"]].rename(
+                                  "HR", "ISO", "xwOBA", "Barrel%", "HardHit%", "K%", "Score", "Angle"]].rename(
             columns={"TeamAbbr": "Team"}
         )
         st.dataframe(style_lineup_table(slate_display), width="stretch", hide_index=True)

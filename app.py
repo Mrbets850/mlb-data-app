@@ -1287,29 +1287,34 @@ def render_pitcher_tile(label, pitcher_name, pitch_hand, pitcher_row):
             mlb_id = None
     headshot_html = mlb_headshot_html(mlb_id, size_px=64, top=12, right=12)
 
-    st.markdown(f"""
-    <div class="pitcher-tile vuln-{key}" style="position:relative;">
-        {headshot_html}
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; padding-right:76px;">
-            <div>
-                <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">{label}</div>
-                <h4>{pitcher_name or "TBD"} <span style="color:#64748b; font-size:0.85rem;">({pitch_hand or "?"})</span></h4>
-                <div class="meta">{sub}</div>
-            </div>
-            <div style="text-align:right;">
-                <div style="font-size:1.6rem; font-weight:900; color:#0f172a; line-height:1;">{score}</div>
-                <span class="tier tier-{('elite' if key=='elite' else 'strong' if key=='strong' else 'ok' if key=='ok' else 'avoid')}">{verdict}</span>
-            </div>
-        </div>
-        <div class="grid">
-            <div><div class="k">K%</div><div class="v">{k}</div></div>
-            <div><div class="k">BB%</div><div class="v">{bb}</div></div>
-            <div><div class="k">xwOBA</div><div class="v">{era_w}</div></div>
-            <div><div class="k">Barrel%</div><div class="v">{barrel}</div></div>
-            <div><div class="k">HardHit%</div><div class="v">{hardhit}</div></div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Build as one concatenated line (no leading whitespace) so when the
+    # headshot is missing the empty interpolation doesn't trip Streamlit's
+    # markdown parser into treating indented HTML as a code block.
+    pill_key = "elite" if key == "elite" else "strong" if key == "strong" else "ok" if key == "ok" else "avoid"
+    html = (
+        f'<div class="pitcher-tile vuln-{key}" style="position:relative;">'
+        f'{headshot_html}'
+        f'<div style="display:flex; justify-content:space-between; align-items:flex-start; padding-right:76px;">'
+        f'<div>'
+        f'<div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">{label}</div>'
+        f'<h4>{pitcher_name or "TBD"} <span style="color:#64748b; font-size:0.85rem;">({pitch_hand or "?"})</span></h4>'
+        f'<div class="meta">{sub}</div>'
+        f'</div>'
+        f'<div style="text-align:right;">'
+        f'<div style="font-size:1.6rem; font-weight:900; color:#0f172a; line-height:1;">{score}</div>'
+        f'<span class="tier tier-{pill_key}">{verdict}</span>'
+        f'</div>'
+        f'</div>'
+        f'<div class="grid">'
+        f'<div><div class="k">K%</div><div class="v">{k}</div></div>'
+        f'<div><div class="k">BB%</div><div class="v">{bb}</div></div>'
+        f'<div><div class="k">xwOBA</div><div class="v">{era_w}</div></div>'
+        f'<div><div class="k">Barrel%</div><div class="v">{barrel}</div></div>'
+        f'<div><div class="k">HardHit%</div><div class="v">{hardhit}</div></div>'
+        f'</div>'
+        f'</div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Pitch-mix (arsenal) lookup from Baseball Savant player page

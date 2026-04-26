@@ -858,6 +858,19 @@ def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, 
         k_pct = safe_float(batter_row.get("K%")    if batter_row is not None else None, 22.0)
         ev    = safe_float(batter_row.get("EV")    if batter_row is not None else None, 0.0)
         fb_pct= safe_float(batter_row.get("FB%")   if batter_row is not None else None, 0.0)
+        # Savant id -> used for the per-batter "crushes" pitch lookup on hot tiles
+        b_id = None
+        if batter_row is not None and "player_id" in batter_row.index:
+            try:
+                b_id = int(batter_row.get("player_id"))
+            except Exception:
+                b_id = None
+        # fall back to the lineup row's player_id (from the boxscore roster)
+        if not b_id and "player_id" in row.index:
+            try:
+                b_id = int(row["player_id"])
+            except Exception:
+                b_id = None
 
         out_rows.append({
             "Spot": int(row["lineup_spot"]) if pd.notna(row["lineup_spot"]) else 99,
@@ -875,6 +888,7 @@ def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, 
             "FB%": fb_pct,
             "Score": score,
             "Angle": angle,
+            "MLB_ID": b_id,
         })
 
     df = pd.DataFrame(out_rows)
@@ -1046,6 +1060,20 @@ def render_hot_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
     ev_str = f"{ev:.1f}" if ev > 0 else "—"
     fb_str = f"{fb_pct:.1f}%" if fb_pct > 0 else "—"
 
+    # Best pitch this batter crushes (Run Value table on Savant)
+    crush_html = ""
+    mlb_id = row.get("MLB_ID") if "MLB_ID" in row.index else None
+    if mlb_id:
+        best = get_batter_best_pitch(mlb_id)
+        if best:
+            pitch_name, woba_str, color_hex = best
+            crush_html = (
+                f'<div class="stats" style="margin-top:4px;">'
+                f'🔨 Crushes <b style="color:{color_hex};">{pitch_name}</b> '
+                f'· wOBA <b>{woba_str}</b>'
+                f'</div>'
+            )
+
     st.markdown(f"""
     <div class="batter-tile {tier_key}">
         <div class="rank">#{rank} · {tier_label} · Bat {spot}</div>
@@ -1058,6 +1086,7 @@ def render_hot_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
         <div class="stats" style="margin-top:4px;">
             EV <b>{ev_str}</b> · FB% <b>{fb_str}</b>
         </div>
+        {crush_html}
         <div class="angle">{angle} · <span class="tier tier-{hr_key}" style="font-size:0.7rem; padding:2px 8px;">{hr_label}</span></div>
     </div>
     """, unsafe_allow_html=True)
@@ -1236,6 +1265,66 @@ def get_pitch_arsenal(mlb_id):
     # sort high -> low usage
     out.sort(key=lambda x: x[1], reverse=True)
     return out
+
+@st.cache_data(ttl=21600, show_spinner=False)  # 6 hours
+def get_batter_best_pitch(mlb_id):
+    """Return (pitch_name, woba_str, color_hex) of the pitch this batter
+    crushes most this season, or None on any failure.
+    Pulls Baseball Savant's "Run Values" table for the batter and picks the
+    pitch with the highest wOBA among those with PA >= 5."""
+    if not mlb_id:
+        return None
+    url = f"https://baseballsavant.mlb.com/savant-player/{int(mlb_id)}?stats=statcast-r-hitting-mlb"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return None
+        html = resp.text
+    except Exception:
+        return None
+
+    # Pull the runValues table
+    tbl = re.search(r'<table id="runValues">(.+?)</table>', html, re.DOTALL)
+    if not tbl:
+        return None
+    body = tbl.group(1)
+    rows = re.findall(r'<tr[^>]*class="default-table-row[^"]*"[^>]*>(.+?)</tr>', body, re.DOTALL)
+    if not rows:
+        return None
+
+    # Columns: Year, Pitch Type, Team, RV/100, RV, Pitches, %, PA, BA, SLG,
+    # wOBA, Whiff%, K%, PutAway%, xBA, xSLG, xwOBA, HardHit%
+    best = None  # (woba_float, name, color_hex, woba_str)
+    current_year = None
+    for r in rows:
+        # capture pitch color from the inline span
+        color_match = re.search(r'<span style="color: #([0-9A-Fa-f]{6});">', r)
+        color = color_match.group(1) if color_match else "94a3b8"
+        cells = re.findall(r'<td[^>]*>(.+?)</td>', r, re.DOTALL)
+        cells = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+        if len(cells) < 11:
+            continue
+        year = cells[0]
+        if current_year is None:
+            current_year = year       # first row is most recent season
+        if year != current_year:
+            break                     # stop once we hit a prior season
+        pitch_name = cells[1]
+        try:
+            pa = int(cells[7])
+            woba_str = cells[10]
+            woba = float(woba_str) if woba_str else 0.0
+        except (ValueError, IndexError):
+            continue
+        if pa < 5:
+            continue                  # too small a sample
+        if best is None or woba > best[0]:
+            best = (woba, pitch_name, color, woba_str)
+
+    if best is None:
+        return None
+    _, name, color, woba_str = best
+    return (name, woba_str, f"#{color}")
 
 def render_pitch_mix_tile(pitcher_name, mlb_id, pitcher_row=None):
     """Render the pitch-mix card. Tries the CSV row first (fast, includes

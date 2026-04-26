@@ -632,6 +632,75 @@ def get_boxscore(game_pk):
     r.raise_for_status()
     return r.json()
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_team_id_for_abbr(abbr):
+    """Map a team abbreviation (e.g. 'BOS') to MLB Stats API teamId."""
+    if not abbr:
+        return None
+    try:
+        r = requests.get(
+            "https://statsapi.mlb.com/api/v1/teams?sportId=1",
+            headers=HEADERS, timeout=15
+        ).json()
+    except Exception:
+        return None
+    target = norm_team(abbr)
+    for t in r.get("teams", []):
+        if norm_team(t.get("abbreviation", "")) == target:
+            return t.get("id")
+    return None
+
+@st.cache_data(ttl=900, show_spinner=False)  # 15 min
+def get_last_completed_game_pk(team_id, before_date):
+    """Find the most recent completed game_pk for a team, scanning back up
+    to 7 days from before_date (YYYY-MM-DD). Returns (game_pk, date) or None."""
+    if not team_id:
+        return None
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        end = _dt.fromisoformat(before_date) - _td(days=1)
+        start = end - _td(days=7)
+        url = (
+            f"https://statsapi.mlb.com/api/v1/schedule?sportId=1"
+            f"&teamId={team_id}&startDate={start.date()}&endDate={end.date()}"
+        )
+        r = requests.get(url, headers=HEADERS, timeout=15).json()
+    except Exception:
+        return None
+    # Walk dates newest-first; pick the latest Final game
+    dates = sorted(r.get("dates", []), key=lambda d: d.get("date", ""), reverse=True)
+    for d in dates:
+        for g in d.get("games", []):
+            if g.get("status", {}).get("abstractGameState") == "Final":
+                return (g.get("gamePk"), d.get("date"))
+    return None
+
+def projected_lineup_from_yesterday(team_abbr, today_iso):
+    """Return a roster_df-style DataFrame with battingOrder filled in from
+    this team's most recent completed game. Empty df on any miss."""
+    team_id = get_team_id_for_abbr(team_abbr)
+    if not team_id:
+        return pd.DataFrame()
+    last = get_last_completed_game_pk(team_id, today_iso)
+    if not last:
+        return pd.DataFrame()
+    last_pk, _last_date = last
+    try:
+        box = get_boxscore(last_pk)
+    except Exception:
+        return pd.DataFrame()
+    # which side was this team in that boxscore?
+    teams = box.get("teams", {})
+    away_id = teams.get("away", {}).get("team", {}).get("id")
+    if away_id == team_id:
+        side_box = teams.get("away", {})
+    else:
+        side_box = teams.get("home", {})
+    df = roster_df_from_box(side_box, team_abbr)
+    # keep only the 9 batters from that game
+    df = df[(df["lineup_spot"].notna()) & (df["position"] != "P")].copy()
+    return df.sort_values("lineup_spot") if not df.empty else df
+
 def roster_df_from_box(team_box, fallback_team):
     rows = []
     for pdata in team_box.get("players", {}).values():
@@ -694,6 +763,33 @@ def build_game_context(game_row):
     away_lineup = away_roster[(away_roster["lineup_spot"].notna()) & (away_roster["position"] != "P")].copy()
     home_lineup = home_roster[(home_roster["lineup_spot"].notna()) & (home_roster["position"] != "P")].copy()
 
+    # Track confirmation status separately so we can show a 'PROJECTED' badge
+    # when we substitute yesterday's lineup before MLB confirms today's.
+    away_confirmed = len(away_lineup) >= 9
+    home_confirmed = len(home_lineup) >= 9
+    away_projected = home_projected = False
+
+    today_iso = str(game_row.get("game_date") or "")
+    if not today_iso:
+        # game_time_utc starts with YYYY-MM-DD
+        today_iso = str(game_row.get("game_time_utc", ""))[:10]
+
+    # Fall back to each team's most recent completed lineup if today isn't confirmed
+    if not away_confirmed:
+        proj = projected_lineup_from_yesterday(game_row["away_abbr"], today_iso)
+        if not proj.empty:
+            away_lineup = proj
+            away_projected = True
+            if away_roster.empty:
+                away_roster = proj
+    if not home_confirmed:
+        proj = projected_lineup_from_yesterday(game_row["home_abbr"], today_iso)
+        if not proj.empty:
+            home_lineup = proj
+            home_projected = True
+            if home_roster.empty:
+                home_roster = proj
+
     if not away_lineup.empty:
         away_lineup = away_lineup.sort_values("lineup_spot")
     if not home_lineup.empty:
@@ -702,15 +798,20 @@ def build_game_context(game_row):
     home_pitch_hand = lookup_pitch_hand(home_roster, game_row["home_probable"])
     away_pitch_hand = lookup_pitch_hand(away_roster, game_row["away_probable"])
 
+    def _status(confirmed, projected):
+        if confirmed:   return "Confirmed"
+        if projected:   return "Projected"
+        return "Not Confirmed"
+
     if not away_lineup.empty:
         away_lineup["opposing_pitcher"] = game_row["home_probable"]
         away_lineup["opposing_pitch_hand"] = home_pitch_hand
-        away_lineup["lineup_status"] = "Confirmed" if len(away_lineup) >= 9 else "Not Confirmed"
+        away_lineup["lineup_status"] = _status(away_confirmed, away_projected)
 
     if not home_lineup.empty:
         home_lineup["opposing_pitcher"] = game_row["away_probable"]
         home_lineup["opposing_pitch_hand"] = away_pitch_hand
-        home_lineup["lineup_status"] = "Confirmed" if len(home_lineup) >= 9 else "Not Confirmed"
+        home_lineup["lineup_status"] = _status(home_confirmed, home_projected)
 
     return {
         "weather": weather,
@@ -718,8 +819,8 @@ def build_game_context(game_row):
         "home_lineup": home_lineup,
         "away_roster": away_roster,
         "home_roster": home_roster,
-        "away_status": "Confirmed" if len(away_lineup) >= 9 else "Not Confirmed",
-        "home_status": "Confirmed" if len(home_lineup) >= 9 else "Not Confirmed",
+        "away_status": _status(away_confirmed, away_projected),
+        "home_status": _status(home_confirmed, home_projected),
         "home_pitch_hand": home_pitch_hand,
         "away_pitch_hand": away_pitch_hand
     }
@@ -993,6 +1094,15 @@ def style_lineup_table(df):
 # UI components
 # ---------------------------------------------------------------------------
 def render_brand_bar(slate_count):
+    # Central time stamp so the user can see when data was last pulled
+    import datetime as _dtm
+    try:
+        from zoneinfo import ZoneInfo
+        now_ct = _dtm.datetime.now(ZoneInfo("America/Chicago"))
+    except Exception:
+        # crude UTC->CT fallback (CDT = UTC-5, ignore DST edge cases)
+        now_ct = _dtm.datetime.utcnow() - _dtm.timedelta(hours=5)
+    stamp = now_ct.strftime("%-I:%M %p CT")
     st.markdown(f"""
     <div class="brand-bar">
         <div>
@@ -1001,7 +1111,7 @@ def render_brand_bar(slate_count):
         </div>
         <div class="brand-meta">
             <div class="big">{slate_count} {'game' if slate_count == 1 else 'games'} on slate</div>
-            <div>Live data · Auto-refresh 30 min</div>
+            <div>Updated {stamp} · Auto-refresh 30 min</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1011,8 +1121,16 @@ def render_game_card(game_row, context, weather):
     temp = weather.get("temp_f");   temp_str = f"{temp}°F" if temp is not None else "N/A"
     wind = weather.get("wind_mph"); wind_str = f"{round(float(wind))} mph" if wind is not None else "N/A"
     away_status = context["away_status"]; home_status = context["home_status"]
-    away_pill = "tier-strong" if away_status == "Confirmed" else "tier-ok"
-    home_pill = "tier-strong" if home_status == "Confirmed" else "tier-ok"
+    def _pill(status):
+        if status == "Confirmed":  return "tier-strong"
+        if status == "Projected":  return "tier-ok"
+        return "tier-avoid"
+    def _label(status):
+        if status == "Projected":  return "PROJECTED"
+        if status == "Confirmed":  return "CONFIRMED"
+        return "NOT CONFIRMED"
+    away_pill = _pill(away_status); home_pill = _pill(home_status)
+    away_status_label = _label(away_status); home_status_label = _label(home_status)
 
     st.markdown(f"""
     <div class="section-card dark">
@@ -1038,8 +1156,8 @@ def render_game_card(game_row, context, weather):
             <div class="kpi"><span class="k">Temp</span>{temp_str}</div>
             <div class="kpi"><span class="k">Wind</span>{wind_str}</div>
             <div class="kpi"><span class="k">Rain</span>{rain_str}</div>
-            <div class="kpi"><span class="tier {away_pill}">{game_row["away_abbr"]}: {away_status}</span></div>
-            <div class="kpi"><span class="tier {home_pill}">{game_row["home_abbr"]}: {home_status}</span></div>
+            <div class="kpi"><span class="tier {away_pill}">{game_row["away_abbr"]}: {away_status_label}</span></div>
+            <div class="kpi"><span class="tier {home_pill}">{game_row["home_abbr"]}: {home_status_label}</span></div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1485,9 +1603,28 @@ for _, r in home_table.iterrows():
 combined_df = pd.DataFrame(combined_rows)
 
 # --- 🔥 Hot Batters board (top 8 by score) ----------------------------------
+# Projected vs Confirmed banner
+lineup_banner = ""
+any_projected = (context["away_status"] == "Projected") or (context["home_status"] == "Projected")
+any_confirmed = (context["away_status"] == "Confirmed") or (context["home_status"] == "Confirmed")
+both_confirmed = (context["away_status"] == "Confirmed") and (context["home_status"] == "Confirmed")
+if both_confirmed:
+    lineup_banner = (
+        '<div style="background:#dcfce7; border:1px solid #16a34a; color:#14532d; '
+        'padding:6px 12px; border-radius:8px; font-size:0.78rem; font-weight:700; '
+        'margin-bottom:10px;">✅ Both lineups CONFIRMED · stats reflect today\'s order</div>'
+    )
+elif any_projected:
+    lineup_banner = (
+        '<div style="background:#fef3c7; border:1px solid #f59e0b; color:#78350f; '
+        'padding:6px 12px; border-radius:8px; font-size:0.78rem; font-weight:700; '
+        'margin-bottom:10px;">📋 PROJECTED LINEUP · using each team\'s most recent '
+        'confirmed lineup. Board auto-updates when MLB confirms today\'s order.</div>'
+    )
 st.markdown(
     '<div class="section-card">'
     '<div class="section-title">🔥 Hot Batters · Top Targets This Game</div>'
+    + lineup_banner +
     '<div style="margin-bottom:10px;">'
     '<span class="tier tier-elite">Elite ≥130</span> &nbsp;'
     '<span class="tier tier-strong">Strong 110-129</span> &nbsp;'
@@ -1497,7 +1634,7 @@ st.markdown(
 )
 
 if combined_df.empty:
-    st.info("Lineups not posted yet. Hot batters will appear once today's lineups are confirmed.")
+    st.info("Lineups not available yet (no projected fallback could be loaded). Hot batters will appear once lineups post.")
 else:
     df_hot = combined_df.copy()
     if not show_avoids:

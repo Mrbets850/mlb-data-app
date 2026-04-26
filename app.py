@@ -485,6 +485,9 @@ def standardize_columns(df):
         "avg_best_speed": "EV",
         "launch_angle_avg": "LA",
         "launch_angle": "LA",
+        "flyballs_percent": "FB%",
+        "flyball_percent": "FB%",
+        "fb_percent": "FB%",
         "k_percent": "K%",
         "bb_percent": "BB%",
         "sweet_spot_percent": "SweetSpot%",
@@ -853,6 +856,8 @@ def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, 
         # extra populated stats from the (Apr 2026) batters CSV
         xwoba = safe_float(batter_row.get("xwOBA") if batter_row is not None else None, 0.310)
         k_pct = safe_float(batter_row.get("K%")    if batter_row is not None else None, 22.0)
+        ev    = safe_float(batter_row.get("EV")    if batter_row is not None else None, 0.0)
+        fb_pct= safe_float(batter_row.get("FB%")   if batter_row is not None else None, 0.0)
 
         out_rows.append({
             "Spot": int(row["lineup_spot"]) if pd.notna(row["lineup_spot"]) else 99,
@@ -866,6 +871,8 @@ def build_team_table(lineup_df, batters_df, pitchers_df, pitcher_name, weather, 
             "Barrel%": barrel,
             "HardHit%": hardhit,
             "K%": k_pct,
+            "EV": ev,
+            "FB%": fb_pct,
             "Score": score,
             "Angle": angle,
         })
@@ -1029,10 +1036,15 @@ def render_hot_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
     hardhit = float(row.get("HardHit%", 0) or 0)
     hr = float(row.get("HR", 0) or 0)
     iso = float(row.get("ISO", 0) or 0)
+    ev = float(row.get("EV", 0) or 0)
+    fb_pct = float(row.get("FB%", 0) or 0)
     tier_key, tier_label, _ = score_tier(score)
     hr_key, hr_label = hr_tier(score, barrel, hr)
     angle = suggested_angle(score, barrel, hr, hardhit)
     spot = int(row.get("Spot", 0) or 0)
+
+    ev_str = f"{ev:.1f}" if ev > 0 else "—"
+    fb_str = f"{fb_pct:.1f}%" if fb_pct > 0 else "—"
 
     st.markdown(f"""
     <div class="batter-tile {tier_key}">
@@ -1042,6 +1054,9 @@ def render_hot_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
         <div class="score">{score:.1f}<span style="font-size:0.7rem; color:#64748b; font-weight:700; margin-left:6px;">SCORE</span></div>
         <div class="stats">
             HR <b>{int(hr)}</b> · ISO <b>{iso:.3f}</b> · Barrel <b>{barrel:.1f}%</b> · HardHit <b>{hardhit:.1f}%</b>
+        </div>
+        <div class="stats" style="margin-top:4px;">
+            EV <b>{ev_str}</b> · FB% <b>{fb_str}</b>
         </div>
         <div class="angle">{angle} · <span class="tier tier-{hr_key}" style="font-size:0.7rem; padding:2px 8px;">{hr_label}</span></div>
     </div>

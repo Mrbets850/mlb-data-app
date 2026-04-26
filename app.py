@@ -1340,6 +1340,35 @@ else:
                         opposing_team_abbr=r["OppTeamAbbr"],
                     )
 
+# --- 🧊 Cold Batters board (bottom 6 by score) ------------------------------
+st.markdown(
+    '<div class="section-card">'
+    '<div class="section-title">🧊 Cold Batters · Fade Targets This Game</div>'
+    '<div style="font-size:0.78rem; color:#64748b;">'
+    'Worst matchups for the slate — strong K%/low xwOBA hitters facing tough pitching. '
+    'Good for K-prop overs, under TB / under hits angles.'
+    '</div></div>', unsafe_allow_html=True
+)
+if combined_df.empty:
+    st.info("Lineups not posted yet. Cold batters will appear once today's lineups are confirmed.")
+else:
+    df_cold = combined_df.copy().sort_values("Score", ascending=True).head(6).reset_index(drop=True)
+    if df_cold.empty:
+        st.info("No batter data available yet.")
+    else:
+        cols_per_row = 3
+        rows = [df_cold.iloc[i:i+cols_per_row] for i in range(0, len(df_cold), cols_per_row)]
+        for row_chunk in rows:
+            cols = st.columns(len(row_chunk))
+            for i, (_, r) in enumerate(row_chunk.iterrows()):
+                with cols[i]:
+                    render_cold_batter_tile(
+                        rank=int(r.name)+1 if hasattr(r, 'name') else i+1,
+                        row=r,
+                        opposing_pitcher=r["OppPitcher"],
+                        opposing_team_abbr=r["OppTeamAbbr"],
+                    )
+
 # --- Pitcher Vulnerability panel -------------------------------------------
 st.markdown(
     '<div class="section-card">'

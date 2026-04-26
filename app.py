@@ -1075,17 +1075,7 @@ def render_hot_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
             )
 
     # Player headshot (MLB's CDN, falls back gracefully if missing)
-    headshot_html = ""
-    if mlb_id:
-        headshot_html = (
-            f'<img src="https://img.mlbstatic.com/mlb-photos/image/upload/'
-            f'd_people:generic:headshot:67:current.png/w_120,q_auto:best/'
-            f'v1/people/{int(mlb_id)}/headshot/67/current" '
-            f'style="position:absolute; top:10px; right:10px; width:56px; height:56px; '
-            f'border-radius:50%; object-fit:cover; background:#f1f5f9; '
-            f'border:2px solid #e2e8f0;" '
-            f'onerror="this.style.display=&#39;none&#39;" alt="" />'
-        )
+    headshot_html = mlb_headshot_html(mlb_id, size_px=56)
 
     st.markdown(f"""
     <div class="batter-tile {tier_key}" style="position:relative;">
@@ -1114,6 +1104,25 @@ def cold_angle(score, k_pct, xwoba, barrel):
     if s < 95:                            return "⚠️ Avoid · Tough matchup"
     return "⚠️ Below avg · Skip"
 
+def mlb_headshot_html(mlb_id, size_px=56, top=10, right=10):
+    """Return an <img> tag for the player's MLB headshot, or '' if no id.
+    Uses MLB's CDN; the onerror handler hides the image silently if missing."""
+    if not mlb_id:
+        return ""
+    try:
+        pid = int(mlb_id)
+    except (TypeError, ValueError):
+        return ""
+    return (
+        f'<img src="https://img.mlbstatic.com/mlb-photos/image/upload/'
+        f'd_people:generic:headshot:67:current.png/w_120,q_auto:best/'
+        f'v1/people/{pid}/headshot/67/current" '
+        f'style="position:absolute; top:{top}px; right:{right}px; '
+        f'width:{size_px}px; height:{size_px}px; border-radius:50%; '
+        f'object-fit:cover; background:#f1f5f9; border:2px solid #e2e8f0;" '
+        f'onerror="this.style.display=&#39;none&#39;" alt="" />'
+    )
+
 def render_cold_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
     score = float(row.get("Score", 0) or 0)
     barrel = float(row.get("Barrel%", 0) or 0)
@@ -1123,13 +1132,16 @@ def render_cold_batter_tile(rank, row, opposing_pitcher, opposing_team_abbr):
     iso = float(row.get("ISO", 0) or 0)
     spot = int(row.get("Spot", 0) or 0)
     angle = cold_angle(score, k_pct, xwoba, barrel)
+    mlb_id = row.get("MLB_ID") if "MLB_ID" in row.index else None
+    headshot_html = mlb_headshot_html(mlb_id, size_px=56)
 
     # All cold-board tiles use the red/avoid styling regardless of underlying tier
     st.markdown(f"""
-    <div class="batter-tile avoid">
+    <div class="batter-tile avoid" style="position:relative;">
+        {headshot_html}
         <div class="rank">#{rank} · Cold · Bat {spot}</div>
-        <div class="name">{row.get("Player", "")}</div>
-        <div class="vs">vs {opposing_pitcher} ({opposing_team_abbr})</div>
+        <div class="name" style="padding-right:64px;">{row.get("Player", "")}</div>
+        <div class="vs" style="padding-right:64px;">vs {opposing_pitcher} ({opposing_team_abbr})</div>
         <div class="score">{score:.1f}<span style="font-size:0.7rem; color:#64748b; font-weight:700; margin-left:6px;">SCORE</span></div>
         <div class="stats">
             K% <b>{k_pct:.1f}</b> · xwOBA <b>{xwoba:.3f}</b> · ISO <b>{iso:.3f}</b> · Barrel <b>{barrel:.1f}%</b>
@@ -1143,6 +1155,7 @@ def render_pitcher_tile(label, pitcher_name, pitch_hand, pitcher_row):
     if pitcher_row is None:
         k = bb = era_w = barrel = hardhit = "—"
         sub = "No Savant data"
+        mlb_id = None
     else:
         k = f"{safe_float(pitcher_row.get('K%')):.1f}%"
         bb = f"{safe_float(pitcher_row.get('BB%')):.1f}%"
@@ -1150,10 +1163,16 @@ def render_pitcher_tile(label, pitcher_name, pitch_hand, pitcher_row):
         barrel = f"{safe_float(pitcher_row.get('Barrel%')):.1f}%"
         hardhit = f"{safe_float(pitcher_row.get('HardHit%')):.1f}%"
         sub = "Baseball Savant"
+        try:
+            mlb_id = int(pitcher_row.get("player_id")) if "player_id" in pitcher_row.index else None
+        except (TypeError, ValueError):
+            mlb_id = None
+    headshot_html = mlb_headshot_html(mlb_id, size_px=64, top=12, right=12)
 
     st.markdown(f"""
-    <div class="pitcher-tile vuln-{key}">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+    <div class="pitcher-tile vuln-{key}" style="position:relative;">
+        {headshot_html}
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; padding-right:76px;">
             <div>
                 <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">{label}</div>
                 <h4>{pitcher_name or "TBD"} <span style="color:#64748b; font-size:0.85rem;">({pitch_hand or "?"})</span></h4>

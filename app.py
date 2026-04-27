@@ -355,6 +355,148 @@ html, body, [class*="css"] {
     margin-top: 18px; padding: 12px 16px; border-radius: 12px;
     background: #f1f5f9; color: #475569; font-size: 0.82rem; text-align: center; font-weight: 600;
 }
+
+/* =========================================================================
+   DARK MODE OVERRIDES
+   ----------------------------------------------------------------------
+   Many of the custom HTML cards in this app hard-code light backgrounds
+   with dark text. When the user has Streamlit set to dark mode (system
+   pref or sidebar toggle), the page background goes dark but those cards
+   keep light bg/dark text — which is fine. The problem cases are:
+     1. Plain text rendered by Streamlit (markdown, captions, st.info,
+        labels) that inherits the dark-mode color — our hard-coded dark
+        slate colors become invisible.
+     2. Card text that says color: #0f172a with NO background override.
+     3. Tables (.hrs-table, .tg-table, .sp-table) with light bg.
+   Strategy: bump every dark-text + light-bg pair so contrast is correct
+   in BOTH modes. Use Streamlit's data-theme attribute when available, and
+   fall back to prefers-color-scheme for users on the auto theme.
+   ======================================================================= */
+
+@media (prefers-color-scheme: dark) {
+    /* Default body text — lighten so headings and paragraphs are readable */
+    html, body, [class*="css"] { color: #e2e8f0 !important; }
+
+    /* Streamlit-rendered markdown / captions / labels */
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] li,
+    [data-testid="stMarkdownContainer"] span,
+    [data-testid="stCaptionContainer"],
+    [data-testid="stWidgetLabel"],
+    label, .stCheckbox label, .stRadio label {
+        color: #e2e8f0 !important;
+    }
+    [data-testid="stMarkdownContainer"] strong,
+    [data-testid="stMarkdownContainer"] b { color: #fef3c7 !important; }
+
+    /* Section titles — brighten gold/cream on dark */
+    .section-title, .section-title-lg {
+        color: #fcd34d !important;
+    }
+
+    /* Help-text and meta lines we hand-write inline (color:#475569 / #64748b) */
+    [style*="color:#475569"], [style*="color: #475569"],
+    [style*="color:#64748b"], [style*="color: #64748b"] {
+        color: #cbd5e1 !important;
+    }
+
+    /* Top-level pill tabs: lighten unselected state so it's readable */
+    .top-tab-row { background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
+                    border-color: #334155 !important; }
+    .top-tab-row [role="radiogroup"] > label {
+        background: #1e293b !important;
+        color: #f1f5f9 !important;
+        border-color: #475569 !important;
+    }
+    .top-tab-row [role="radiogroup"] > label p,
+    .top-tab-row [role="radiogroup"] > label span,
+    .top-tab-row [role="radiogroup"] > label div {
+        color: inherit !important;
+    }
+    /* Selected pill keeps its green gradient + gold text in both modes */
+
+    /* Cards & tables — keep their own bg/color but ensure text inside is visible.
+       The .hrs/.tg/.sp tables already use #0f172a text on white, which renders
+       fine because we don't change the table bg. Streamlit's parent sometimes
+       darkens nested st.dataframe content though — catch those: */
+    [data-testid="stDataFrame"] { color: #0f172a; }
+
+    /* Top-3 hot bats card values & labels */
+    .top3-stat .lab { color: #cbd5e1 !important; }
+    .top3-stat .val { color: #f8fafc !important; }
+
+    /* Slate Pitcher mini-card meta text */
+    .spc-meta { color: #cbd5e1 !important; }
+    .spc-bigscore .lab { color: #cbd5e1 !important; }
+    .spc-stat .lab { color: #cbd5e1 !important; }
+    .spc-empty { color: #cbd5e1 !important; }
+
+    /* Sleeper / TB / HRR tables — tables use their own white bg, but the
+       container around them inherits dark Streamlit body text. Force the
+       inside-table cell text dark again so we don't get washed-out grey: */
+    .hrs-table td, .hrs-table .hrs-name, .hrs-table .hrs-score,
+    .tg-table td, .tg-table .tg-name, .tg-table .tg-score,
+    .sp-table td {
+        color: #0f172a !important;
+    }
+    .hrs-meta, .tg-meta {
+        color: #475569 !important;
+    }
+
+    /* Footer */
+    .footer { background: #1e293b !important; color: #cbd5e1 !important; }
+
+    /* Streamlit native widgets that go washed-out */
+    .stTextInput input, .stNumberInput input, .stDateInput input {
+        color: #f8fafc !important;
+    }
+    [data-testid="stMetricValue"] { color: #fcd34d !important; }
+    [data-testid="stMetricLabel"] { color: #cbd5e1 !important; }
+}
+
+/* Streamlit also sets data-theme="dark" on the root when the user picks
+   dark explicitly in settings (overrides prefers-color-scheme). Repeat the
+   most-important rules under that selector so explicit dark works too. */
+[data-theme="dark"] [data-testid="stMarkdownContainer"] p,
+[data-theme="dark"] [data-testid="stMarkdownContainer"] li,
+[data-theme="dark"] [data-testid="stMarkdownContainer"] span,
+[data-theme="dark"] [data-testid="stCaptionContainer"],
+[data-theme="dark"] [data-testid="stWidgetLabel"],
+[data-theme="dark"] label {
+    color: #e2e8f0 !important;
+}
+[data-theme="dark"] .section-title, [data-theme="dark"] .section-title-lg {
+    color: #fcd34d !important;
+}
+[data-theme="dark"] [style*="color:#475569"],
+[data-theme="dark"] [style*="color: #475569"],
+[data-theme="dark"] [style*="color:#64748b"],
+[data-theme="dark"] [style*="color: #64748b"] {
+    color: #cbd5e1 !important;
+}
+[data-theme="dark"] .top-tab-row {
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
+    border-color: #334155 !important;
+}
+[data-theme="dark"] .top-tab-row [role="radiogroup"] > label {
+    background: #1e293b !important;
+    color: #f1f5f9 !important;
+    border-color: #475569 !important;
+}
+[data-theme="dark"] .hrs-table td, [data-theme="dark"] .tg-table td {
+    color: #0f172a !important;
+}
+[data-theme="dark"] .footer {
+    background: #1e293b !important;
+    color: #cbd5e1 !important;
+}
+[data-theme="dark"] .top3-stat .lab,
+[data-theme="dark"] .spc-meta,
+[data-theme="dark"] .spc-bigscore .lab,
+[data-theme="dark"] .spc-stat .lab {
+    color: #cbd5e1 !important;
+}
+[data-theme="dark"] .top3-stat .val { color: #f8fafc !important; }
 </style>
 """, unsafe_allow_html=True)
 

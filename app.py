@@ -258,12 +258,16 @@ html, body, [class*="css"] {
     background: linear-gradient(180deg, #0b1437 0%, #0a2350 100%);
     border: 1px solid #1e3a8a; color:#fff;
 }
-.section-title {
-    color: #0f172a; font-size: 1.1rem; font-weight: 900;
+.section-title, .section-title-lg {
+    /* Vibrant green that pops on BOTH light and dark backgrounds.
+       #16a34a = tailwind green-600, readable on white; the text-shadow
+       gives it a soft halo so it stays crisp on dark too. */
+    color: #16a34a; font-size: 1.1rem; font-weight: 900;
     margin: 0 0 10px; letter-spacing: -0.01em;
     display: flex; align-items: center; gap: 10px;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.35), 0 0 1px rgba(0,0,0,0.15);
 }
-.section-title img { width: 28px; height: 28px; }
+.section-title img, .section-title-lg img { width: 28px; height: 28px; }
 
 /* ---- big game header card (above the tabs) ---- */
 .game-header {
@@ -387,7 +391,9 @@ html, body, [class*="css"] {
     color: #e2e8f0 !important;
 }
 [data-theme="dark"] .section-title, [data-theme="dark"] .section-title-lg {
-    color: #fcd34d !important;
+    /* Brighter green on true dark theme so the title glows */
+    color: #4ade80 !important;
+    text-shadow: 0 0 8px rgba(74, 222, 128, 0.35) !important;
 }
 [data-theme="dark"] [style*="color:#475569"],
 [data-theme="dark"] [style*="color: #475569"],

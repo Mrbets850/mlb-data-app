@@ -328,18 +328,52 @@ html, body, [class*="css"] {
 .lineup-banner .vs-pitcher { color: #475569; font-size: 0.92rem; font-weight: 700; margin-left: 6px; }
 .lineup-banner .badge { margin-left: auto; }
 
-/* ---- streamlit tabs styling (Matchup / Rolling / Zones / Exports) ---- */
+/* ---- streamlit tabs styling (Matchup / Rolling / Zones / Exports) ----
+   Mobile users were missing this strip because it blended into the page.
+   Now: dark green band, gold border, white pills, big tap targets, and
+   a fade on the right edge that hints there are more tabs to scroll. */
+.stTabs { position: relative; }
 .stTabs [data-baseweb="tab-list"] {
-    gap: 4px; background: #f1f5f9; padding: 4px; border-radius: 12px;
+    gap: 6px;
+    background: linear-gradient(180deg, #0b1f15 0%, #0f3a2e 100%);
+    padding: 8px;
+    border-radius: 14px;
+    border: 2px solid #facc15;
+    box-shadow: 0 4px 14px rgba(5, 20, 12, .25), inset 0 1px 0 rgba(250,204,21,.25);
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+/* Right-edge fade so users see there's more to swipe to */
+.stTabs::after {
+    content: "";
+    position: absolute; top: 0; right: 0; bottom: 0; width: 36px;
+    pointer-events: none;
+    background: linear-gradient(90deg, rgba(15,58,46,0) 0%, rgba(15,58,46,.85) 100%);
+    border-radius: 0 14px 14px 0;
 }
 .stTabs [data-baseweb="tab"] {
-    background: transparent; border-radius: 10px; padding: 8px 16px;
-    font-weight: 800; color: #475569;
+    background: rgba(255,255,255,.10);
+    border-radius: 10px;
+    padding: 10px 16px;
+    min-height: 44px;
+    font-weight: 800;
+    color: #fef3c7 !important;
+    border: 1px solid rgba(250,204,21,.30);
+    transition: all .18s ease;
+    white-space: nowrap;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    background: rgba(250,204,21,.18);
+    border-color: #facc15;
 }
 .stTabs [aria-selected="true"] {
-    background: #ffffff !important; color: #0f172a !important;
-    box-shadow: 0 1px 3px rgba(15,23,42,0.08);
+    background: #ffffff !important;
+    color: #0f3a2e !important;
+    border-color: #facc15 !important;
+    box-shadow: 0 0 0 2px rgba(250,204,21,.40), 0 4px 10px rgba(5,20,12,.30) !important;
+    transform: translateY(-1px);
 }
+.stTabs [data-baseweb="tab-highlight"] { background: #facc15 !important; height: 3px !important; }
 
 /* ---- input polish ---- */
 .stButton > button {
@@ -2823,6 +2857,17 @@ away_matchup = build_matchup_table(ctx["away_lineup"], batters_df, pitchers_df, 
 home_matchup = build_matchup_table(ctx["home_lineup"], batters_df, pitchers_df, game_row["away_probable"], weather, game_row["park_factor"])
 
 # ----- Tabs -----
+# Tiny hint above the strip so mobile users know to swipe for more views
+st.markdown(
+    "<div style='display:flex;align-items:center;gap:8px;margin:6px 2px 4px;"
+    "font-weight:800;font-size:0.95rem;color:#0f3a2e;'>"
+    "<span style='display:inline-flex;align-items:center;justify-content:center;"
+    "width:22px;height:22px;border-radius:50%;background:#facc15;color:#0f3a2e;"
+    "font-weight:900;'>☰</span>"
+    "Game views — tap a tab below (swipe → for more)"
+    "</div>",
+    unsafe_allow_html=True,
+)
 tab_matchup, tab_rolling, tab_p_zones, tab_h_zones, tab_hot, tab_cold = st.tabs(
     ["📊 Matchup", "📈 Rolling", "🎯 Pitcher Zones", "🌡️ Hitter Zones", "🔥 Hot Batters", "🧊 Cold Batters"]
 )

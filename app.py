@@ -492,6 +492,8 @@ def get_schedule(selected_date):
                 "venue": game.get("venue", {}).get("name", "Unknown"),
                 "away_probable": game.get("teams", {}).get("away", {}).get("probablePitcher", {}).get("fullName", "TBD"),
                 "home_probable": game.get("teams", {}).get("home", {}).get("probablePitcher", {}).get("fullName", "TBD"),
+                "away_probable_id": game.get("teams", {}).get("away", {}).get("probablePitcher", {}).get("id"),
+                "home_probable_id": game.get("teams", {}).get("home", {}).get("probablePitcher", {}).get("id"),
                 "lat": home_info["lat"], "lon": home_info["lon"],
                 "park_factor": DEFAULT_PARK_FACTORS.get(home_info["abbr"], 100),
             })
@@ -1130,6 +1132,333 @@ def style_zones_table(df, kind="hitter"):
     return styler
 
 # ===========================================================================
+# Slate pitchers (live MLB Stats API)
+# ===========================================================================
+@st.cache_data(ttl=900, show_spinner=False)
+def _fetch_pitcher_season(player_id: int, season: int) -> dict:
+    """Pull a single pitcher's season pitching stat block + handedness from
+    the MLB Stats API. Returns {} on failure."""
+    if not player_id:
+        return {}
+    try:
+        r = requests.get(
+            "https://statsapi.mlb.com/api/v1/people",
+            params={
+                "personIds": int(player_id),
+                "hydrate": f"stats(group=[pitching],type=[season],season={season})",
+            },
+            headers=HEADERS, timeout=20,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return {}
+    people = data.get("people", [])
+    if not people:
+        return {}
+    p = people[0]
+    out = {
+        "player_id": p.get("id"),
+        "full_name": p.get("fullName", ""),
+        "throws": p.get("pitchHand", {}).get("code", ""),
+        "stat": {},
+    }
+    for sg in p.get("stats", []):
+        if sg.get("group", {}).get("displayName") == "pitching":
+            for s in sg.get("splits", []):
+                out["stat"] = s.get("stat", {}) or {}
+                break
+    return out
+
+def _safe_pct_str(v, default=None):
+    """MLB API returns some percentages as strings like '.640'. Normalize to 0–1."""
+    if v is None or v == "":
+        return default
+    try:
+        f = float(v)
+        return f
+    except Exception:
+        return default
+
+def build_slate_pitcher_row(game_row, side, season):
+    """Build one display row for the Slate Pitchers table from a schedule row.
+    `side` is 'away' or 'home'. Returns None when no probable pitcher is set yet."""
+    pid = game_row.get(f"{side}_probable_id")
+    pname = game_row.get(f"{side}_probable") or ""
+    if not pid or pname in ("", "TBD"):
+        return None
+    info = _fetch_pitcher_season(int(pid), season)
+    stat = info.get("stat", {}) or {}
+
+    # Innings pitched comes back like '173.2' (.2 = 2/3 of an inning).
+    ip_raw = stat.get("inningsPitched")
+    try:
+        ip_str = str(ip_raw)
+        whole, _, frac = ip_str.partition(".")
+        ip_outs = int(whole) * 3 + (int(frac) if frac else 0)
+        ip_decimal = ip_outs / 3.0 if ip_outs else 0.0
+    except Exception:
+        ip_decimal = 0.0
+
+    bf  = float(stat.get("battersFaced") or 0)
+    so  = float(stat.get("strikeOuts") or 0)
+    bb  = float(stat.get("baseOnBalls") or 0)
+    hr  = float(stat.get("homeRuns") or 0)
+    pitches = float(stat.get("numberOfPitches") or 0)
+    strikes = float(stat.get("strikes") or 0)
+    era = stat.get("era")
+    whip = stat.get("whip")
+    avg_against = _safe_pct_str(stat.get("avg"))
+    obp_against = _safe_pct_str(stat.get("obp"))
+    slg_against = _safe_pct_str(stat.get("slg"))
+    ops_against = _safe_pct_str(stat.get("ops"))
+    k_per_9  = _safe_pct_str(stat.get("strikeoutsPer9Inn"))
+    bb_per_9 = _safe_pct_str(stat.get("walksPer9Inn"))
+    go_to_ao = _safe_pct_str(stat.get("groundOutsToAirouts"))
+    ground_outs = float(stat.get("groundOuts") or 0)
+    air_outs    = float(stat.get("airOuts") or 0)
+
+    # Derived display metrics.
+    k_pct  = (so / bf * 100.0) if bf else None
+    bb_pct = (bb / bf * 100.0) if bf else None
+    # CSW% (called + swinging strikes) isn't in StatsAPI; use overall Strike%
+    # as a proxy (labelled "Strike%" in the column header).
+    strike_pct = (strikes / pitches * 100.0) if pitches else None
+    ball_pct   = ((pitches - strikes) / pitches * 100.0) if pitches else None
+    fb_pct     = (air_outs / (ground_outs + air_outs) * 100.0) if (ground_outs + air_outs) else None
+    # FIP (rough proxy for SIERA); constants from public formulas.
+    if ip_decimal > 0:
+        fip = ((13.0 * hr) + (3.0 * bb) - (2.0 * so)) / ip_decimal + 3.10
+    else:
+        fip = None
+
+    # Pitch Score: composite, higher = stronger pitcher matchup.
+    # Built from ERA (lower good), WHIP (lower good), K-BB% (higher good), OPS-against (lower good).
+    def _norm(v, lo, hi, reverse=False):
+        if v is None: return 50.0
+        try: x = float(v)
+        except Exception: return 50.0
+        x = max(lo, min(hi, x))
+        pct = (x - lo) / (hi - lo) * 100.0
+        return 100.0 - pct if reverse else pct
+    era_score  = _norm(era, 2.00, 6.00, reverse=True)
+    whip_score = _norm(whip, 0.90, 1.70, reverse=True)
+    kbb_score  = _norm((k_pct or 0) - (bb_pct or 0), 5.0, 25.0)
+    ops_score  = _norm((ops_against or 0) * 1000.0, 550.0, 850.0, reverse=True) if ops_against is not None else 50.0
+    pitch_score = round(0.30 * era_score + 0.25 * whip_score + 0.25 * kbb_score + 0.20 * ops_score, 1)
+
+    # Strikeout score: K%, K/9, swing-and-miss proxy.
+    k9_score  = _norm(k_per_9, 6.0, 12.5)
+    kp_score  = _norm(k_pct,   15.0, 35.0)
+    strikeout_score = round(0.55 * k9_score + 0.45 * kp_score, 1)
+
+    if side == "away":
+        team_id = game_row["away_id"]; team_abbr = game_row["away_abbr"]; loc_marker = "@"
+    else:
+        team_id = game_row["home_id"]; team_abbr = game_row["home_abbr"]; loc_marker = "vs"
+
+    return {
+        "_logo": logo_url(team_id) if team_id else "",
+        "_player_id": int(pid),
+        "Loc": loc_marker,
+        "Team": team_abbr,
+        "Pitcher": pname,
+        "Throws": info.get("throws") or "",
+        "Game": game_row["short_label"],
+        "Time": game_row["time_short"],
+        "Pitch Score": pitch_score,
+        "Strikeout Score": strikeout_score,
+        "ERA": float(era) if era not in (None, "") else None,
+        "WHIP": float(whip) if whip not in (None, "") else None,
+        "FIP*": round(fip, 2) if fip is not None else None,
+        "K%": round(k_pct, 1) if k_pct is not None else None,
+        "BB%": round(bb_pct, 1) if bb_pct is not None else None,
+        "K/9": round(float(k_per_9), 2) if k_per_9 is not None else None,
+        "Strike%": round(strike_pct, 1) if strike_pct is not None else None,
+        "Ball%": round(ball_pct, 1) if ball_pct is not None else None,
+        "OPS-A": round(float(ops_against), 3) if ops_against is not None else None,
+        "AVG-A": round(float(avg_against), 3) if avg_against is not None else None,
+        "FB%*": round(fb_pct, 1) if fb_pct is not None else None,
+        "IP": ip_decimal if ip_decimal else None,
+    }
+
+@st.cache_data(ttl=900, show_spinner=False)
+def build_slate_pitcher_table(_schedule_df, season):
+    """Iterate the schedule and build one row per probable starter (away + home)."""
+    out = []
+    for _, g in _schedule_df.iterrows():
+        for side in ("away", "home"):
+            row = build_slate_pitcher_row(g, side, season)
+            if row:
+                out.append(row)
+    df = pd.DataFrame(out)
+    if not df.empty:
+        df = df.sort_values("Pitch Score", ascending=False, na_position="last").reset_index(drop=True)
+    return df
+
+def _heat_bg(v, lo, hi, reverse=False):
+    """Return a CSS color for a numeric value on a green→yellow→red gradient.
+    Higher = green by default; pass reverse=True to invert."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return "#f8fafc"
+    if hi == lo:
+        t = 0.5
+    else:
+        t = (x - lo) / (hi - lo)
+        t = max(0.0, min(1.0, t))
+    if reverse:
+        t = 1.0 - t
+    # 0.0 = red (#fca5a5), 0.5 = amber (#fde68a), 1.0 = green (#86efac)
+    if t < 0.5:
+        # red -> amber
+        f = t / 0.5
+        r = int(252 + (253 - 252) * f); g = int(165 + (230 - 165) * f); b = int(165 + (138 - 165) * f)
+    else:
+        f = (t - 0.5) / 0.5
+        r = int(253 + (134 - 253) * f); g = int(230 + (239 - 230) * f); b = int(138 + (172 - 138) * f)
+    return f"rgb({r},{g},{b})"
+
+SLATE_PITCHER_HEATMAP = {
+    # column -> (lo, hi, reverse) where reverse=True means lower is greener
+    "Pitch Score":     (45.0, 75.0, False),
+    "Strikeout Score": (45.0, 75.0, False),
+    "ERA":             (2.5,  5.5,  True),
+    "WHIP":            (1.00, 1.55, True),
+    "FIP*":            (3.0,  5.5,  True),
+    "K%":              (18.0, 32.0, False),
+    "BB%":             (5.0,  11.0, True),
+    "K/9":             (7.0,  12.0, False),
+    "Strike%":         (60.0, 68.0, False),
+    "Ball%":           (32.0, 40.0, True),
+    "OPS-A":           (0.600, 0.800, True),
+    "AVG-A":           (0.210, 0.275, True),
+    "FB%*":            (30.0, 50.0, False),
+}
+
+SLATE_PITCHER_FORMAT = {
+    "Pitch Score": "{:.1f}", "Strikeout Score": "{:.1f}",
+    "ERA": "{:.2f}", "WHIP": "{:.2f}", "FIP*": "{:.2f}",
+    "K%": "{:.1f}", "BB%": "{:.1f}", "K/9": "{:.2f}",
+    "Strike%": "{:.1f}", "Ball%": "{:.1f}",
+    "OPS-A": "{:.3f}", "AVG-A": "{:.3f}",
+    "FB%*": "{:.1f}", "IP": "{:.1f}",
+}
+
+def render_slate_pitcher_html(df):
+    """Render a custom HTML table with team logos in the Team cell and a
+    green/red heatmap on the metric columns. Mirrors the design in the
+    user-supplied screenshot."""
+    if df.empty:
+        return "<div class='sp-empty'>No probable starters posted yet.</div>"
+
+    show_cols = [c for c in df.columns if not c.startswith("_") and c != "Loc"]
+    css = (
+        "<style>"
+        ".sp-wrap { overflow-x:auto; border-radius:14px; border:1px solid #e2e8f0; "
+        "  background:#fff; box-shadow: 0 2px 8px rgba(15,23,42,.04); margin: 6px 0 14px 0; }"
+        ".sp-table { border-collapse: separate; border-spacing:0; width:100%; "
+        "  font-size: 0.86rem; color:#0f172a; font-family: inherit; }"
+        ".sp-table thead th { background:#f1f5f9; color:#334155; font-weight:800; "
+        "  text-align:center; padding: 10px 8px; border-bottom:1px solid #e2e8f0; "
+        "  position: sticky; top: 0; z-index: 1; white-space: nowrap; }"
+        ".sp-table thead th.sp-sort { color:#0f172a; }"
+        ".sp-table tbody td { padding: 8px 8px; border-bottom:1px solid #f1f5f9; "
+        "  text-align:center; white-space: nowrap; }"
+        ".sp-table tbody tr:hover td { background:#f8fafc; }"
+        ".sp-team-cell { display:flex; align-items:center; gap:8px; justify-content:flex-start; "
+        "  text-align:left; padding-left:6px; }"
+        ".sp-team-cell img { width:24px; height:24px; object-fit:contain; }"
+        ".sp-loc { color:#64748b; font-weight:800; width: 28px; }"
+        ".sp-pitcher { text-align:left; font-weight:700; }"
+        ".sp-num { font-variant-numeric: tabular-nums; font-weight:700; }"
+        ".sp-na { color:#94a3b8; }"
+        ".sp-empty { padding:14px 18px; color:#64748b; background:#f8fafc; border-radius:14px; "
+        "  border:1px dashed #cbd5e1; }"
+        "</style>"
+    )
+
+    # Build header
+    head_cells = []
+    for c in show_cols:
+        cls = "sp-sort" if c == "Pitch Score" else ""
+        label = ("↓ " + c) if c == "Pitch Score" else c
+        head_cells.append(f'<th class="{cls}">{label}</th>')
+    thead = "<thead><tr>" + "".join(head_cells) + "</tr></thead>"
+
+    body_rows = []
+    for _, r in df.iterrows():
+        cells = []
+        loc = str(r.get("Loc", ""))
+        for c in show_cols:
+            v = r.get(c)
+            if c == "Team":
+                logo = r.get("_logo", "")
+                logo_img = f'<img src="{logo}" alt="{v}" />' if logo else ""
+                cells.append(
+                    f'<td><div class="sp-team-cell">'
+                    f'<span class="sp-loc">{loc}</span>{logo_img}'
+                    f'<span>{v}</span></div></td>'
+                )
+                continue
+            if c == "Pitcher":
+                cells.append(f'<td class="sp-pitcher">{v}</td>')
+                continue
+            if c in ("Throws", "Game", "Time"):
+                cells.append(f"<td>{v if v not in (None, '') else '<span class=\"sp-na\">—</span>'}</td>")
+                continue
+            # Numeric / heatmap column.
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                cells.append('<td class="sp-num"><span class="sp-na">—</span></td>')
+                continue
+            fmt = SLATE_PITCHER_FORMAT.get(c, "{}")
+            try:
+                txt = fmt.format(float(v))
+            except Exception:
+                txt = str(v)
+            heat = SLATE_PITCHER_HEATMAP.get(c)
+            if heat:
+                lo, hi, rev = heat
+                bg = _heat_bg(v, lo, hi, reverse=rev)
+                cells.append(f'<td class="sp-num" style="background:{bg};">{txt}</td>')
+            else:
+                cells.append(f'<td class="sp-num">{txt}</td>')
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    tbody = "<tbody>" + "".join(body_rows) + "</tbody>"
+
+    return css + f'<div class="sp-wrap"><table class="sp-table">{thead}{tbody}</table></div>'
+
+def style_slate_pitcher_table(df):
+    """Apply heatmap shading. Higher = better for pitcher (green) on Pitch Score,
+    Strikeout Score, K%, K/9, Strike%, FB%*. Lower = better on ERA, WHIP, FIP*,
+    BB%, OPS-A, AVG-A, Ball%."""
+    if df.empty:
+        return df
+    show_cols = [c for c in df.columns if not c.startswith("_")]
+    styler = df[show_cols].style.format({
+        "Pitch Score": "{:.1f}", "Strikeout Score": "{:.1f}",
+        "ERA": "{:.2f}", "WHIP": "{:.2f}", "FIP*": "{:.2f}",
+        "K%": "{:.1f}", "BB%": "{:.1f}", "K/9": "{:.2f}",
+        "Strike%": "{:.1f}", "Ball%": "{:.1f}",
+        "OPS-A": "{:.3f}", "AVG-A": "{:.3f}",
+        "FB%*": "{:.1f}", "IP": "{:.1f}",
+    }, na_rep="—")
+    higher_better = [("Pitch Score", 45, 75), ("Strikeout Score", 45, 75),
+                     ("K%", 18, 32), ("K/9", 7.0, 12.0),
+                     ("Strike%", 60, 68), ("FB%*", 30, 50)]
+    lower_better  = [("ERA", 2.5, 5.5), ("WHIP", 1.00, 1.55), ("FIP*", 3.00, 5.50),
+                     ("BB%", 5.0, 11.0), ("OPS-A", 0.600, 0.800),
+                     ("AVG-A", 0.210, 0.275), ("Ball%", 32, 40)]
+    for col, lo, hi in higher_better:
+        if col in show_cols:
+            styler = styler.map(lambda v, lo=lo, hi=hi: heat_color(v, lo, hi), subset=[col])
+    for col, lo, hi in lower_better:
+        if col in show_cols:
+            styler = styler.map(lambda v, lo=lo, hi=hi: heat_color(v, lo, hi, reverse=True), subset=[col])
+    return styler
+
+# ===========================================================================
 # UI components
 # ===========================================================================
 def render_brand_bar(slate_count):
@@ -1350,6 +1679,69 @@ if batters_df.empty and pitchers_df.empty:
 
 if schedule_df.empty:
     st.warning("No games found for this date.")
+    st.stop()
+
+# ===========================================================================
+# Top-level tab switcher: "⚾ Games" vs "🥎 Slate Pitchers"
+# Implemented as a styled radio so we can toggle large sections of the page
+# without re-indenting the entire game flow.
+# ===========================================================================
+st.markdown(
+    "<style>"
+    ".top-tab-row { margin: 4px 0 10px 0; }"
+    ".top-tab-row [data-testid=\"stRadio\"] > label { display:none; }"
+    ".top-tab-row [role=\"radiogroup\"] { gap: 8px; }"
+    ".top-tab-row [role=\"radiogroup\"] > label { background:#f1f5f9; padding: 8px 16px; "
+    "  border-radius: 999px; border:1px solid #e2e8f0; cursor:pointer; font-weight:800; "
+    "  color:#475569; transition: all .15s ease; }"
+    ".top-tab-row [role=\"radiogroup\"] > label:has(input:checked) { "
+    "  background: linear-gradient(110deg, #04130b 0%, #133a23 100%); color:#facc15; "
+    "  border-color: rgba(250,204,21,0.55); box-shadow: 0 4px 12px rgba(5,20,12,.25); }"
+    ".top-tab-row [role=\"radiogroup\"] > label > div:first-child { display:none; }"
+    ".sp-legend { color:#64748b; font-size:.78rem; margin: 4px 0 12px 0; }"
+    ".sp-legend code { background:#f1f5f9; padding: 1px 6px; border-radius:6px; "
+    "  font-family: inherit; font-weight:700; color:#334155; }"
+    "</style>",
+    unsafe_allow_html=True,
+)
+st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
+_view = st.radio(
+    "View",
+    ["⚾ Games", "🥎 Slate Pitchers"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="top_view_tab",
+)
+st.markdown('</div>', unsafe_allow_html=True)
+
+if _view == "🥎 Slate Pitchers":
+    st.markdown('<div class="section-title" style="font-size:1.4rem;margin-top:8px;">🥎 Slate Pitchers</div>', unsafe_allow_html=True)
+    _season = pd.to_datetime(selected_date).year
+    with st.spinner("Loading season pitching stats from MLB…"):
+        sp_df = build_slate_pitcher_table(schedule_df, _season)
+    if sp_df.empty:
+        st.info("No probable starters posted yet for this slate. Check back closer to first pitch.")
+    else:
+        st.markdown(render_slate_pitcher_html(sp_df), unsafe_allow_html=True)
+        st.markdown(
+            '<div class="sp-legend">'
+            'Sorted by <code>↓ Pitch Score</code> (composite of ERA, WHIP, K-BB%, OPS-against). '
+            'Green = stronger for the pitcher, red = weaker. '
+            '<code>FIP*</code> and <code>FB%*</code> are public-formula proxies (true SIERA, '
+            'true CSW% / SwStr% / Brl% require pitch-by-pitch data not in the MLB Stats API). '
+            '<code>Strike%</code> is overall strike rate (proxy for CSW%).'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        # CSV download
+        csv_bytes = sp_df.drop(columns=[c for c in sp_df.columns if c.startswith("_")], errors="ignore").to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download Slate Pitchers (CSV)",
+            data=csv_bytes,
+            file_name=f"slate_pitchers_{selected_date}.csv",
+            mime="text/csv",
+            use_container_width=False,
+        )
     st.stop()
 
 # ----- Game selector: clickable HTML pill carousel driven by ?g=<idx> query param -----

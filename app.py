@@ -2300,16 +2300,73 @@ if schedule_df.empty:
 # ===========================================================================
 st.markdown(
     "<style>"
-    ".top-tab-row { margin: 4px 0 10px 0; }"
+    # ---- Top-level view tabs: bold, mobile-friendly pills ----
+    # Wrapper card: padded, rounded, flush against the brand bar above so it
+    # reads as a navigation strip rather than a bare radio.
+    ".top-tab-row { margin: 8px 0 14px 0; padding: 10px; "
+    "  background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%); "
+    "  border-radius: 16px; border: 1px solid #e2e8f0; "
+    "  box-shadow: 0 2px 8px rgba(15,23,42,.04); }"
+    # Hide Streamlit's default 'View' label
     ".top-tab-row [data-testid=\"stRadio\"] > label { display:none; }"
-    ".top-tab-row [role=\"radiogroup\"] { gap: 8px; }"
-    ".top-tab-row [role=\"radiogroup\"] > label { background:#f1f5f9; padding: 8px 16px; "
-    "  border-radius: 999px; border:1px solid #e2e8f0; cursor:pointer; font-weight:800; "
-    "  color:#475569; transition: all .15s ease; }"
+    ".top-tab-row [data-testid=\"stWidgetLabel\"] { display:none; }"
+    # The radio group: wrap on mobile, comfortable spacing
+    ".top-tab-row [role=\"radiogroup\"] { gap: 10px; flex-wrap: wrap; "
+    "  justify-content: flex-start; }"
+    # Each pill: bold text, big tap target, clear unselected state with subtle
+    # 'tap me' hint via slight lift
+    ".top-tab-row [role=\"radiogroup\"] > label { "
+    "  background: #ffffff; "
+    "  padding: 10px 18px; "
+    "  min-height: 44px; "          # iOS Apple HIG minimum tap target
+    "  border-radius: 999px; "
+    "  border: 2px solid #cbd5e1; "
+    "  cursor: pointer; "
+    "  font-weight: 800; "
+    "  font-size: 0.98rem; "
+    "  color: #0f172a; "
+    "  transition: all .18s ease; "
+    "  box-shadow: 0 1px 3px rgba(15,23,42,.06); "
+    "  display: inline-flex; align-items: center; }"
+    # Hover: lift slightly, highlight border
+    ".top-tab-row [role=\"radiogroup\"] > label:hover { "
+    "  border-color: #0f3a2e; "
+    "  transform: translateY(-1px); "
+    "  box-shadow: 0 4px 10px rgba(15,58,46,.12); }"
+    # Selected pill: dark green gradient + gold text + glow ring — unmistakable
     ".top-tab-row [role=\"radiogroup\"] > label:has(input:checked) { "
-    "  background: linear-gradient(110deg, #04130b 0%, #133a23 100%); color:#facc15; "
-    "  border-color: rgba(250,204,21,0.55); box-shadow: 0 4px 12px rgba(5,20,12,.25); }"
-    ".top-tab-row [role=\"radiogroup\"] > label > div:first-child { display:none; }"
+    "  background: linear-gradient(110deg, #04130b 0%, #0f3a2e 60%, #1d5a3f 100%); "
+    "  color: #facc15; "
+    "  border-color: #facc15; "
+    "  box-shadow: 0 0 0 3px rgba(250,204,21,.25), 0 6px 16px rgba(5,20,12,.35); "
+    "  transform: translateY(-1px); }"
+    # Hide the actual radio circle (we want pure pill UI)
+    ".top-tab-row [role=\"radiogroup\"] > label > div:first-child { display:none !important; }"
+    # Streamlit nests the text in extra divs — make sure the label text is bold,
+    # readable, and inherits the pill's color (so gold-on-green works on selected)
+    ".top-tab-row [role=\"radiogroup\"] > label p, "
+    ".top-tab-row [role=\"radiogroup\"] > label span, "
+    ".top-tab-row [role=\"radiogroup\"] > label div { "
+    "  font-weight: 800 !important; "
+    "  font-size: 0.98rem !important; "
+    "  color: inherit !important; "
+    "  letter-spacing: .01em; "
+    "  line-height: 1.2; }"
+    # Mobile (≤640px): bigger touch targets, full-width pills, larger text
+    "@media (max-width: 640px) { "
+    "  .top-tab-row { padding: 12px; } "
+    "  .top-tab-row [role=\"radiogroup\"] { gap: 8px; } "
+    "  .top-tab-row [role=\"radiogroup\"] > label { "
+    "    flex: 1 1 calc(50% - 8px); "           # 2 pills per row on phones
+    "    justify-content: center; "
+    "    padding: 12px 10px; "
+    "    min-height: 50px; "
+    "    font-size: 1.0rem; } "
+    "  .top-tab-row [role=\"radiogroup\"] > label p, "
+    "  .top-tab-row [role=\"radiogroup\"] > label span, "
+    "  .top-tab-row [role=\"radiogroup\"] > label div { "
+    "    font-size: 1.0rem !important; } "
+    "}"
     ".sp-legend { color:#64748b; font-size:.78rem; margin: 4px 0 12px 0; }"
     ".sp-legend code { background:#f1f5f9; padding: 1px 6px; border-radius:6px; "
     "  font-family: inherit; font-weight:700; color:#334155; }"

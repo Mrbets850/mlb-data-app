@@ -368,95 +368,16 @@ html, body, [class*="css"] {
         slate colors become invisible.
      2. Card text that says color: #0f172a with NO background override.
      3. Tables (.hrs-table, .tg-table, .sp-table) with light bg.
-   Strategy: bump every dark-text + light-bg pair so contrast is correct
-   in BOTH modes. Use Streamlit's data-theme attribute when available, and
-   fall back to prefers-color-scheme for users on the auto theme.
+   Strategy: scope every override to Streamlit's [data-theme="dark"]
+   attribute so they only fire when the app itself is rendered in dark.
+   We intentionally do NOT use @media (prefers-color-scheme: dark) because
+   it matches the device OS — even when Streamlit Cloud is rendering in
+   light, which washes out light-mode text on phones set to dark.
    ======================================================================= */
 
-@media (prefers-color-scheme: dark) {
-    /* Default body text — lighten so headings and paragraphs are readable */
-    html, body, [class*="css"] { color: #e2e8f0 !important; }
-
-    /* Streamlit-rendered markdown / captions / labels */
-    [data-testid="stMarkdownContainer"] p,
-    [data-testid="stMarkdownContainer"] li,
-    [data-testid="stMarkdownContainer"] span,
-    [data-testid="stCaptionContainer"],
-    [data-testid="stWidgetLabel"],
-    label, .stCheckbox label, .stRadio label {
-        color: #e2e8f0 !important;
-    }
-    [data-testid="stMarkdownContainer"] strong,
-    [data-testid="stMarkdownContainer"] b { color: #fef3c7 !important; }
-
-    /* Section titles — brighten gold/cream on dark */
-    .section-title, .section-title-lg {
-        color: #fcd34d !important;
-    }
-
-    /* Help-text and meta lines we hand-write inline (color:#475569 / #64748b) */
-    [style*="color:#475569"], [style*="color: #475569"],
-    [style*="color:#64748b"], [style*="color: #64748b"] {
-        color: #cbd5e1 !important;
-    }
-
-    /* Top-level pill tabs: lighten unselected state so it's readable */
-    .top-tab-row { background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
-                    border-color: #334155 !important; }
-    .top-tab-row [role="radiogroup"] > label {
-        background: #1e293b !important;
-        color: #f1f5f9 !important;
-        border-color: #475569 !important;
-    }
-    .top-tab-row [role="radiogroup"] > label p,
-    .top-tab-row [role="radiogroup"] > label span,
-    .top-tab-row [role="radiogroup"] > label div {
-        color: inherit !important;
-    }
-    /* Selected pill keeps its green gradient + gold text in both modes */
-
-    /* Cards & tables — keep their own bg/color but ensure text inside is visible.
-       The .hrs/.tg/.sp tables already use #0f172a text on white, which renders
-       fine because we don't change the table bg. Streamlit's parent sometimes
-       darkens nested st.dataframe content though — catch those: */
-    [data-testid="stDataFrame"] { color: #0f172a; }
-
-    /* Top-3 hot bats card values & labels */
-    .top3-stat .lab { color: #cbd5e1 !important; }
-    .top3-stat .val { color: #f8fafc !important; }
-
-    /* Slate Pitcher mini-card meta text */
-    .spc-meta { color: #cbd5e1 !important; }
-    .spc-bigscore .lab { color: #cbd5e1 !important; }
-    .spc-stat .lab { color: #cbd5e1 !important; }
-    .spc-empty { color: #cbd5e1 !important; }
-
-    /* Sleeper / TB / HRR tables — tables use their own white bg, but the
-       container around them inherits dark Streamlit body text. Force the
-       inside-table cell text dark again so we don't get washed-out grey: */
-    .hrs-table td, .hrs-table .hrs-name, .hrs-table .hrs-score,
-    .tg-table td, .tg-table .tg-name, .tg-table .tg-score,
-    .sp-table td {
-        color: #0f172a !important;
-    }
-    .hrs-meta, .tg-meta {
-        color: #475569 !important;
-    }
-
-    /* Footer */
-    .footer { background: #1e293b !important; color: #cbd5e1 !important; }
-
-    /* Streamlit native widgets that go washed-out */
-    .stTextInput input, .stNumberInput input, .stDateInput input {
-        color: #f8fafc !important;
-    }
-    [data-testid="stMetricValue"] { color: #fcd34d !important; }
-    [data-testid="stMetricLabel"] { color: #cbd5e1 !important; }
-}
-
-/* Streamlit also sets data-theme="dark" on the root when the user picks
-   dark explicitly in settings (overrides prefers-color-scheme). Repeat the
-   most-important rules under that selector so explicit dark works too. */
+/* Streamlit sets data-theme="dark" on the root when the user picks dark
+   in app settings. All dark-mode overrides live under this selector so
+   they never leak into light mode. */
 [data-theme="dark"] [data-testid="stMarkdownContainer"] p,
 [data-theme="dark"] [data-testid="stMarkdownContainer"] li,
 [data-theme="dark"] [data-testid="stMarkdownContainer"] span,

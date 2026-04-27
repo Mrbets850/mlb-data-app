@@ -627,6 +627,22 @@ def build_game_context(game_row):
         home_roster = roster_df_from_box(box.get("teams", {}).get("home", {}), game_row["home_abbr"])
     except Exception:
         away_roster = pd.DataFrame(); home_roster = pd.DataFrame()
+
+    # Guard: if rosters are empty or missing expected columns, normalize them so
+    # downstream filtering on `lineup_spot` / `position` doesn't raise KeyError.
+    _expected_cols = ["lineup_spot", "position", "bat_side", "name", "player_id"]
+
+    def _normalize_roster(df):
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return pd.DataFrame(columns=_expected_cols)
+        for _c in _expected_cols:
+            if _c not in df.columns:
+                df[_c] = pd.NA
+        return df
+
+    away_roster = _normalize_roster(away_roster)
+    home_roster = _normalize_roster(home_roster)
+
     away_lineup = away_roster[(away_roster["lineup_spot"].notna()) & (away_roster["position"] != "P")].copy()
     home_lineup = home_roster[(home_roster["lineup_spot"].notna()) & (home_roster["position"] != "P")].copy()
     if not away_lineup.empty: away_lineup = away_lineup.sort_values("lineup_spot")
@@ -1219,6 +1235,13 @@ st.markdown(
     '<div class="toolbar-section-title">Slate Controls</div>',
     unsafe_allow_html=True,
 )
+# Apply any pending "Today" reset BEFORE the date_input widget is instantiated.
+# Streamlit forbids writing to st.session_state[<widget_key>] after the widget
+# has been created, so we use a one-shot flag and rerun pattern.
+if st.session_state.pop("_reset_to_today", False):
+    st.session_state["slate_date_picker"] = date.today()
+    st.session_state["_selected_idx"] = 0
+
 top_cols = st.columns([2.2, 1, 1])
 with top_cols[0]:
     selected_date = st.date_input("📅 Slate date", value=date.today(), key="slate_date_picker")
@@ -1230,8 +1253,9 @@ with top_cols[1]:
 with top_cols[2]:
     st.markdown('<div class="toolbar-spacer-label">.</div>', unsafe_allow_html=True)
     if st.button("📆 Today", use_container_width=True, key="today_btn"):
-        st.session_state["slate_date_picker"] = date.today()
-        st.session_state["_selected_idx"] = 0
+        # Defer the actual session_state write to the next run, BEFORE the
+        # widget is recreated, to avoid StreamlitAPIException.
+        st.session_state["_reset_to_today"] = True
         try:
             st.query_params.clear()
         except Exception:

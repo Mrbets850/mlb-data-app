@@ -6,7 +6,7 @@ import re
 import unicodedata
 import urllib.parse
 import io
-from datetime import date
+from datetime import date, timedelta
 
 # ===========================================================================
 # Config
@@ -475,6 +475,127 @@ def get_boxscore(game_pk):
     r = requests.get(url, headers=HEADERS, timeout=30); r.raise_for_status()
     return r.json()
 
+@st.cache_data(ttl=3600)
+def get_recent_completed_games(team_id, before_date_str, n=12):
+    """Return up to `n` of the team's most recent completed games before the given date."""
+    if not team_id:
+        return []
+    try:
+        before_dt = pd.to_datetime(before_date_str).date()
+        start_dt = before_dt - timedelta(days=30)
+        url = "https://statsapi.mlb.com/api/v1/schedule"
+        params = {
+            "sportId": 1, "teamId": team_id,
+            "startDate": start_dt.strftime("%Y-%m-%d"),
+            "endDate": (before_dt - timedelta(days=1)).strftime("%Y-%m-%d"),
+        }
+        r = requests.get(url, params=params, headers=HEADERS, timeout=30); r.raise_for_status()
+        data = r.json()
+        pks = []
+        for d in data.get("dates", []):
+            for g in d.get("games", []):
+                state = g.get("status", {}).get("abstractGameState", "")
+                if state == "Final":
+                    pks.append(g.get("gamePk"))
+        return pks[-n:]
+    except Exception:
+        return []
+
+@st.cache_data(ttl=3600)
+def get_projected_lineup(team_id, team_abbr, before_date_str):
+    """Return a DataFrame of the team's likely 9 hitters with projected batting-order spots
+    derived from their most-used 9 over recent completed games. Used when MLB has not
+    yet posted the official confirmed lineup for the day."""
+    pks = get_recent_completed_games(team_id, before_date_str)
+    if not pks:
+        return pd.DataFrame()
+    # Count how often each player appears in each batting-order spot
+    spot_counts = {}    # name -> {1..9: count}
+    appearances = {}    # name -> total_games
+    last_seen_data = {} # name -> dict (bat_side, position, etc.)
+    for pk in pks:
+        try:
+            box = get_boxscore(pk)
+            for side in ("away", "home"):
+                team_box = box.get("teams", {}).get(side, {})
+                if team_box.get("team", {}).get("id") != team_id:
+                    continue
+                for pdata in team_box.get("players", {}).values():
+                    person = pdata.get("person", {})
+                    name = person.get("fullName", "")
+                    if not name:
+                        continue
+                    pos = pdata.get("position", {}).get("abbreviation", "")
+                    if pos == "P":
+                        continue
+                    lineup_raw = str(pdata.get("battingOrder", "")).strip()
+                    if not (lineup_raw[:1].isdigit()):
+                        continue
+                    # battingOrder is like "100", "200" ... "900" for starters
+                    spot = int(lineup_raw[0])
+                    if spot < 1 or spot > 9:
+                        continue
+                    spot_counts.setdefault(name, {}).setdefault(spot, 0)
+                    spot_counts[name][spot] += 1
+                    appearances[name] = appearances.get(name, 0) + 1
+                    last_seen_data[name] = {
+                        "position": pos,
+                        "bat_side": pdata.get("batSide", {}).get("code", ""),
+                        "pitch_hand": pdata.get("pitchHand", {}).get("code", ""),
+                    }
+        except Exception:
+            continue
+    if not appearances:
+        return pd.DataFrame()
+    # Greedy assignment: for each spot 1..9, pick the player who started there most often
+    # among players not yet assigned.
+    assigned = {}  # spot -> name
+    used = set()
+    # Sort candidates per spot by frequency at that spot, then by total appearances
+    for spot in range(1, 10):
+        candidates = []
+        for name, spots in spot_counts.items():
+            if name in used:
+                continue
+            cnt = spots.get(spot, 0)
+            if cnt > 0:
+                candidates.append((name, cnt, appearances[name]))
+        if not candidates:
+            continue
+        candidates.sort(key=lambda x: (-x[1], -x[2]))
+        winner = candidates[0][0]
+        assigned[spot] = winner
+        used.add(winner)
+    # Fill any missing spots with most-frequent remaining starters
+    if len(assigned) < 9:
+        remaining = sorted(
+            [(n, c) for n, c in appearances.items() if n not in used],
+            key=lambda x: -x[1],
+        )
+        for spot in range(1, 10):
+            if spot in assigned:
+                continue
+            if remaining:
+                name, _ = remaining.pop(0)
+                assigned[spot] = name
+                used.add(name)
+    rows = []
+    for spot in range(1, 10):
+        name = assigned.get(spot)
+        if not name:
+            continue
+        meta = last_seen_data.get(name, {})
+        rows.append({
+            "player_name": name,
+            "name_key": clean_name(name),
+            "team": norm_team(team_abbr),
+            "position": meta.get("position", ""),
+            "bat_side": meta.get("bat_side", ""),
+            "pitch_hand": meta.get("pitch_hand", ""),
+            "lineup_spot": float(spot),
+        })
+    return pd.DataFrame(rows)
+
 def roster_df_from_box(team_box, fallback_team):
     rows = []
     for pdata in team_box.get("players", {}).values():
@@ -510,6 +631,24 @@ def build_game_context(game_row):
     home_lineup = home_roster[(home_roster["lineup_spot"].notna()) & (home_roster["position"] != "P")].copy()
     if not away_lineup.empty: away_lineup = away_lineup.sort_values("lineup_spot")
     if not home_lineup.empty: home_lineup = home_lineup.sort_values("lineup_spot")
+    away_status = "Confirmed" if len(away_lineup) >= 9 else ""
+    home_status = "Confirmed" if len(home_lineup) >= 9 else ""
+
+    # Fall back to projected lineups (most-used 9 across recent games) when not confirmed
+    game_date_str = pd.to_datetime(game_row["game_time_utc"]).strftime("%Y-%m-%d")
+    if len(away_lineup) < 9:
+        proj_a = get_projected_lineup(game_row["away_id"], game_row["away_abbr"], game_date_str)
+        if not proj_a.empty:
+            away_lineup = proj_a.sort_values("lineup_spot")
+            away_status = "Projected"
+    if len(home_lineup) < 9:
+        proj_h = get_projected_lineup(game_row["home_id"], game_row["home_abbr"], game_date_str)
+        if not proj_h.empty:
+            home_lineup = proj_h.sort_values("lineup_spot")
+            home_status = "Projected"
+    if not away_status: away_status = "Not Posted"
+    if not home_status: home_status = "Not Posted"
+
     home_pitch_hand = lookup_pitch_hand(home_roster, game_row["home_probable"])
     away_pitch_hand = lookup_pitch_hand(away_roster, game_row["away_probable"])
     if not away_lineup.empty:
@@ -521,8 +660,7 @@ def build_game_context(game_row):
     return {
         "weather": weather,
         "away_lineup": away_lineup, "home_lineup": home_lineup,
-        "away_status": "Confirmed" if len(away_lineup) >= 9 else "Not Confirmed",
-        "home_status": "Confirmed" if len(home_lineup) >= 9 else "Not Confirmed",
+        "away_status": away_status, "home_status": home_status,
         "home_pitch_hand": home_pitch_hand, "away_pitch_hand": away_pitch_hand,
     }
 
@@ -966,8 +1104,12 @@ def render_game_header(game_row, ctx, weather):
     wind = weather.get("wind_mph"); wind_str = f"{round(float(wind))} mph" if wind is not None else "N/A"
     away_logo = logo_url(game_row["away_id"]) if game_row["away_id"] else ""
     home_logo = logo_url(game_row["home_id"]) if game_row["home_id"] else ""
-    away_pill = "tier-strong" if ctx["away_status"] == "Confirmed" else "tier-ok"
-    home_pill = "tier-strong" if ctx["home_status"] == "Confirmed" else "tier-ok"
+    def _status_pill(s):
+        if s == "Confirmed": return "tier-strong"
+        if s == "Projected": return "tier-ok"
+        return "tier-avoid"
+    away_pill = _status_pill(ctx["away_status"])
+    home_pill = _status_pill(ctx["home_status"])
     st.markdown(f"""
     <div class="section-card dark">
         <div class="game-header">
@@ -999,7 +1141,9 @@ def render_game_header(game_row, ctx, weather):
     """, unsafe_allow_html=True)
 
 def render_lineup_banner(team_id, team_abbr, opp_pitcher, status):
-    pill_cls = "tier-strong" if status == "Confirmed" else "tier-ok"
+    if status == "Confirmed": pill_cls = "tier-strong"
+    elif status == "Projected": pill_cls = "tier-ok"
+    else: pill_cls = "tier-avoid"
     logo = logo_url(team_id) if team_id else ""
     st.markdown(f"""
     <div class="lineup-banner">
@@ -1054,13 +1198,34 @@ with st.spinner("Loading Baseball Savant data from GitHub..."):
 batters_df = standardize_columns(csvs.get("batters", pd.DataFrame()))
 pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
 
-# top controls
-top_cols = st.columns([2.5, 1])
+# top controls - date picker + refresh button. Visible label so users can find it.
+st.markdown(
+    '<style>'
+    '.toolbar-row { display:flex; align-items:flex-end; gap:14px; margin: 6px 0 10px 0; padding: 10px 14px; '
+    '  background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; '
+    '  box-shadow: 0 1px 2px rgba(15,23,42,0.04); }'
+    '.toolbar-label { font-size: 0.78rem; color:#475569; font-weight:700; letter-spacing:.06em; '
+    '  text-transform:uppercase; margin-bottom: 2px; }'
+    '</style>',
+    unsafe_allow_html=True,
+)
+top_cols = st.columns([2.2, 1, 1])
 with top_cols[0]:
-    selected_date = st.date_input("📅 Slate date", value=date.today(), label_visibility="collapsed")
+    selected_date = st.date_input("📅 Slate date", value=date.today())
 with top_cols[1]:
+    st.markdown('<div class="toolbar-label">&nbsp;</div>', unsafe_allow_html=True)
     if st.button("🔄 Refresh data", use_container_width=True):
         st.cache_data.clear()
+        st.rerun()
+with top_cols[2]:
+    st.markdown('<div class="toolbar-label">&nbsp;</div>', unsafe_allow_html=True)
+    today_clicked = st.button("📆 Today", use_container_width=True)
+    if today_clicked:
+        st.session_state["_selected_idx"] = 0
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
         st.rerun()
 
 try:
@@ -1117,18 +1282,78 @@ tab_matchup, tab_rolling, tab_p_zones, tab_h_zones, tab_hot, tab_cold = st.tabs(
 
 # ============== Matchup tab ==============
 with tab_matchup:
+    # Lineup-source caption appears once at the top of the tab
+    if ctx["away_status"] == "Projected" or ctx["home_status"] == "Projected":
+        st.caption("⚡ Showing **projected lineups** built from each team's most-used 9 over recent games. Rows auto-update once MLB posts the confirmed lineup.")
+
     # away lineup
     render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"])
     if away_matchup.empty:
-        st.info(f"{game_row['away_abbr']} lineup not posted yet — check back closer to first pitch.")
+        st.info(f"{game_row['away_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:
         st.dataframe(style_matchup_table(away_matchup), use_container_width=True, hide_index=True, height=min(440, 60 + 38*len(away_matchup)))
     # home lineup
     render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"])
     if home_matchup.empty:
-        st.info(f"{game_row['home_abbr']} lineup not posted yet — check back closer to first pitch.")
+        st.info(f"{game_row['home_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:
         st.dataframe(style_matchup_table(home_matchup), use_container_width=True, hide_index=True, height=min(440, 60 + 38*len(home_matchup)))
+
+    # ----- Top 3 Hitters for this game (above Pitcher Vulnerability) -----
+    combined_for_ranking = pd.concat([away_matchup, home_matchup], ignore_index=True) \
+        if (not away_matchup.empty or not home_matchup.empty) else pd.DataFrame()
+    if not combined_for_ranking.empty and "Matchup" in combined_for_ranking.columns:
+        top3 = combined_for_ranking.sort_values("Matchup", ascending=False).head(3).reset_index(drop=True)
+        st.markdown('<div class="section-title" style="margin-top:18px;">🔥 Top 3 Hitters — This Game</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<style>'
+            '.top3-row { display:flex; gap:12px; flex-wrap:wrap; margin: 6px 0 14px 0; }'
+            '.top3-card { flex: 1 1 0; min-width: 220px; background: #ffffff; border: 2px solid #e2e8f0; '
+            '  border-radius: 14px; padding: 14px 16px; box-shadow: 0 2px 8px rgba(15,23,42,0.05); position: relative; }'
+            '.top3-card.rank1 { border-color:#16a34a; background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 60%); }'
+            '.top3-card.rank2 { border-color:#22c55e; }'
+            '.top3-card.rank3 { border-color:#84cc16; }'
+            '.top3-rank { position:absolute; top:-10px; left:14px; background:#0f172a; color:#fff; '
+            '  font-size: 0.72rem; font-weight: 800; padding: 3px 9px; border-radius: 999px; letter-spacing:.05em; }'
+            '.top3-name { font-size: 1.02rem; font-weight: 800; color:#0f172a; margin-top: 2px; }'
+            '.top3-meta { color:#64748b; font-size:.78rem; font-weight:700; margin-bottom: 8px; letter-spacing:.02em; }'
+            '.top3-stats { display:flex; gap:14px; flex-wrap:wrap; }'
+            '.top3-stat { display:flex; flex-direction:column; }'
+            '.top3-stat .lab { color:#64748b; font-size:.66rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }'
+            '.top3-stat .val { color:#0f172a; font-size:1.05rem; font-weight:800; }'
+            '.top3-score { background:#dcfce7; color:#065f46; padding: 2px 10px; border-radius: 999px; '
+            '  font-weight: 800; font-size: .82rem; display:inline-block; margin-top:4px; }'
+            '</style>',
+            unsafe_allow_html=True,
+        )
+        cards = []
+        for i, r in top3.iterrows():
+            rank_cls = f"rank{i+1}"
+            name = str(r.get("Hitter", ""))
+            team = str(r.get("Team", ""))
+            spot = r.get("Spot", "")
+            bat = r.get("Bat", "")
+            opp_pitcher = game_row["home_probable"] if team == game_row["away_abbr"] else game_row["away_probable"]
+            matchup_v = r.get("Matchup", 0)
+            ceiling_v = r.get("Ceiling", 0)
+            zonefit_v = r.get("Zone Fit", 0)
+            khr_v     = r.get("kHR", 0)
+            hrform    = r.get("HR Form", "")
+            cards.append(
+                f'<div class="top3-card {rank_cls}">'
+                f'<div class="top3-rank">#{i+1}</div>'
+                f'<div class="top3-name">{name}</div>'
+                f'<div class="top3-meta">{team} · Spot {spot} · Bats {bat} · vs {opp_pitcher}</div>'
+                f'<div class="top3-score">Matchup {matchup_v:.1f}</div>'
+                f'<div class="top3-stats" style="margin-top:10px;">'
+                f'<div class="top3-stat"><span class="lab">Ceiling</span><span class="val">{ceiling_v:.1f}</span></div>'
+                f'<div class="top3-stat"><span class="lab">Zone Fit</span><span class="val">{zonefit_v:.3f}</span></div>'
+                f'<div class="top3-stat"><span class="lab">kHR</span><span class="val">{khr_v:.1f}</span></div>'
+                f'<div class="top3-stat"><span class="lab">HR Form</span><span class="val">{hrform}</span></div>'
+                f'</div>'
+                f'</div>'
+            )
+        st.markdown('<div class="top3-row">' + "".join(cards) + '</div>', unsafe_allow_html=True)
 
     # Pitcher panels under matchup tab
     st.markdown('<div class="section-title" style="margin-top:14px;">🎯 Pitcher Vulnerability</div>', unsafe_allow_html=True)

@@ -6,6 +6,8 @@ import re
 import unicodedata
 import urllib.parse
 import io
+import os
+import base64
 from datetime import date, timedelta
 
 # ===========================================================================
@@ -26,9 +28,46 @@ def raw_github_url(path: str) -> str:
 
 CSV_URLS = {label: raw_github_url(name) for label, name in CSV_FILES.items()}
 
+# ---------------------------------------------------------------------------
+# Brand assets (logo + player headshots)
+# ---------------------------------------------------------------------------
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+LOGO_FILENAME = "mrbets850_logo.jpg"
+
+@st.cache_data(show_spinner=False)
+def _logo_data_uri() -> str:
+    """Read the MrBets850 logo from /assets and return a data: URI we can drop
+    directly into <img src=...>. Cached so the bytes are only read once."""
+    path = os.path.join(ASSETS_DIR, LOGO_FILENAME)
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except Exception:
+        return ""
+    ext = os.path.splitext(LOGO_FILENAME)[1].lower().lstrip(".") or "jpeg"
+    mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+LOGO_URI = _logo_data_uri()
+
+def player_headshot_url(player_id) -> str:
+    """MLB official player headshot from the same CDN that serves team logos.
+    Returns an empty string when player_id is missing/invalid."""
+    try:
+        pid = int(player_id)
+    except (TypeError, ValueError):
+        return ""
+    if pid <= 0:
+        return ""
+    return (
+        "https://img.mlbstatic.com/mlb-photos/image/upload/"
+        "d_people:generic:headshot:67:current.png/"
+        "w_180,q_auto:best/v1/people/" + str(pid) + "/headshot/67/current"
+    )
+
 st.set_page_config(
     page_title="MrBets850 — MLB Edge",
-    page_icon="⚾",
+    page_icon="👑",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -122,16 +161,30 @@ html, body, [class*="css"] {
 
 /* ---- brand bar ---- */
 .brand-bar {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
     padding: 14px 22px; border-radius: 18px;
-    background: linear-gradient(110deg, #0b1437 0%, #0a2d6e 55%, #0b4ea2 100%);
-    box-shadow: 0 12px 28px rgba(7,18,55,0.22);
+    background: linear-gradient(110deg, #04130b 0%, #0d2a18 55%, #133a23 100%);
+    box-shadow: 0 12px 28px rgba(5,20,12,0.32);
+    border: 1px solid rgba(250,204,21,0.35);
     margin-bottom: 14px; color: #fff;
 }
-.brand-name { font-size: 1.55rem; font-weight: 900; letter-spacing: 0.04em; line-height: 1.05; color:#fff; }
-.brand-tag  { color: #c7dafe; font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 700; }
-.brand-meta { text-align: right; color: #dbeafe; font-size: 0.92rem; font-weight: 700; }
-.brand-meta .big { font-size: 1.1rem; color:#fff; font-weight: 800; }
+.brand-bar .brand-left { display:flex; align-items:center; gap: 14px; min-width: 0; }
+.brand-bar .brand-logo {
+    width: 64px; height: 64px; flex: 0 0 64px;
+    border-radius: 14px; background: #0a1f12;
+    border: 1px solid rgba(250,204,21,0.45);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    object-fit: contain; padding: 4px;
+}
+.brand-name { font-size: 1.55rem; font-weight: 900; letter-spacing: 0.04em; line-height: 1.05;
+    color: #facc15; text-shadow: 0 1px 0 rgba(0,0,0,0.35); }
+.brand-tag  { color: #fde68a; font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 700; }
+.brand-meta { text-align: right; color: #fde68a; font-size: 0.92rem; font-weight: 700; }
+.brand-meta .big { font-size: 1.1rem; color: #fff; font-weight: 800; }
+@media (max-width: 600px) {
+    .brand-bar .brand-logo { width: 48px; height: 48px; flex-basis: 48px; }
+    .brand-name { font-size: 1.2rem; }
+}
 
 /* ---- horizontal game carousel ---- */
 .carousel-wrap {
@@ -542,6 +595,7 @@ def get_projected_lineup(team_id, team_abbr, before_date_str):
                         "position": pos,
                         "bat_side": pdata.get("batSide", {}).get("code", ""),
                         "pitch_hand": pdata.get("pitchHand", {}).get("code", ""),
+                        "player_id": person.get("id"),
                     }
         except Exception:
             continue
@@ -592,6 +646,7 @@ def get_projected_lineup(team_id, team_abbr, before_date_str):
             "position": meta.get("position", ""),
             "bat_side": meta.get("bat_side", ""),
             "pitch_hand": meta.get("pitch_hand", ""),
+            "player_id": meta.get("player_id"),
             "lineup_spot": float(spot),
         })
     return pd.DataFrame(rows)
@@ -609,7 +664,8 @@ def roster_df_from_box(team_box, fallback_team):
             "position": pdata.get("position", {}).get("abbreviation", ""),
             "bat_side": pdata.get("batSide", {}).get("code", ""),
             "pitch_hand": pdata.get("pitchHand", {}).get("code", ""),
-            "lineup_spot": lineup_spot
+            "player_id": person.get("id"),
+            "lineup_spot": lineup_spot,
         })
     return pd.DataFrame(rows)
 
@@ -868,6 +924,8 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
             "ISO": safe_float(b_row.get("ISO") if b_row is not None else None, 0.170),
             "Barrel%": safe_float(b_row.get("Barrel%") if b_row is not None else None, 8.0),
             "HardHit%": safe_float(b_row.get("HardHit%") if b_row is not None else None, 38.0),
+            # carried-along (hidden) so the Top 3 cards can show MLB headshots
+            "_player_id": r.get("player_id") if "player_id" in r.index else None,
         })
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -1009,7 +1067,7 @@ def heat_hr_form_num(value):
 def style_matchup_table(df):
     if df.empty: return df
     # Hide internal numeric column from display
-    show_cols = [c for c in df.columns if c != "_HR Form Num"]
+    show_cols = [c for c in df.columns if c not in ("_HR Form Num", "_player_id")]
     styler = df[show_cols].style.format({
         "Matchup": "{:.3f}", "Test Score": "{:.3f}", "Ceiling": "{:.3f}",
         "Zone Fit": "{:.3f}", "kHR": "{:.3f}",
@@ -1075,11 +1133,19 @@ def style_zones_table(df, kind="hitter"):
 # UI components
 # ===========================================================================
 def render_brand_bar(slate_count):
+    logo_html = (
+        f'<img class="brand-logo" src="{LOGO_URI}" alt="MrBets850" />'
+        if LOGO_URI else '<span class="brand-logo" style="display:flex;align-items:center;'
+                         'justify-content:center;font-size:1.6rem;">👑</span>'
+    )
     st.markdown(f"""
     <div class="brand-bar">
-        <div>
-            <div class="brand-tag">⚾ MrBets850 · MLB Edge</div>
-            <div class="brand-name">MLB Matchup Board</div>
+        <div class="brand-left">
+            {logo_html}
+            <div>
+                <div class="brand-tag">👑 MrBets850 · MLB Edge</div>
+                <div class="brand-name">MLB Matchup Board</div>
+            </div>
         </div>
         <div class="brand-meta">
             <div class="big">{slate_count} {'game' if slate_count == 1 else 'games'} on slate</div>
@@ -1217,11 +1283,16 @@ pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
 # Render brand bar FIRST so the date picker isn't pinned to Streamlit's top chrome.
 # Use a placeholder count, then re-render after schedule loads.
 _brand_bar_slot = st.empty()
+_loading_logo = (
+    f'<img class="brand-logo" src="{LOGO_URI}" alt="MrBets850" />'
+    if LOGO_URI else '<span class="brand-logo" style="display:flex;align-items:center;'
+                     'justify-content:center;font-size:1.6rem;">👑</span>'
+)
 _brand_bar_slot.markdown(
-    '<div class="brand-bar"><div class="brand"><span class="logo">⚾</span>'
-    '<span class="name">MRBETS850 · MLB EDGE</span><span class="divider">|</span>'
-    '<span class="sub">MLB Matchup Board</span></div>'
-    '<div class="meta"><div class="big">Loading slate…</div></div></div>',
+    f'<div class="brand-bar"><div class="brand-left">{_loading_logo}'
+    '<div><div class="brand-tag">👑 MrBets850 · MLB Edge</div>'
+    '<div class="brand-name">MLB Matchup Board</div></div></div>'
+    '<div class="brand-meta"><div class="big">Loading slate…</div></div></div>',
     unsafe_allow_html=True,
 )
 
@@ -1345,21 +1416,32 @@ with tab_matchup:
         st.markdown(
             '<style>'
             '.top3-row { display:flex; gap:12px; flex-wrap:wrap; margin: 6px 0 14px 0; }'
-            '.top3-card { flex: 1 1 0; min-width: 220px; background: #ffffff; border: 2px solid #e2e8f0; '
-            '  border-radius: 14px; padding: 14px 16px; box-shadow: 0 2px 8px rgba(15,23,42,0.05); position: relative; }'
+            '.top3-card { flex: 1 1 0; min-width: 240px; background: #ffffff; border: 2px solid #e2e8f0; '
+            '  border-radius: 14px; padding: 14px 16px 14px 16px; box-shadow: 0 2px 8px rgba(15,23,42,0.05); position: relative; }'
             '.top3-card.rank1 { border-color:#16a34a; background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 60%); }'
             '.top3-card.rank2 { border-color:#22c55e; }'
             '.top3-card.rank3 { border-color:#84cc16; }'
             '.top3-rank { position:absolute; top:-10px; left:14px; background:#0f172a; color:#fff; '
             '  font-size: 0.72rem; font-weight: 800; padding: 3px 9px; border-radius: 999px; letter-spacing:.05em; }'
-            '.top3-name { font-size: 1.02rem; font-weight: 800; color:#0f172a; margin-top: 2px; }'
-            '.top3-meta { color:#64748b; font-size:.78rem; font-weight:700; margin-bottom: 8px; letter-spacing:.02em; }'
+            '.top3-head { display:flex; align-items:center; gap: 12px; margin-top: 4px; }'
+            '.top3-photo { width: 64px; height: 64px; flex: 0 0 64px; border-radius: 50%; '
+            '  object-fit: cover; background: #e2e8f0; border: 2px solid #cbd5e1; }'
+            '.top3-card.rank1 .top3-photo { border-color: #16a34a; }'
+            '.top3-card.rank2 .top3-photo { border-color: #22c55e; }'
+            '.top3-card.rank3 .top3-photo { border-color: #84cc16; }'
+            '.top3-photo-fallback { width:64px; height:64px; flex:0 0 64px; border-radius:50%; '
+            '  background:#0f172a; color:#facc15; display:flex; align-items:center; justify-content:center; '
+            '  font-weight:900; font-size:1.1rem; border:2px solid #cbd5e1; }'
+            '.top3-head-text { display:flex; flex-direction:column; min-width:0; }'
+            '.top3-name { font-size: 1.02rem; font-weight: 800; color:#0f172a; margin-top: 2px; '
+            '  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }'
+            '.top3-meta { color:#64748b; font-size:.78rem; font-weight:700; margin-bottom: 0; letter-spacing:.02em; }'
             '.top3-stats { display:flex; gap:14px; flex-wrap:wrap; }'
             '.top3-stat { display:flex; flex-direction:column; }'
             '.top3-stat .lab { color:#64748b; font-size:.66rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }'
             '.top3-stat .val { color:#0f172a; font-size:1.05rem; font-weight:800; }'
             '.top3-score { background:#dcfce7; color:#065f46; padding: 2px 10px; border-radius: 999px; '
-            '  font-weight: 800; font-size: .82rem; display:inline-block; margin-top:4px; }'
+            '  font-weight: 800; font-size: .82rem; display:inline-block; margin-top:8px; }'
             '</style>',
             unsafe_allow_html=True,
         )
@@ -1376,13 +1458,29 @@ with tab_matchup:
             zonefit_v = r.get("Zone Fit", 0)
             khr_v     = r.get("kHR", 0)
             hrform    = r.get("HR Form", "")
+            # Player headshot from MLB CDN; fall back to initials disc when no id
+            photo_url = player_headshot_url(r.get("_player_id"))
+            if photo_url:
+                photo_html = (
+                    f'<img class="top3-photo" src="{photo_url}" alt="{name}" '
+                    f'onerror="this.outerHTML=&#39;<div class=\'top3-photo-fallback\'>'
+                    f'{(name[:1] or "?").upper()}</div>&#39;" />'
+                )
+            else:
+                initials = "".join([p[:1] for p in name.split()[:2]]).upper() or "?"
+                photo_html = f'<div class="top3-photo-fallback">{initials}</div>'
             cards.append(
                 f'<div class="top3-card {rank_cls}">'
                 f'<div class="top3-rank">#{i+1}</div>'
+                f'<div class="top3-head">'
+                f'{photo_html}'
+                f'<div class="top3-head-text">'
                 f'<div class="top3-name">{name}</div>'
                 f'<div class="top3-meta">{team} · Spot {spot} · Bats {bat} · vs {opp_pitcher}</div>'
                 f'<div class="top3-score">Matchup {matchup_v:.1f}</div>'
-                f'<div class="top3-stats" style="margin-top:10px;">'
+                f'</div>'
+                f'</div>'
+                f'<div class="top3-stats" style="margin-top:12px;">'
                 f'<div class="top3-stat"><span class="lab">Ceiling</span><span class="val">{ceiling_v:.1f}</span></div>'
                 f'<div class="top3-stat"><span class="lab">Zone Fit</span><span class="val">{zonefit_v:.3f}</span></div>'
                 f'<div class="top3-stat"><span class="lab">kHR</span><span class="val">{khr_v:.1f}</span></div>'

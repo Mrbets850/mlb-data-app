@@ -1,0 +1,59 @@
+name: Refresh Baseball Savant data
+
+# Runs daily at 11:00 UTC = 6:00 AM CT (5:00 AM during daylight saving),
+# which is well before any MLB game starts and gives Streamlit Cloud plenty
+# of time to pick up the new commit before slate-time.
+#
+# Also exposed via "Run workflow" so you can trigger a manual refresh
+# from the Actions tab any time.
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch: {}
+
+# Need write access so the action can commit refreshed CSVs back to main.
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # No third-party deps — script uses only the standard library.
+
+      - name: Download fresh CSVs from Baseball Savant
+        run: python scripts/refresh_savant.py --out-dir .
+
+      - name: Show what changed
+        run: |
+          echo "Modified files:"
+          git status --porcelain
+          echo "---"
+          git diff --stat || true
+
+      - name: Commit & push if anything changed
+        env:
+          GIT_AUTHOR_NAME: "savant-refresh-bot"
+          GIT_AUTHOR_EMAIL: "savant-refresh-bot@users.noreply.github.com"
+          GIT_COMMITTER_NAME: "savant-refresh-bot"
+          GIT_COMMITTER_EMAIL: "savant-refresh-bot@users.noreply.github.com"
+        run: |
+          # Stage only the CSVs we manage; ignore any other accidental changes.
+          git add -- 'Data:savant_batters.csv.csv' \
+                     'Data:savant_pitchers.csv.csv' \
+                     'Data:savant_pitcher_stats.csv'
+          if git diff --cached --quiet; then
+            echo "No data changes — nothing to commit."
+            exit 0
+          fi
+          STAMP=$(date -u +"%Y-%m-%d")
+          git commit -m "Auto-refresh Savant data ${STAMP}"
+          git push origin HEAD:main

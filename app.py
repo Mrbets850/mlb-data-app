@@ -1373,12 +1373,20 @@ SLATE_PITCHER_FORMAT = {
     "PA": "{:.0f}",
 }
 
-def render_slate_pitcher_html(df):
+def render_slate_pitcher_html(df, schedule_df=None):
     """Render a custom HTML table with team logos in the Team cell and a
     green/red heatmap on the metric columns. Mirrors the design in the
-    user-supplied screenshot."""
+    user-supplied screenshot. When schedule_df is provided, the Pitcher
+    cell becomes a link that deep-links the user to that game's Pitcher
+    Zones section in the Games view."""
     if df.empty:
         return "<div class='sp-empty'>No probable starters posted yet.</div>"
+
+    # Map game_pk / short_label -> schedule index so we can deep-link.
+    label_to_idx = {}
+    if schedule_df is not None and not schedule_df.empty:
+        for i, srow in schedule_df.reset_index(drop=True).iterrows():
+            label_to_idx[str(srow.get("short_label", ""))] = i
 
     show_cols = [c for c in df.columns if not c.startswith("_") and c != "Loc"]
     css = (
@@ -1399,6 +1407,9 @@ def render_slate_pitcher_html(df):
         ".sp-team-cell img { width:24px; height:24px; object-fit:contain; }"
         ".sp-loc { color:#64748b; font-weight:800; width: 28px; }"
         ".sp-pitcher { text-align:left; font-weight:700; }"
+        ".sp-pitcher-link { color:#0f172a; text-decoration:none; border-bottom: 1px dashed #94a3b8; }"
+        ".sp-pitcher-link:hover { color:#0a4ea2; border-bottom-color:#0a4ea2; }"
+        ".sp-pitcher-link:hover::after { color:#0a4ea2; }"
         ".sp-num { font-variant-numeric: tabular-nums; font-weight:700; }"
         ".sp-na { color:#94a3b8; }"
         ".sp-empty { padding:14px 18px; color:#64748b; background:#f8fafc; border-radius:14px; "
@@ -1430,7 +1441,21 @@ def render_slate_pitcher_html(df):
                 )
                 continue
             if c == "Pitcher":
-                cells.append(f'<td class="sp-pitcher">{v}</td>')
+                game_label = str(r.get("Game", ""))
+                pid = r.get("_player_id")
+                idx = label_to_idx.get(game_label)
+                if idx is not None and pid:
+                    # Deep-link: switch to Games view, select this game, jump
+                    # to the Pitcher Zones anchor. The page's load handler
+                    # below reads ?view=games&g=<idx>&section=pitcher_zones.
+                    href = f"?view=games&g={idx}&section=pitcher_zones&p={pid}"
+                    cells.append(
+                        f'<td class="sp-pitcher"><a class="sp-pitcher-link" '
+                        f'href="{href}" target="_self" '
+                        f'title="Open {v} in Pitcher Zones">{v} →</a></td>'
+                    )
+                else:
+                    cells.append(f'<td class="sp-pitcher">{v}</td>')
                 continue
             if c in ("Throws", "Game", "Time"):
                 cells.append(f"<td>{v if v not in (None, '') else '<span class=\"sp-na\">—</span>'}</td>")
@@ -1455,6 +1480,119 @@ def render_slate_pitcher_html(df):
     tbody = "<tbody>" + "".join(body_rows) + "</tbody>"
 
     return css + f'<div class="sp-wrap"><table class="sp-table">{thead}{tbody}</table></div>'
+
+def render_slate_pitcher_minicards(away_row: dict, home_row: dict):
+    """Compact two-up cards summarizing both starters in the current game.
+    Each card pulls Pitch Score, Strikeout Score and the key Statcast headline
+    metrics (xwOBA-against, K%, Whiff%, Barrel%, HH%) from the Slate Pitchers
+    builder. Used at the top of the per-game Matchup tab."""
+    css = (
+        "<style>"
+        ".spc-row { display:flex; gap:12px; flex-wrap:wrap; margin: 4px 0 14px 0; }"
+        ".spc-card { flex:1 1 0; min-width: 280px; background:#fff; border:2px solid #e2e8f0; "
+        "  border-radius:14px; padding: 12px 14px; box-shadow: 0 2px 8px rgba(15,23,42,.05); "
+        "  position: relative; }"
+        ".spc-tier-elite  { border-color:#16a34a; background: linear-gradient(180deg,#f0fdf4 0%,#fff 60%); }"
+        ".spc-tier-strong { border-color:#84cc16; }"
+        ".spc-tier-ok     { border-color:#facc15; }"
+        ".spc-tier-soft   { border-color:#f97316; }"
+        ".spc-tier-poor   { border-color:#ef4444; background: linear-gradient(180deg,#fef2f2 0%,#fff 60%); }"
+        ".spc-tag { position:absolute; top:-10px; left:14px; background:#0f172a; color:#fff; "
+        "  font-size:.68rem; font-weight:800; padding:3px 9px; border-radius:999px; letter-spacing:.06em; }"
+        ".spc-head { display:flex; align-items:center; gap:10px; margin-top:2px; }"
+        ".spc-logo { width: 36px; height: 36px; object-fit: contain; flex: 0 0 36px; }"
+        ".spc-name { font-size: 1.02rem; font-weight: 900; color:#0f172a; line-height:1.1; }"
+        ".spc-name a { color: inherit; text-decoration: none; border-bottom: 1px dashed #94a3b8; }"
+        ".spc-name a:hover { color:#0a4ea2; border-bottom-color:#0a4ea2; }"
+        ".spc-meta { color:#64748b; font-size:.78rem; font-weight:700; letter-spacing:.02em; }"
+        ".spc-scores { display:flex; gap:14px; align-items:flex-end; margin-top:8px; }"
+        ".spc-bigscore { display:flex; flex-direction:column; }"
+        ".spc-bigscore .lab { color:#64748b; font-size:.62rem; font-weight:800; "
+        "  text-transform:uppercase; letter-spacing:.08em; }"
+        ".spc-bigscore .val { font-size: 1.55rem; font-weight: 900; color:#0f172a; line-height:1; }"
+        ".spc-pill { display:inline-block; padding: 3px 10px; border-radius: 999px; "
+        "  font-weight: 800; font-size: .78rem; }"
+        ".spc-pill.elite  { background:#dcfce7; color:#065f46; }"
+        ".spc-pill.strong { background:#ecfccb; color:#365314; }"
+        ".spc-pill.ok     { background:#fef9c3; color:#713f12; }"
+        ".spc-pill.soft   { background:#ffedd5; color:#9a3412; }"
+        ".spc-pill.poor   { background:#fee2e2; color:#991b1b; }"
+        ".spc-stats { display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; margin-top:12px; }"
+        ".spc-stat .lab { color:#64748b; font-size:.62rem; font-weight:800; "
+        "  text-transform:uppercase; letter-spacing:.06em; }"
+        ".spc-stat .val { color:#0f172a; font-size: .98rem; font-weight: 800; }"
+        ".spc-empty { color:#64748b; font-size:.85rem; font-style:italic; }"
+        "</style>"
+    )
+
+    def _tier_for(score):
+        if score is None: return ("ok", "—")
+        try: s = float(score)
+        except: return ("ok", "—")
+        if s >= 70: return ("elite",  "Elite")
+        if s >= 60: return ("strong", "Strong")
+        if s >= 50: return ("ok",     "Average")
+        if s >= 40: return ("soft",   "Soft")
+        return ("poor", "Poor")
+
+    def _fmt(v, n=1, suffix=""):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "—"
+        try:
+            return f"{float(v):.{n}f}{suffix}"
+        except Exception:
+            return str(v)
+
+    def _card(label, row):
+        if not row:
+            return (
+                f'<div class="spc-card"><div class="spc-tag">{label}</div>'
+                f'<div class="spc-empty" style="margin-top:8px;">No probable starter posted yet.</div></div>'
+            )
+        tier_cls, tier_label = _tier_for(row.get("Pitch Score"))
+        name = row.get("Pitcher", "")
+        # Mini-card name links to the Pitcher Zones section for this game
+        pid = row.get("_player_id")
+        # The mini-card is rendered inside a single-game view, so we don't need
+        # to switch games — a hash anchor scrolls to the Pitcher Zones tab.
+        name_html = (
+            f'<a href="#pitcher-zones-anchor" data-pid="{pid}">{name}</a>'
+            if pid else name
+        )
+        logo = row.get("_logo", "")
+        logo_html = f'<img class="spc-logo" src="{logo}" alt=""/>' if logo else ""
+        throws = row.get("Throws") or "?"
+        team = row.get("Team", "")
+        return (
+            f'<div class="spc-card spc-tier-{tier_cls}">'
+            f'<div class="spc-tag">{label}</div>'
+            f'<div class="spc-head">{logo_html}'
+            f'<div><div class="spc-name">{name_html} '
+            f'<span style="color:#64748b; font-weight:700; font-size:.82rem;">({throws})</span></div>'
+            f'<div class="spc-meta">{team}</div></div></div>'
+            f'<div class="spc-scores">'
+            f'<div class="spc-bigscore"><span class="lab">Pitch Score</span>'
+            f'<span class="val">{_fmt(row.get("Pitch Score"), 1)}</span></div>'
+            f'<span class="spc-pill {tier_cls}">{tier_label}</span>'
+            f'<div class="spc-bigscore"><span class="lab">Strikeout Score</span>'
+            f'<span class="val">{_fmt(row.get("Strikeout Score"), 1)}</span></div>'
+            f'</div>'
+            f'<div class="spc-stats">'
+            f'<div class="spc-stat"><div class="lab">xwOBA</div><div class="val">{_fmt(row.get("xwOBA"), 3)}</div></div>'
+            f'<div class="spc-stat"><div class="lab">K%</div><div class="val">{_fmt(row.get("K%"), 1, "%")}</div></div>'
+            f'<div class="spc-stat"><div class="lab">Whiff%</div><div class="val">{_fmt(row.get("Whiff%"), 1, "%")}</div></div>'
+            f'<div class="spc-stat"><div class="lab">Barrel%</div><div class="val">{_fmt(row.get("Barrel%"), 1, "%")}</div></div>'
+            f'<div class="spc-stat"><div class="lab">HH%</div><div class="val">{_fmt(row.get("HH%"), 1, "%")}</div></div>'
+            f'</div>'
+            f'</div>'
+        )
+
+    return css + (
+        '<div class="spc-row">'
+        + _card("Away SP", away_row)
+        + _card("Home SP", home_row)
+        + '</div>'
+    )
 
 def style_slate_pitcher_table(df):
     """Apply heatmap shading. Higher = better for pitcher (green) on Pitch Score,
@@ -1732,6 +1870,30 @@ st.markdown(
     "</style>",
     unsafe_allow_html=True,
 )
+# ---- Deep-link handler: ?view=games&g=<idx>&section=pitcher_zones&p=<pid> ----
+# Read query params BEFORE the view radio is instantiated, since Streamlit
+# forbids writing to st.session_state[<widget_key>] after the widget exists.
+# This lets the Slate Pitchers table deep-link a clicked pitcher into that
+# game's Pitcher Zones tab.
+try:
+    _qp_view = st.query_params.get("view", None)
+    _qp_section = st.query_params.get("section", None)
+except Exception:
+    _qp_view = None
+    _qp_section = None
+if _qp_view == "games" and "top_view_tab" not in st.session_state:
+    # Only set if the user hasn't already interacted with the radio this run.
+    st.session_state["top_view_tab"] = "⚾ Games"
+elif _qp_view == "games" and st.session_state.get("top_view_tab") != "⚾ Games":
+    # Force a switch when arriving via deep-link, but only on the first such
+    # arrival per click (use a one-shot flag).
+    if not st.session_state.get("_deep_link_consumed"):
+        st.session_state["top_view_tab"] = "⚾ Games"
+        st.session_state["_deep_link_consumed"] = True
+# Reset the consumed flag whenever ?view= is missing so a future click works.
+if _qp_view is None:
+    st.session_state.pop("_deep_link_consumed", None)
+
 st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
 _view = st.radio(
     "View",
@@ -1755,15 +1917,42 @@ if _view == "🥎 Slate Pitchers":
     if sp_df.empty:
         st.info("No probable starters posted yet for this slate. Check back closer to first pitch.")
     else:
-        # Highlight if any pitcher couldn't be matched to the CSV.
+        # ---- Filter row: Hide TBD / Min PA / Hide unmatched ----
+        f_cols = st.columns([1, 1, 1.2, 2.6])
+        with f_cols[0]:
+            _hide_tbd = st.checkbox("Hide TBD", value=True, key="sp_hide_tbd",
+                                    help="Hide rows whose probable starter is still TBD.")
+        with f_cols[1]:
+            _hide_unmatched = st.checkbox("Hide unmatched", value=False, key="sp_hide_unmatched",
+                                          help="Hide rows with no Savant CSV row (blank metrics).")
+        with f_cols[2]:
+            _min_pa = st.number_input("Min PA", min_value=0, value=0, step=10,
+                                      key="sp_min_pa",
+                                      help="Filter to pitchers with at least this many PA in the CSV.")
+
+        sp_df_filtered = sp_df.copy()
+        if _hide_tbd:
+            sp_df_filtered = sp_df_filtered[sp_df_filtered["Pitcher"].astype(str).str.upper() != "TBD"]
+        if _hide_unmatched:
+            sp_df_filtered = sp_df_filtered[
+                ~(sp_df_filtered["xwOBA"].isna() & sp_df_filtered["K%"].isna())
+            ]
+        if _min_pa and _min_pa > 0 and "PA" in sp_df_filtered.columns:
+            sp_df_filtered = sp_df_filtered[
+                sp_df_filtered["PA"].fillna(-1).astype(float) >= float(_min_pa)
+            ]
+
+        # Highlight if any pitcher couldn't be matched to the CSV (use unfiltered df).
         unmatched = sp_df[sp_df["xwOBA"].isna() & sp_df["K%"].isna()]
-        if not unmatched.empty:
+        if not unmatched.empty and not _hide_unmatched:
             names = ", ".join(unmatched["Pitcher"].astype(str).tolist())
             st.caption(
                 f"⚠️ No Savant CSV row found for: **{names}**. They’ll appear with blank metrics. "
                 "Update `Data:savant_pitcher_stats.csv` to include them."
             )
-        st.markdown(render_slate_pitcher_html(sp_df), unsafe_allow_html=True)
+        if sp_df_filtered.empty:
+            st.info("No pitchers match the current filters. Try lowering Min PA or unchecking Hide TBD.")
+        st.markdown(render_slate_pitcher_html(sp_df_filtered, schedule_df), unsafe_allow_html=True)
         st.markdown(
             '<div class="sp-legend">'
             'Sorted by <code>↓ Pitch Score</code> (35% xwOBA-against · 25% K-BB% · '
@@ -1776,7 +1965,7 @@ if _view == "🥎 Slate Pitchers":
             unsafe_allow_html=True,
         )
         # CSV download
-        csv_bytes = sp_df.drop(columns=[c for c in sp_df.columns if c.startswith("_")], errors="ignore").to_csv(index=False).encode("utf-8")
+        csv_bytes = sp_df_filtered.drop(columns=[c for c in sp_df_filtered.columns if c.startswith("_")], errors="ignore").to_csv(index=False).encode("utf-8")
         st.download_button(
             "⬇️ Download Slate Pitchers (CSV)",
             data=csv_bytes,
@@ -1824,6 +2013,20 @@ tab_matchup, tab_rolling, tab_p_zones, tab_h_zones, tab_hot, tab_cold = st.tabs(
 
 # ============== Matchup tab ==============
 with tab_matchup:
+    # ---- Per-game pitcher mini-cards (top of Matchup) ----
+    try:
+        if pitcher_stats_df is not None and not pitcher_stats_df.empty:
+            _away_sp = build_slate_pitcher_row(game_row, "away", pitcher_stats_df)
+            _home_sp = build_slate_pitcher_row(game_row, "home", pitcher_stats_df)
+            if _away_sp or _home_sp:
+                st.markdown(
+                    render_slate_pitcher_minicards(_away_sp, _home_sp),
+                    unsafe_allow_html=True,
+                )
+    except Exception as _mc_e:
+        # Mini-cards are non-critical — don't let any data hiccup break the tab.
+        pass
+
     # Lineup-source caption appears once at the top of the tab
     if ctx["away_status"] == "Projected" or ctx["home_status"] == "Projected":
         st.caption("⚡ Showing **projected lineups** built from each team's most-used 9 over recent games. Rows auto-update once MLB posts the confirmed lineup.")
@@ -1949,6 +2152,22 @@ with tab_rolling:
 
 # ============== Pitcher Zones tab ==============
 with tab_p_zones:
+    # Anchor target for slate-pitcher deep-links and mini-card pitcher names.
+    st.markdown('<div id="pitcher-zones-anchor"></div>', unsafe_allow_html=True)
+    # If the user arrived here via a Slate-Pitchers deep-link, scroll the
+    # anchor into view. The streamlit tab content rerenders the anchor each
+    # run, so injecting JS here is fine. Tabs are still client-side though,
+    # so we only nudge when ?section=pitcher_zones is present.
+    if _qp_section == "pitcher_zones":
+        st.markdown(
+            "<script>"
+            "setTimeout(function(){"
+            "  var a=document.getElementById('pitcher-zones-anchor');"
+            "  if(a){a.scrollIntoView({behavior:'smooth',block:'start'});}"
+            "}, 300);"
+            "</script>",
+            unsafe_allow_html=True,
+        )
     pz1, pz2 = st.columns(2)
     with pz1:
         st.markdown(f'<div class="section-title">🎯 Away SP — {game_row["away_probable"]}</div>', unsafe_allow_html=True)

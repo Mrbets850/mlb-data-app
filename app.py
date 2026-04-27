@@ -1198,29 +1198,39 @@ with st.spinner("Loading Baseball Savant data from GitHub..."):
 batters_df = standardize_columns(csvs.get("batters", pd.DataFrame()))
 pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
 
-# top controls - date picker + refresh button. Visible label so users can find it.
+# Render brand bar FIRST so the date picker isn't pinned to Streamlit's top chrome.
+# Use a placeholder count, then re-render after schedule loads.
+_brand_bar_slot = st.empty()
+_brand_bar_slot.markdown(
+    '<div class="brand-bar"><div class="brand"><span class="logo">⚾</span>'
+    '<span class="name">MRBETS850 · MLB EDGE</span><span class="divider">|</span>'
+    '<span class="sub">MLB Matchup Board</span></div>'
+    '<div class="meta"><div class="big">Loading slate…</div></div></div>',
+    unsafe_allow_html=True,
+)
+
+# top controls - date picker + refresh button + today button. Visible labels.
 st.markdown(
     '<style>'
-    '.toolbar-row { display:flex; align-items:flex-end; gap:14px; margin: 6px 0 10px 0; padding: 10px 14px; '
-    '  background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; '
-    '  box-shadow: 0 1px 2px rgba(15,23,42,0.04); }'
-    '.toolbar-label { font-size: 0.78rem; color:#475569; font-weight:700; letter-spacing:.06em; '
-    '  text-transform:uppercase; margin-bottom: 2px; }'
-    '</style>',
+    '.toolbar-section-title { font-size: 0.78rem; color:#475569; font-weight:800; '
+    '  letter-spacing:.06em; text-transform:uppercase; margin: 8px 0 4px 2px; }'
+    '.toolbar-spacer-label { font-size: 0.78rem; color:transparent; margin-bottom: 0; user-select:none; }'
+    '</style>'
+    '<div class="toolbar-section-title">Slate Controls</div>',
     unsafe_allow_html=True,
 )
 top_cols = st.columns([2.2, 1, 1])
 with top_cols[0]:
-    selected_date = st.date_input("📅 Slate date", value=date.today())
+    selected_date = st.date_input("📅 Slate date", value=date.today(), key="slate_date_picker")
 with top_cols[1]:
-    st.markdown('<div class="toolbar-label">&nbsp;</div>', unsafe_allow_html=True)
-    if st.button("🔄 Refresh data", use_container_width=True):
+    st.markdown('<div class="toolbar-spacer-label">.</div>', unsafe_allow_html=True)
+    if st.button("🔄 Refresh data", use_container_width=True, key="refresh_btn"):
         st.cache_data.clear()
         st.rerun()
 with top_cols[2]:
-    st.markdown('<div class="toolbar-label">&nbsp;</div>', unsafe_allow_html=True)
-    today_clicked = st.button("📆 Today", use_container_width=True)
-    if today_clicked:
+    st.markdown('<div class="toolbar-spacer-label">.</div>', unsafe_allow_html=True)
+    if st.button("📆 Today", use_container_width=True, key="today_btn"):
+        st.session_state["slate_date_picker"] = date.today()
         st.session_state["_selected_idx"] = 0
         try:
             st.query_params.clear()
@@ -1231,10 +1241,13 @@ with top_cols[2]:
 try:
     schedule_df = get_schedule(selected_date)
 except Exception as e:
+    _brand_bar_slot.empty()
     render_brand_bar(0)
     st.error(f"Schedule load failed: {e}")
     st.stop()
 
+# Update the brand bar with the actual slate count
+_brand_bar_slot.empty()
 render_brand_bar(len(schedule_df))
 
 if batters_df.empty and pitchers_df.empty:

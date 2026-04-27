@@ -18,8 +18,11 @@ GITHUB_REPO = "mlb-data-app"
 GITHUB_BRANCH = "main"
 
 CSV_FILES = {
-    "batters":  "Data:savant_batters.csv.csv",
-    "pitchers": "Data:savant_pitchers.csv.csv",
+    "batters":         "Data:savant_batters.csv.csv",
+    "pitchers":        "Data:savant_pitchers.csv.csv",
+    # Pitcher results (xwOBA, Whiff%, Barrel%-against, HH%, FB%, K%, BB%, etc.)
+    # used by the Slate Pitchers tab. Joined to the slate by player_id.
+    "pitcher_stats":   "Data:savant_pitcher_stats.csv",
 }
 
 def raw_github_url(path: str) -> str:
@@ -1132,130 +1135,146 @@ def style_zones_table(df, kind="hitter"):
     return styler
 
 # ===========================================================================
-# Slate pitchers (live MLB Stats API)
+# Slate pitchers (Baseball Savant CSV joined by player_id +
+#                MLB Stats API for handedness only)
 # ===========================================================================
-@st.cache_data(ttl=900, show_spinner=False)
-def _fetch_pitcher_season(player_id: int, season: int) -> dict:
-    """Pull a single pitcher's season pitching stat block + handedness from
-    the MLB Stats API. Returns {} on failure."""
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_pitcher_throws(player_id: int) -> str:
+    """Cheap MLB Stats API hit just for handedness ('L'/'R'), since the Savant
+    CSV doesn't include it. Cached for an hour."""
     if not player_id:
-        return {}
+        return ""
     try:
         r = requests.get(
             "https://statsapi.mlb.com/api/v1/people",
-            params={
-                "personIds": int(player_id),
-                "hydrate": f"stats(group=[pitching],type=[season],season={season})",
-            },
-            headers=HEADERS, timeout=20,
+            params={"personIds": int(player_id)},
+            headers=HEADERS, timeout=15,
         )
         r.raise_for_status()
-        data = r.json()
+        people = r.json().get("people", [])
+        if not people:
+            return ""
+        return people[0].get("pitchHand", {}).get("code", "") or ""
     except Exception:
-        return {}
-    people = data.get("people", [])
-    if not people:
-        return {}
-    p = people[0]
-    out = {
-        "player_id": p.get("id"),
-        "full_name": p.get("fullName", ""),
-        "throws": p.get("pitchHand", {}).get("code", ""),
-        "stat": {},
-    }
-    for sg in p.get("stats", []):
-        if sg.get("group", {}).get("displayName") == "pitching":
-            for s in sg.get("splits", []):
-                out["stat"] = s.get("stat", {}) or {}
-                break
-    return out
+        return ""
 
-def _safe_pct_str(v, default=None):
-    """MLB API returns some percentages as strings like '.640'. Normalize to 0–1."""
-    if v is None or v == "":
-        return default
+def _coerce_pct_or_decimal(v):
+    """Savant CSV percentages can come through as either '0.265' (decimal-of-1)
+    or '26.5' (already a percent). Normalize so anything <= 1.0 is treated as a
+    fraction and scaled up. Strings like '.265' are also handled."""
+    if v is None or pd.isna(v) or v == "":
+        return None
     try:
-        f = float(v)
-        return f
+        x = float(v)
     except Exception:
-        return default
+        return None
+    return x
 
-def build_slate_pitcher_row(game_row, side, season):
-    """Build one display row for the Slate Pitchers table from a schedule row.
-    `side` is 'away' or 'home'. Returns None when no probable pitcher is set yet."""
+def _slate_pitcher_lookup(pitcher_stats_df: pd.DataFrame, player_id: int) -> dict:
+    """Return the standardized stat row for one pitcher, keyed by player_id."""
+    if pitcher_stats_df is None or pitcher_stats_df.empty or not player_id:
+        return {}
+    if "player_id" not in pitcher_stats_df.columns:
+        return {}
+    try:
+        match = pitcher_stats_df[pitcher_stats_df["player_id"].astype("Int64") == int(player_id)]
+    except Exception:
+        return {}
+    if match.empty:
+        return {}
+    return match.iloc[0].to_dict()
+
+def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
+    """Build one display row for the Slate Pitchers table by joining the
+    schedule's probable-pitcher id to the Savant pitcher_stats CSV."""
     pid = game_row.get(f"{side}_probable_id")
     pname = game_row.get(f"{side}_probable") or ""
     if not pid or pname in ("", "TBD"):
         return None
-    info = _fetch_pitcher_season(int(pid), season)
-    stat = info.get("stat", {}) or {}
+    stat = _slate_pitcher_lookup(pitcher_stats_df, pid)
+    throws = _fetch_pitcher_throws(int(pid))
 
-    # Innings pitched comes back like '173.2' (.2 = 2/3 of an inning).
-    ip_raw = stat.get("inningsPitched")
-    try:
-        ip_str = str(ip_raw)
-        whole, _, frac = ip_str.partition(".")
-        ip_outs = int(whole) * 3 + (int(frac) if frac else 0)
-        ip_decimal = ip_outs / 3.0 if ip_outs else 0.0
-    except Exception:
-        ip_decimal = 0.0
+    # standardize_columns has already mapped raw Savant columns to canonical
+    # names where possible: K%, BB%, xwOBA, wOBA, Whiff%, Swing%, Barrel%,
+    # HardHit%, FB%, GB%, SweetSpot%. Things it leaves alone (CSV-only):
+    # f_strike_percent, in_zone_percent, meatball_percent, avg_best_speed,
+    # avg_hyper_speed.
+    def _g(key):
+        if not stat:
+            return None
+        v = stat.get(key)
+        return _coerce_pct_or_decimal(v)
 
-    bf  = float(stat.get("battersFaced") or 0)
-    so  = float(stat.get("strikeOuts") or 0)
-    bb  = float(stat.get("baseOnBalls") or 0)
-    hr  = float(stat.get("homeRuns") or 0)
-    pitches = float(stat.get("numberOfPitches") or 0)
-    strikes = float(stat.get("strikes") or 0)
-    era = stat.get("era")
-    whip = stat.get("whip")
-    avg_against = _safe_pct_str(stat.get("avg"))
-    obp_against = _safe_pct_str(stat.get("obp"))
-    slg_against = _safe_pct_str(stat.get("slg"))
-    ops_against = _safe_pct_str(stat.get("ops"))
-    k_per_9  = _safe_pct_str(stat.get("strikeoutsPer9Inn"))
-    bb_per_9 = _safe_pct_str(stat.get("walksPer9Inn"))
-    go_to_ao = _safe_pct_str(stat.get("groundOutsToAirouts"))
-    ground_outs = float(stat.get("groundOuts") or 0)
-    air_outs    = float(stat.get("airOuts") or 0)
+    pa     = _g("pa")
+    k_pct  = _g("K%")
+    bb_pct = _g("BB%")
+    woba   = _g("wOBA")
+    xwoba  = _g("xwOBA")
+    whiff  = _g("Whiff%")
+    swing  = _g("Swing%")
+    fstrike = _g("f_strike_percent")
+    in_zone = _g("in_zone_percent")
+    meatball = _g("meatball_percent")
+    barrel = _g("Barrel%")
+    hardhit = _g("HardHit%")
+    sweet  = _g("SweetSpot%")
+    fb_pct = _g("FB%")
+    gb_pct = _g("GB%")
+    ev_best   = _g("avg_best_speed")
+    ev_hyper  = _g("avg_hyper_speed")
 
-    # Derived display metrics.
-    k_pct  = (so / bf * 100.0) if bf else None
-    bb_pct = (bb / bf * 100.0) if bf else None
-    # CSW% (called + swinging strikes) isn't in StatsAPI; use overall Strike%
-    # as a proxy (labelled "Strike%" in the column header).
-    strike_pct = (strikes / pitches * 100.0) if pitches else None
-    ball_pct   = ((pitches - strikes) / pitches * 100.0) if pitches else None
-    fb_pct     = (air_outs / (ground_outs + air_outs) * 100.0) if (ground_outs + air_outs) else None
-    # FIP (rough proxy for SIERA); constants from public formulas.
-    if ip_decimal > 0:
-        fip = ((13.0 * hr) + (3.0 * bb) - (2.0 * so)) / ip_decimal + 3.10
+    # SwStr% (true): swing-rate × whiff-on-swing.
+    sw_str = (swing / 100.0) * (whiff / 100.0) * 100.0 if (swing is not None and whiff is not None) else None
+    # CSW% proxy: called-strike + whiff. The CSV doesn't expose called-strike
+    # rate directly; use first-pitch-strike rate * (1 - whiff fraction) as a
+    # rough called-strike proxy, then add SwStr.
+    if (fstrike is not None) and (whiff is not None) and (swing is not None):
+        called_proxy = fstrike * (1.0 - swing / 100.0)
+        csw_proxy = called_proxy + (sw_str or 0.0)
     else:
-        fip = None
+        csw_proxy = None
 
-    # Pitch Score: composite, higher = stronger pitcher matchup.
-    # Built from ERA (lower good), WHIP (lower good), K-BB% (higher good), OPS-against (lower good).
-    def _norm(v, lo, hi, reverse=False):
-        if v is None: return 50.0
-        try: x = float(v)
-        except Exception: return 50.0
+    # ---- composite scores (higher = stronger pitcher) ----
+    def _norm(v, lo, hi, reverse=False, default=50.0):
+        if v is None:
+            return default
+        try:
+            x = float(v)
+        except Exception:
+            return default
         x = max(lo, min(hi, x))
         pct = (x - lo) / (hi - lo) * 100.0
         return 100.0 - pct if reverse else pct
-    era_score  = _norm(era, 2.00, 6.00, reverse=True)
-    whip_score = _norm(whip, 0.90, 1.70, reverse=True)
-    kbb_score  = _norm((k_pct or 0) - (bb_pct or 0), 5.0, 25.0)
-    ops_score  = _norm((ops_against or 0) * 1000.0, 550.0, 850.0, reverse=True) if ops_against is not None else 50.0
-    pitch_score = round(0.30 * era_score + 0.25 * whip_score + 0.25 * kbb_score + 0.20 * ops_score, 1)
 
-    # Strikeout score: K%, K/9, swing-and-miss proxy.
-    k9_score  = _norm(k_per_9, 6.0, 12.5)
-    kp_score  = _norm(k_pct,   15.0, 35.0)
-    strikeout_score = round(0.55 * k9_score + 0.45 * kp_score, 1)
+    # Convert xwoba like 0.265 -> 265 for normalization.
+    xwoba_scaled = (xwoba * 1000.0) if (xwoba is not None and xwoba <= 1.0) else xwoba
+    woba_scaled  = (woba  * 1000.0) if (woba  is not None and woba  <= 1.0) else woba
+
+    # 35% xwOBA-against (lower good) + 25% K-BB% (higher) + 20% Whiff% (higher)
+    # + 20% Barrel%-against (lower good)
+    pitch_score = round(
+        0.35 * _norm(xwoba_scaled, 250.0, 360.0, reverse=True)
+        + 0.25 * _norm((k_pct or 0) - (bb_pct or 0), 5.0, 25.0)
+        + 0.20 * _norm(whiff, 18.0, 33.0)
+        + 0.20 * _norm(barrel, 4.0, 12.0, reverse=True),
+        1,
+    )
+    strikeout_score = round(
+        0.55 * _norm(k_pct,  18.0, 32.0)
+        + 0.45 * _norm(whiff, 18.0, 33.0),
+        1,
+    )
 
     if side == "away":
         team_id = game_row["away_id"]; team_abbr = game_row["away_abbr"]; loc_marker = "@"
     else:
         team_id = game_row["home_id"]; team_abbr = game_row["home_abbr"]; loc_marker = "vs"
+
+    def _r(v, n=1):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        try: return round(float(v), n)
+        except Exception: return None
 
     return {
         "_logo": logo_url(team_id) if team_id else "",
@@ -1263,32 +1282,35 @@ def build_slate_pitcher_row(game_row, side, season):
         "Loc": loc_marker,
         "Team": team_abbr,
         "Pitcher": pname,
-        "Throws": info.get("throws") or "",
+        "Throws": throws,
         "Game": game_row["short_label"],
         "Time": game_row["time_short"],
         "Pitch Score": pitch_score,
         "Strikeout Score": strikeout_score,
-        "ERA": float(era) if era not in (None, "") else None,
-        "WHIP": float(whip) if whip not in (None, "") else None,
-        "FIP*": round(fip, 2) if fip is not None else None,
-        "K%": round(k_pct, 1) if k_pct is not None else None,
-        "BB%": round(bb_pct, 1) if bb_pct is not None else None,
-        "K/9": round(float(k_per_9), 2) if k_per_9 is not None else None,
-        "Strike%": round(strike_pct, 1) if strike_pct is not None else None,
-        "Ball%": round(ball_pct, 1) if ball_pct is not None else None,
-        "OPS-A": round(float(ops_against), 3) if ops_against is not None else None,
-        "AVG-A": round(float(avg_against), 3) if avg_against is not None else None,
-        "FB%*": round(fb_pct, 1) if fb_pct is not None else None,
-        "IP": ip_decimal if ip_decimal else None,
+        "xwOBA": _r(xwoba, 3),
+        "wOBA": _r(woba, 3),
+        "K%": _r(k_pct, 1),
+        "BB%": _r(bb_pct, 1),
+        "Whiff%": _r(whiff, 1),
+        "SwStr%": _r(sw_str, 1),
+        "CSW%*": _r(csw_proxy, 1),
+        "F-Strike%": _r(fstrike, 1),
+        "Zone%": _r(in_zone, 1),
+        "Barrel%": _r(barrel, 1),
+        "HH%": _r(hardhit, 1),
+        "FB%": _r(fb_pct, 1),
+        "GB%": _r(gb_pct, 1),
+        "Meatball%": _r(meatball, 1),
+        "PA": int(pa) if pa is not None else None,
     }
 
 @st.cache_data(ttl=900, show_spinner=False)
-def build_slate_pitcher_table(_schedule_df, season):
-    """Iterate the schedule and build one row per probable starter (away + home)."""
+def build_slate_pitcher_table(_schedule_df, _pitcher_stats_df):
+    """One row per probable starter (away + home) for the slate."""
     out = []
     for _, g in _schedule_df.iterrows():
         for side in ("away", "home"):
-            row = build_slate_pitcher_row(g, side, season)
+            row = build_slate_pitcher_row(g, side, _pitcher_stats_df)
             if row:
                 out.append(row)
     df = pd.DataFrame(out)
@@ -1324,26 +1346,31 @@ SLATE_PITCHER_HEATMAP = {
     # column -> (lo, hi, reverse) where reverse=True means lower is greener
     "Pitch Score":     (45.0, 75.0, False),
     "Strikeout Score": (45.0, 75.0, False),
-    "ERA":             (2.5,  5.5,  True),
-    "WHIP":            (1.00, 1.55, True),
-    "FIP*":            (3.0,  5.5,  True),
-    "K%":              (18.0, 32.0, False),
-    "BB%":             (5.0,  11.0, True),
-    "K/9":             (7.0,  12.0, False),
-    "Strike%":         (60.0, 68.0, False),
-    "Ball%":           (32.0, 40.0, True),
-    "OPS-A":           (0.600, 0.800, True),
-    "AVG-A":           (0.210, 0.275, True),
-    "FB%*":            (30.0, 50.0, False),
+    "xwOBA":           (0.260, 0.340, True),
+    "wOBA":            (0.260, 0.340, True),
+    "K%":              (18.0, 32.0,   False),
+    "BB%":             (5.0,  11.0,   True),
+    "Whiff%":          (20.0, 32.0,   False),
+    "SwStr%":          (9.0,  15.0,   False),
+    "CSW%*":           (28.0, 34.0,   False),
+    "F-Strike%":       (58.0, 68.0,   False),
+    "Zone%":           (40.0, 52.0,   False),
+    "Barrel%":         (4.0,  12.0,   True),
+    "HH%":             (32.0, 45.0,   True),
+    "FB%":             (30.0, 48.0,   False),
+    "GB%":             (38.0, 55.0,   False),
+    "Meatball%":       (5.0,  9.0,    True),
 }
 
 SLATE_PITCHER_FORMAT = {
     "Pitch Score": "{:.1f}", "Strikeout Score": "{:.1f}",
-    "ERA": "{:.2f}", "WHIP": "{:.2f}", "FIP*": "{:.2f}",
-    "K%": "{:.1f}", "BB%": "{:.1f}", "K/9": "{:.2f}",
-    "Strike%": "{:.1f}", "Ball%": "{:.1f}",
-    "OPS-A": "{:.3f}", "AVG-A": "{:.3f}",
-    "FB%*": "{:.1f}", "IP": "{:.1f}",
+    "xwOBA": "{:.3f}", "wOBA": "{:.3f}",
+    "K%": "{:.1f}", "BB%": "{:.1f}",
+    "Whiff%": "{:.1f}", "SwStr%": "{:.1f}", "CSW%*": "{:.1f}",
+    "F-Strike%": "{:.1f}", "Zone%": "{:.1f}",
+    "Barrel%": "{:.1f}", "HH%": "{:.1f}",
+    "FB%": "{:.1f}", "GB%": "{:.1f}", "Meatball%": "{:.1f}",
+    "PA": "{:.0f}",
 }
 
 def render_slate_pitcher_html(df):
@@ -1608,6 +1635,7 @@ with st.spinner("Loading Baseball Savant data from GitHub..."):
     csvs = load_all_csvs()
 batters_df = standardize_columns(csvs.get("batters", pd.DataFrame()))
 pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
+pitcher_stats_df = standardize_columns(csvs.get("pitcher_stats", pd.DataFrame()))
 
 # Render brand bar FIRST so the date picker isn't pinned to Streamlit's top chrome.
 # Use a placeholder count, then re-render after schedule loads.
@@ -1716,20 +1744,34 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 if _view == "🥎 Slate Pitchers":
     st.markdown('<div class="section-title" style="font-size:1.4rem;margin-top:8px;">🥎 Slate Pitchers</div>', unsafe_allow_html=True)
-    _season = pd.to_datetime(selected_date).year
-    with st.spinner("Loading season pitching stats from MLB…"):
-        sp_df = build_slate_pitcher_table(schedule_df, _season)
+    if pitcher_stats_df is None or pitcher_stats_df.empty:
+        st.warning(
+            "Pitcher stats CSV (`Data:savant_pitcher_stats.csv`) hasn’t loaded yet. "
+            "Make sure it’s pushed to the data repo — the Slate Pitchers tab joins by `player_id`."
+        )
+        st.stop()
+    with st.spinner("Building slate pitcher board…"):
+        sp_df = build_slate_pitcher_table(schedule_df, pitcher_stats_df)
     if sp_df.empty:
         st.info("No probable starters posted yet for this slate. Check back closer to first pitch.")
     else:
+        # Highlight if any pitcher couldn't be matched to the CSV.
+        unmatched = sp_df[sp_df["xwOBA"].isna() & sp_df["K%"].isna()]
+        if not unmatched.empty:
+            names = ", ".join(unmatched["Pitcher"].astype(str).tolist())
+            st.caption(
+                f"⚠️ No Savant CSV row found for: **{names}**. They’ll appear with blank metrics. "
+                "Update `Data:savant_pitcher_stats.csv` to include them."
+            )
         st.markdown(render_slate_pitcher_html(sp_df), unsafe_allow_html=True)
         st.markdown(
             '<div class="sp-legend">'
-            'Sorted by <code>↓ Pitch Score</code> (composite of ERA, WHIP, K-BB%, OPS-against). '
-            'Green = stronger for the pitcher, red = weaker. '
-            '<code>FIP*</code> and <code>FB%*</code> are public-formula proxies (true SIERA, '
-            'true CSW% / SwStr% / Brl% require pitch-by-pitch data not in the MLB Stats API). '
-            '<code>Strike%</code> is overall strike rate (proxy for CSW%).'
+            'Sorted by <code>↓ Pitch Score</code> (35% xwOBA-against · 25% K-BB% · '
+            '20% Whiff% · 20% Barrel%-against). Green = stronger pitcher, red = weaker. '
+            '<code>SwStr%</code> is computed as Swing% × Whiff%. '
+            '<code>CSW%*</code> is a proxy (called-strike portion estimated from F-Strike% '
+            '× take-rate, plus SwStr%). All other metrics are direct from your '
+            '<code>savant_pitcher_stats.csv</code>.'
             '</div>',
             unsafe_allow_html=True,
         )

@@ -1594,6 +1594,220 @@ def render_slate_pitcher_minicards(away_row: dict, home_row: dict):
         + '</div>'
     )
 
+# ============== HR Sleepers data layer ==============
+#
+# A "sleeper" = a batter whose underlying power-profile (Barrel%, HardHit%,
+# ISO, FB%, Pull%, EV) and tonight's game context (matchup score, ceiling,
+# park, weather, opposing pitcher) say HR-upside, but who flies under the
+# radar (low season HR total, lower lineup spot, lower-priced).
+#
+# Sleeper Score (0-100):
+#   Power signal     60%  (Barrel% 22% + HardHit% 14% + ISO 10% + FB% 7% + Pull% 7%)
+#   Matchup signal   25%  (Matchup 10% + Ceiling 8% + kHR 7%)
+#   Sleeper bonus    15%  (lower season HR total + lower lineup spot earn boost)
+#
+# All inputs are clipped/normalized to a 0-100 scale before weighting.
+def _norm(val, lo, hi, default=50.0):
+    """Linear-scale a metric to 0-100, clipped. Returns default on NaN."""
+    try:
+        v = float(val)
+        if pd.isna(v):
+            return default
+    except Exception:
+        return default
+    if hi <= lo:
+        return default
+    return max(0.0, min(100.0, (v - lo) / (hi - lo) * 100.0))
+
+def _sleeper_bonus(hr_total, lineup_spot):
+    """Bigger boost for low-HR-total + lower lineup spot.
+    HR total: 0 HR -> 100, 5 HR -> 80, 10 HR -> 55, 15 HR -> 30, 20+ HR -> 10.
+    Lineup spot: 1 -> 0, 2 -> 10, 3 -> 25, 4 -> 45, 5 -> 60, 6 -> 75, 7-9 -> 90.
+    """
+    try: hr = float(hr_total)
+    except: hr = 10.0
+    if pd.isna(hr): hr = 10.0
+    if hr <= 0:    hr_b = 100
+    elif hr <= 5:  hr_b = 100 - (hr * 4)         # 5 HR -> 80
+    elif hr <= 10: hr_b = 80 - (hr - 5) * 5      # 10 HR -> 55
+    elif hr <= 15: hr_b = 55 - (hr - 10) * 5     # 15 HR -> 30
+    elif hr <= 25: hr_b = 30 - (hr - 15) * 2     # 25 HR -> 10
+    else:          hr_b = 10
+
+    try: spot = int(lineup_spot)
+    except: spot = 5
+    spot_table = {1:0, 2:10, 3:25, 4:45, 5:60, 6:75, 7:90, 8:90, 9:90}
+    spot_b = spot_table.get(spot, 50)
+
+    return 0.55 * hr_b + 0.45 * spot_b
+
+def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df):
+    """Score every posted-lineup batter for HR sleeper potential and return a
+    sorted DataFrame ready for rendering."""
+    rows = []
+    for _, g in _schedule_df.iterrows():
+        try:
+            cc = build_game_context(g)
+        except Exception:
+            continue
+        for side, lineup_df, opp_pitcher in (
+            ("away", cc["away_lineup"], g["home_probable"]),
+            ("home", cc["home_lineup"], g["away_probable"]),
+        ):
+            if lineup_df is None or lineup_df.empty:
+                continue
+            p_row = find_pitcher_row(_pitchers_df, opp_pitcher)
+            for _, r in lineup_df.iterrows():
+                b = find_player_row(_batters_df, r["name_key"], r["team"])
+                if b is None:
+                    continue
+                opp_hand = r.get("opposing_pitch_hand", "")
+                # Reuse the existing scoring stack so sleeper rankings stay
+                # consistent with the per-game model.
+                m_score = matchup_score(b, p_row, r["lineup_spot"], cc["weather"],
+                                         g["park_factor"], r["bat_side"], opp_hand)
+                c_score = ceiling_score(b, cc["weather"], g["park_factor"])
+                khr     = k_adj_hr(b, p_row, c_score)
+
+                hr_total = safe_float(b.get("HR"), 0)
+                pa       = safe_float(b.get("pa"), 0) or safe_float(b.get("PA"), 0)
+                barrel   = safe_float(b.get("Barrel%"),  np.nan)
+                hh       = safe_float(b.get("HardHit%"), np.nan)
+                iso      = safe_float(b.get("ISO"),      np.nan)
+                fb       = safe_float(b.get("FB%"),      np.nan)
+                pull     = safe_float(b.get("Pull%"),    np.nan)
+                ev       = safe_float(b.get("EV"),       np.nan)
+                xiso     = safe_float(b.get("xISO"),     np.nan)
+
+                # Normalize each input to 0-100
+                n_barrel = _norm(barrel, 4.0, 18.0)
+                n_hh     = _norm(hh,     30.0, 55.0)
+                n_iso    = _norm(iso,    0.100, 0.280)
+                n_fb     = _norm(fb,     20.0, 45.0)
+                n_pull   = _norm(pull,   30.0, 50.0)
+                n_match  = _norm(m_score, 80.0, 140.0)
+                n_ceil   = _norm(c_score, 80.0, 140.0)
+                n_khr    = _norm(khr,     0.4,  1.6)
+                bonus    = _sleeper_bonus(hr_total, r.get("lineup_spot", 9))
+
+                power_part   = (0.22 * n_barrel + 0.14 * n_hh + 0.10 * n_iso
+                                + 0.07 * n_fb + 0.07 * n_pull)
+                matchup_part = 0.10 * n_match + 0.08 * n_ceil + 0.07 * n_khr
+                bonus_part   = 0.15 * bonus
+                sleeper      = round(power_part + matchup_part + bonus_part, 1)
+
+                rows.append({
+                    "_player_id": r.get("player_id"),
+                    "Hitter":   r["player_name"],
+                    "Team":     norm_team(r["team"]),
+                    "Bat":      r["bat_side"] or "",
+                    "Spot":     int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
+                    "Game":     g["short_label"],
+                    "Opp SP":   opp_pitcher,
+                    "Sleeper Score": sleeper,
+                    "HR (Season)":   int(hr_total) if not pd.isna(hr_total) else 0,
+                    "Barrel%":  barrel if not pd.isna(barrel) else None,
+                    "HardHit%": hh     if not pd.isna(hh)     else None,
+                    "ISO":      iso    if not pd.isna(iso)    else None,
+                    "xISO":     xiso   if not pd.isna(xiso)   else None,
+                    "FB%":      fb     if not pd.isna(fb)     else None,
+                    "Pull%":    pull   if not pd.isna(pull)   else None,
+                    "EV":       ev     if not pd.isna(ev)     else None,
+                    "Matchup":  m_score,
+                    "Ceiling":  c_score,
+                    "kHR":      khr,
+                    "PA":       pa,
+                })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df = df.sort_values("Sleeper Score", ascending=False).reset_index(drop=True)
+    return df
+
+def render_hr_sleepers_html(df):
+    """Render the HR Sleepers table with tiered borders and badge tier pills.
+    Uses the same gold-on-dark-green visual language as the rest of the app.
+    """
+    if df is None or df.empty:
+        return '<div style="padding:14px;color:#64748b;">No sleeper candidates yet — lineups may not be posted.</div>'
+
+    css = (
+        "<style>"
+        ".hrs-wrap { margin: 6px 0 14px 0; }"
+        ".hrs-table { width:100%; border-collapse: separate; border-spacing: 0; "
+        "  font-size:.92rem; background:#fff; border-radius:12px; overflow:hidden; "
+        "  box-shadow: 0 2px 10px rgba(15,23,42,.06); }"
+        ".hrs-table th { background:#0f3a2e; color:#fcd34d; text-align:left; "
+        "  font-weight:800; padding:9px 10px; letter-spacing:.03em; font-size:.78rem; "
+        "  text-transform:uppercase; }"
+        ".hrs-table td { padding:8px 10px; border-bottom:1px solid #f1f5f9; "
+        "  color:#0f172a; }"
+        ".hrs-table tr:nth-child(even) td { background:#fafafa; }"
+        ".hrs-pill { display:inline-block; padding:3px 9px; border-radius:999px; "
+        "  font-weight:800; font-size:.74rem; letter-spacing:.04em; }"
+        ".hrs-pill.elite  { background:#dcfce7; color:#065f46; }"
+        ".hrs-pill.strong { background:#ecfccb; color:#365314; }"
+        ".hrs-pill.ok     { background:#fef9c3; color:#713f12; }"
+        ".hrs-pill.soft   { background:#ffedd5; color:#9a3412; }"
+        ".hrs-score { font-weight:900; font-size:1.05rem; color:#0f172a; }"
+        ".hrs-name { font-weight:800; color:#0f172a; }"
+        ".hrs-meta { color:#64748b; font-size:.78rem; }"
+        ".hrs-num { font-variant-numeric: tabular-nums; }"
+        "</style>"
+    )
+
+    def _tier(score):
+        if score is None: return ("ok", "—")
+        try: s = float(score)
+        except: return ("ok", "—")
+        if s >= 75: return ("elite",  "Elite")
+        if s >= 65: return ("strong", "Strong")
+        if s >= 55: return ("ok",     "Average")
+        return ("soft", "Soft")
+
+    def _fmt_pct(v, n=1):
+        if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+        try: return f"{float(v):.{n}f}%"
+        except: return "—"
+
+    def _fmt_num(v, n=3):
+        if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+        try: return f"{float(v):.{n}f}"
+        except: return "—"
+
+    rows_html = []
+    for i, r in df.iterrows():
+        tier_cls, tier_label = _tier(r.get("Sleeper Score"))
+        rows_html.append(
+            "<tr>"
+            f'<td class="hrs-num">{i+1}</td>'
+            f'<td><div class="hrs-name">{r.get("Hitter","")}</div>'
+            f'<div class="hrs-meta">{r.get("Team","")} · Bat {r.get("Bat","")} · Spot {r.get("Spot","")}</div></td>'
+            f'<td class="hrs-meta">{r.get("Game","")}<br/><span style="color:#475569;">vs {r.get("Opp SP","")}</span></td>'
+            f'<td><span class="hrs-score">{r.get("Sleeper Score",0):.1f}</span> '
+            f'<span class="hrs-pill {tier_cls}" style="margin-left:6px;">{tier_label}</span></td>'
+            f'<td class="hrs-num">{int(r.get("HR (Season)", 0))}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("Barrel%"))}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("HardHit%"))}</td>'
+            f'<td class="hrs-num">{_fmt_num(r.get("ISO"), 3)}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("FB%"))}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("Pull%"))}</td>'
+            f'<td class="hrs-num">{_fmt_num(r.get("Matchup"), 1)}</td>'
+            f'<td class="hrs-num">{_fmt_num(r.get("kHR"), 2)}</td>'
+            "</tr>"
+        )
+
+    return css + (
+        '<div class="hrs-wrap"><table class="hrs-table">'
+        '<thead><tr>'
+        '<th>#</th><th>Hitter</th><th>Game</th><th>Sleeper</th>'
+        '<th>HR</th><th>Barrel%</th><th>HH%</th><th>ISO</th><th>FB%</th>'
+        '<th>Pull%</th><th>Matchup</th><th>kHR</th>'
+        '</tr></thead><tbody>'
+        + "".join(rows_html) +
+        '</tbody></table></div>'
+    )
+
 def style_slate_pitcher_table(df):
     """Apply heatmap shading. Higher = better for pitcher (green) on Pitch Score,
     Strikeout Score, K%, K/9, Strike%, FB%*. Lower = better on ERA, WHIP, FIP*,
@@ -1897,7 +2111,7 @@ if _qp_view is None:
 st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
 _view = st.radio(
     "View",
-    ["⚾ Games", "🥎 Slate Pitchers"],
+    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers"],
     horizontal=True,
     label_visibility="collapsed",
     key="top_view_tab",
@@ -1970,6 +2184,89 @@ if _view == "🥎 Slate Pitchers":
             "⬇️ Download Slate Pitchers (CSV)",
             data=csv_bytes,
             file_name=f"slate_pitchers_{selected_date}.csv",
+            mime="text/csv",
+            use_container_width=False,
+        )
+    st.stop()
+
+# ============== HR Sleepers view ==============
+if _view == "💎 HR Sleepers":
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">💎 HR Sleepers</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Overlooked batters with HR upside tonight. Sleeper Score (0-100) blends '
+        '<b>Power profile</b> (Barrel%, HardHit%, ISO, FB%, Pull%) · <b>Tonight’s matchup</b> '
+        '(opposing SP, park, weather, ceiling) · <b>Sleeper bonus</b> for low-HR-total / '
+        'lower-spot bats. Filter to taste.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    if batters_df.empty:
+        st.warning(
+            "Batter CSV (`Data:savant_batters.csv.csv`) hasn’t loaded yet."
+        )
+        st.stop()
+
+    with st.spinner("Scoring sleeper candidates across the slate…"):
+        hrs_df = build_hr_sleepers_table(schedule_df, batters_df, pitchers_df)
+
+    if hrs_df.empty:
+        st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
+        st.stop()
+
+    # Filters row
+    f_cols = st.columns([1.0, 1.0, 1.0, 1.0, 1.6])
+    with f_cols[0]:
+        _max_hr = st.number_input("Max season HR", min_value=0, max_value=60, value=15, step=1,
+                                  key="hrs_max_hr",
+                                  help="Hide bats with more season HRs than this. The whole point of a sleeper.")
+    with f_cols[1]:
+        _min_barrel = st.number_input("Min Barrel%", min_value=0.0, max_value=20.0, value=6.0, step=0.5,
+                                      key="hrs_min_barrel",
+                                      help="Floor for power profile. League average is ~7%.")
+    with f_cols[2]:
+        _hide_top3 = st.checkbox("Hide spots 1-3", value=True, key="hrs_hide_top3",
+                                 help="Top-of-order bats are not really sleepers.")
+    with f_cols[3]:
+        _min_pa = st.number_input("Min PA", min_value=0, max_value=700, value=50, step=10,
+                                  key="hrs_min_pa",
+                                  help="Avoid tiny-sample noise.")
+    with f_cols[4]:
+        _topn = st.slider("Show top N", min_value=10, max_value=50, value=20, step=5,
+                          key="hrs_topn")
+
+    filtered = hrs_df.copy()
+    if _max_hr is not None:
+        filtered = filtered[filtered["HR (Season)"] <= int(_max_hr)]
+    if _min_barrel and _min_barrel > 0:
+        filtered = filtered[filtered["Barrel%"].fillna(-1) >= float(_min_barrel)]
+    if _hide_top3:
+        filtered = filtered[filtered["Spot"] > 3]
+    if _min_pa and _min_pa > 0 and "PA" in filtered.columns:
+        filtered = filtered[filtered["PA"].fillna(0).astype(float) >= float(_min_pa)]
+    filtered = filtered.head(int(_topn)).reset_index(drop=True)
+
+    if filtered.empty:
+        st.info("No sleepers match the current filters. Try raising Max season HR or lowering Min Barrel%.")
+    else:
+        st.markdown(render_hr_sleepers_html(filtered), unsafe_allow_html=True)
+        st.markdown(
+            '<div style="margin: 6px 0 4px 0; color:#64748b; font-size:.82rem;">'
+            'Scoring weights — Power 60% (Barrel% 22 · HardHit% 14 · ISO 10 · FB% 7 · Pull% 7) · '
+            'Matchup 25% (Matchup 10 · Ceiling 8 · kHR 7) · Sleeper bonus 15% (low HR total + lower spot).'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        # CSV download
+        dl_cols = [c for c in filtered.columns if not c.startswith("_")]
+        csv_bytes = filtered[dl_cols].to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download HR Sleepers (CSV)",
+            data=csv_bytes,
+            file_name=f"hr_sleepers_{selected_date}.csv",
             mime="text/csv",
             use_container_width=False,
         )

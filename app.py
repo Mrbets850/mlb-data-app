@@ -402,8 +402,9 @@ html, body, [class*="css"] {
     color: #cbd5e1 !important;
 }
 [data-theme="dark"] .top-tab-row {
-    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
-    border-color: #334155 !important;
+    /* Keep the gold strip in dark mode too — matches the logo */
+    background: linear-gradient(180deg, #fde68a 0%, #f59e0b 55%, #b45309 100%) !important;
+    border-color: #92400e !important;
 }
 [data-theme="dark"] .top-tab-row [role="radiogroup"] > label {
     background: #1e293b !important;
@@ -2372,10 +2373,11 @@ st.markdown(
     # ---- Top-level view tabs: bold, mobile-friendly pills ----
     # Wrapper card: padded, rounded, flush against the brand bar above so it
     # reads as a navigation strip rather than a bare radio.
+    # Gold strip to match the MrBets850 logo crown
     ".top-tab-row { margin: 8px 0 14px 0; padding: 10px; "
-    "  background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%); "
-    "  border-radius: 16px; border: 1px solid #e2e8f0; "
-    "  box-shadow: 0 2px 8px rgba(15,23,42,.04); }"
+    "  background: linear-gradient(180deg, #fde68a 0%, #f59e0b 55%, #b45309 100%); "
+    "  border-radius: 16px; border: 2px solid #92400e; "
+    "  box-shadow: 0 2px 8px rgba(120,53,15,.25), inset 0 1px 0 rgba(255,255,255,.45); }"
     # Hide Streamlit's default 'View' label
     ".top-tab-row [data-testid=\"stRadio\"] > label { display:none; }"
     ".top-tab-row [data-testid=\"stWidgetLabel\"] { display:none; }"

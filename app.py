@@ -1808,6 +1808,238 @@ def render_hr_sleepers_html(df):
         '</tbody></table></div>'
     )
 
+# ============== Total Bases & HRR Targets data layer ==============
+#
+# Over 1.5 Total Bases (TB) angle: batters likely to either grab an XBH or
+# multiple singles. Heavier weight on contact quality + power, lighter on
+# raw HR profile.
+#   TB Score (0-100) =
+#     Contact 35%   (xBA 12 + AVG 10 + K%-inverse 8 + LD% 5)
+#     Power   30%   (xSLG 12 + ISO 10 + Barrel% 8)
+#     PA opp. 15%   (Spot 1-5 favored)
+#     Matchup 20%   (Matchup 12 + Ceiling 8)
+#
+# Over 1.5 HRR (Hits + Runs + RBI) angle: combines on-base + scoring/RBI
+# opportunity. Heavier on getting-on + lineup-spot context.
+#   HRR Score (0-100) =
+#     OnBase  35%   (xBA 12 + xOBP 13 + AVG 10)
+#     Power   20%   (xSLG 10 + ISO 6 + Barrel% 4)
+#     Spot    25%   (Spots 1-5 strongly favored — they bat more & drive runs)
+#     Matchup 20%   (Matchup 12 + Ceiling 8)
+#
+# Both reuse build_game_context, find_player_row, find_pitcher_row,
+# matchup_score and ceiling_score from the existing scoring stack.
+
+def _spot_pa_weight(lineup_spot):
+    """Score for # of PAs a spot is likely to see (TB angle).
+    Spot 1 -> 100, 2 -> 95, 3 -> 90, 4 -> 80, 5 -> 65, 6 -> 50,
+    7 -> 35, 8 -> 25, 9 -> 15."""
+    table = {1:100, 2:95, 3:90, 4:80, 5:65, 6:50, 7:35, 8:25, 9:15}
+    try: return table.get(int(lineup_spot), 30)
+    except: return 30
+
+def _spot_hrr_weight(lineup_spot):
+    """Score for HRR opportunity (Hits+Runs+RBI). Top-of-order gets runs,
+    middle gets RBI, both matter. Spots 2-5 get the highest combined score.
+    1 -> 90, 2 -> 100, 3 -> 100, 4 -> 95, 5 -> 85, 6 -> 65,
+    7 -> 45, 8 -> 30, 9 -> 20."""
+    table = {1:90, 2:100, 3:100, 4:95, 5:85, 6:65, 7:45, 8:30, 9:20}
+    try: return table.get(int(lineup_spot), 40)
+    except: return 40
+
+def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb"):
+    """Build a target-prop sleeper table for either:
+       mode="tb"  -> Over 1.5 Total Bases
+       mode="hrr" -> Over 1.5 Hits+Runs+RBI
+    Returns a sorted DataFrame ready for rendering."""
+    rows = []
+    for _, g in _schedule_df.iterrows():
+        try:
+            cc = build_game_context(g)
+        except Exception:
+            continue
+        for side, lineup_df, opp_pitcher in (
+            ("away", cc["away_lineup"], g["home_probable"]),
+            ("home", cc["home_lineup"], g["away_probable"]),
+        ):
+            if lineup_df is None or lineup_df.empty:
+                continue
+            p_row = find_pitcher_row(_pitchers_df, opp_pitcher)
+            for _, r in lineup_df.iterrows():
+                b = find_player_row(_batters_df, r["name_key"], r["team"])
+                if b is None:
+                    continue
+                opp_hand = r.get("opposing_pitch_hand", "")
+                m_score = matchup_score(b, p_row, r["lineup_spot"], cc["weather"],
+                                         g["park_factor"], r["bat_side"], opp_hand)
+                c_score = ceiling_score(b, cc["weather"], g["park_factor"])
+
+                # Pull all source metrics with NaN-safe defaults
+                avg     = safe_float(b.get("AVG"),      np.nan)
+                xba     = safe_float(b.get("xBA"),      np.nan)
+                xobp    = safe_float(b.get("xOBP"),     np.nan)
+                xslg    = safe_float(b.get("xSLG"),     np.nan)
+                iso     = safe_float(b.get("ISO"),      np.nan)
+                barrel  = safe_float(b.get("Barrel%"),  np.nan)
+                hh      = safe_float(b.get("HardHit%"), np.nan)
+                k_pct   = safe_float(b.get("K%"),       np.nan)
+                ld      = safe_float(b.get("LD%"),      np.nan)
+                pa      = safe_float(b.get("pa"), 0) or safe_float(b.get("PA"), 0)
+
+                # Normalize to 0-100
+                n_avg    = _norm(avg,   0.200, 0.320)
+                n_xba    = _norm(xba,   0.220, 0.310)
+                n_xobp   = _norm(xobp,  0.290, 0.390)
+                n_xslg   = _norm(xslg,  0.350, 0.560)
+                n_iso    = _norm(iso,   0.100, 0.280)
+                n_barrel = _norm(barrel, 4.0, 18.0)
+                n_hh     = _norm(hh,    30.0, 55.0)
+                n_kinv   = 100.0 - _norm(k_pct, 12.0, 32.0)   # lower K% better
+                n_ld     = _norm(ld,    18.0, 28.0)
+                n_match  = _norm(m_score, 80.0, 140.0)
+                n_ceil   = _norm(c_score, 80.0, 140.0)
+
+                if mode == "tb":
+                    contact_part = 0.12*n_xba + 0.10*n_avg + 0.08*n_kinv + 0.05*n_ld
+                    power_part   = 0.12*n_xslg + 0.10*n_iso + 0.08*n_barrel
+                    spot_part    = 0.15 * _spot_pa_weight(r.get("lineup_spot", 9))
+                    matchup_part = 0.12*n_match + 0.08*n_ceil
+                    score = contact_part + power_part + spot_part + matchup_part
+                else:  # hrr
+                    onbase_part  = 0.12*n_xba + 0.13*n_xobp + 0.10*n_avg
+                    power_part   = 0.10*n_xslg + 0.06*n_iso + 0.04*n_barrel
+                    spot_part    = 0.25 * _spot_hrr_weight(r.get("lineup_spot", 9))
+                    matchup_part = 0.12*n_match + 0.08*n_ceil
+                    score = onbase_part + power_part + spot_part + matchup_part
+
+                rows.append({
+                    "_player_id": r.get("player_id"),
+                    "Hitter":   r["player_name"],
+                    "Team":     norm_team(r["team"]),
+                    "Bat":      r["bat_side"] or "",
+                    "Spot":     int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
+                    "Game":     g["short_label"],
+                    "Opp SP":   opp_pitcher,
+                    "Score":    round(score, 1),
+                    "AVG":      avg if not pd.isna(avg) else None,
+                    "xBA":      xba if not pd.isna(xba) else None,
+                    "xOBP":     xobp if not pd.isna(xobp) else None,
+                    "xSLG":     xslg if not pd.isna(xslg) else None,
+                    "ISO":      iso if not pd.isna(iso) else None,
+                    "Barrel%":  barrel if not pd.isna(barrel) else None,
+                    "HardHit%": hh if not pd.isna(hh) else None,
+                    "K%":       k_pct if not pd.isna(k_pct) else None,
+                    "LD%":      ld if not pd.isna(ld) else None,
+                    "Matchup":  m_score,
+                    "Ceiling":  c_score,
+                    "PA":       pa,
+                })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return df.sort_values("Score", ascending=False).reset_index(drop=True)
+
+def render_targets_html(df, mode="tb"):
+    """Render the TB or HRR targets table with the same gold-on-dark-green
+    visual language as HR Sleepers. mode picks which columns headline."""
+    if df is None or df.empty:
+        return ('<div style="padding:14px;color:#64748b;">No target candidates yet — '
+                'lineups may not be posted.</div>')
+
+    css = (
+        "<style>"
+        ".tg-wrap { margin: 6px 0 14px 0; }"
+        ".tg-table { width:100%; border-collapse: separate; border-spacing: 0; "
+        "  font-size:.92rem; background:#fff; border-radius:12px; overflow:hidden; "
+        "  box-shadow: 0 2px 10px rgba(15,23,42,.06); }"
+        ".tg-table th { background:#0f3a2e; color:#fcd34d; text-align:left; "
+        "  font-weight:800; padding:9px 10px; letter-spacing:.03em; font-size:.78rem; "
+        "  text-transform:uppercase; }"
+        ".tg-table td { padding:8px 10px; border-bottom:1px solid #f1f5f9; "
+        "  color:#0f172a; }"
+        ".tg-table tr:nth-child(even) td { background:#fafafa; }"
+        ".tg-pill { display:inline-block; padding:3px 9px; border-radius:999px; "
+        "  font-weight:800; font-size:.74rem; letter-spacing:.04em; }"
+        ".tg-pill.elite  { background:#dcfce7; color:#065f46; }"
+        ".tg-pill.strong { background:#ecfccb; color:#365314; }"
+        ".tg-pill.ok     { background:#fef9c3; color:#713f12; }"
+        ".tg-pill.soft   { background:#ffedd5; color:#9a3412; }"
+        ".tg-score { font-weight:900; font-size:1.05rem; color:#0f172a; }"
+        ".tg-name { font-weight:800; color:#0f172a; }"
+        ".tg-meta { color:#64748b; font-size:.78rem; }"
+        ".tg-num { font-variant-numeric: tabular-nums; }"
+        "</style>"
+    )
+
+    def _tier(score):
+        if score is None: return ("ok", "—")
+        try: s = float(score)
+        except: return ("ok", "—")
+        if s >= 75: return ("elite",  "Elite")
+        if s >= 65: return ("strong", "Strong")
+        if s >= 55: return ("ok",     "Average")
+        return ("soft", "Soft")
+
+    def _fmt_pct(v, n=1):
+        if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+        try: return f"{float(v):.{n}f}%"
+        except: return "—"
+
+    def _fmt_num(v, n=3):
+        if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+        try: return f"{float(v):.{n}f}"
+        except: return "—"
+
+    # Pick column layout per mode — keep clean (8 metric cols max)
+    if mode == "tb":
+        # TB: AVG, xBA, xSLG, ISO, Barrel%, K%, LD%, Matchup
+        headers = ["#", "Hitter", "Game", "TB Score", "AVG", "xBA", "xSLG", "ISO", "Barrel%", "K%", "Match"]
+    else:
+        # HRR: AVG, xBA, xOBP, xSLG, ISO, Barrel%, K%, Matchup
+        headers = ["#", "Hitter", "Game", "HRR Score", "AVG", "xBA", "xOBP", "xSLG", "ISO", "K%", "Match"]
+
+    rows_html = []
+    for i, r in df.iterrows():
+        tier_cls, tier_label = _tier(r.get("Score"))
+        common = (
+            "<tr>"
+            f'<td class="tg-num">{i+1}</td>'
+            f'<td><div class="tg-name">{r.get("Hitter","")}</div>'
+            f'<div class="tg-meta">{r.get("Team","")} · Bat {r.get("Bat","")} · Spot {r.get("Spot","")}</div></td>'
+            f'<td class="tg-meta">{r.get("Game","")}<br/><span style="color:#475569;">vs {r.get("Opp SP","")}</span></td>'
+            f'<td><span class="tg-score">{r.get("Score",0):.1f}</span> '
+            f'<span class="tg-pill {tier_cls}" style="margin-left:6px;">{tier_label}</span></td>'
+        )
+        if mode == "tb":
+            metrics_html = (
+                f'<td class="tg-num">{_fmt_num(r.get("AVG"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("xBA"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("xSLG"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("ISO"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_pct(r.get("Barrel%"))}</td>'
+                f'<td class="tg-num">{_fmt_pct(r.get("K%"))}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("Matchup"), 1)}</td>'
+            )
+        else:
+            metrics_html = (
+                f'<td class="tg-num">{_fmt_num(r.get("AVG"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("xBA"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("xOBP"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("xSLG"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("ISO"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_pct(r.get("K%"))}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("Matchup"), 1)}</td>'
+            )
+        rows_html.append(common + metrics_html + "</tr>")
+
+    head_html = "".join(f"<th>{h}</th>" for h in headers)
+    return css + (
+        f'<div class="tg-wrap"><table class="tg-table">'
+        f'<thead><tr>{head_html}</tr></thead><tbody>'
+        + "".join(rows_html) +
+        '</tbody></table></div>'
+    )
+
 def style_slate_pitcher_table(df):
     """Apply heatmap shading. Higher = better for pitcher (green) on Pitch Score,
     Strikeout Score, K%, K/9, Strike%, FB%*. Lower = better on ERA, WHIP, FIP*,
@@ -2111,7 +2343,7 @@ if _qp_view is None:
 st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
 _view = st.radio(
     "View",
-    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers"],
+    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+"],
     horizontal=True,
     label_visibility="collapsed",
     key="top_view_tab",
@@ -2267,6 +2499,165 @@ if _view == "💎 HR Sleepers":
             "⬇️ Download HR Sleepers (CSV)",
             data=csv_bytes,
             file_name=f"hr_sleepers_{selected_date}.csv",
+            mime="text/csv",
+            use_container_width=False,
+        )
+    st.stop()
+
+# ============== Total Bases 1.5+ view ==============
+if _view == "📊 Total Bases 1.5+":
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '📊 Over 1.5 Total Bases — Top Targets</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Best plays for clearing 1.5 total bases (an XBH or two singles). '
+        'TB Score (0-100) blends <b>Contact</b> 35% (xBA, AVG, low K%, LD%) · '
+        '<b>Power</b> 30% (xSLG, ISO, Barrel%) · <b>PA opportunity</b> 15% '
+        '(spots 1-5 favored) · <b>Tonight’s matchup</b> 20% (opp SP, park, weather, ceiling).'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    if batters_df.empty:
+        st.warning("Batter CSV hasn’t loaded yet.")
+        st.stop()
+
+    with st.spinner("Scoring TB targets across the slate…"):
+        tb_df = build_targets_table(schedule_df, batters_df, pitchers_df, mode="tb")
+
+    if tb_df.empty:
+        st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
+        st.stop()
+
+    # Filters
+    f_cols = st.columns([1.0, 1.0, 1.0, 1.0, 1.6])
+    with f_cols[0]:
+        _max_spot = st.number_input("Max lineup spot", min_value=1, max_value=9, value=6, step=1,
+                                    key="tb_max_spot",
+                                    help="Spot 6 or better. Bottom of order rarely sees enough PA for 2 TB.")
+    with f_cols[1]:
+        _min_xba = st.number_input("Min xBA", min_value=0.000, max_value=0.400, value=0.230, step=0.005,
+                                   format="%.3f", key="tb_min_xba",
+                                   help="Floor for expected batting average.")
+    with f_cols[2]:
+        _max_k = st.number_input("Max K%", min_value=10.0, max_value=40.0, value=28.0, step=0.5,
+                                 key="tb_max_k",
+                                 help="K-prone hitters struggle to multi-hit.")
+    with f_cols[3]:
+        _min_pa = st.number_input("Min PA", min_value=0, max_value=700, value=80, step=10,
+                                  key="tb_min_pa")
+    with f_cols[4]:
+        _topn = st.slider("Show top N", min_value=10, max_value=30, value=15, step=5, key="tb_topn")
+
+    fdf = tb_df.copy()
+    fdf = fdf[fdf["Spot"] <= int(_max_spot)]
+    if _min_xba and _min_xba > 0:
+        fdf = fdf[fdf["xBA"].fillna(-1) >= float(_min_xba)]
+    if _max_k and _max_k < 40:
+        fdf = fdf[fdf["K%"].fillna(99) <= float(_max_k)]
+    if _min_pa and _min_pa > 0:
+        fdf = fdf[fdf["PA"].fillna(0).astype(float) >= float(_min_pa)]
+    fdf = fdf.head(int(_topn)).reset_index(drop=True)
+
+    if fdf.empty:
+        st.info("No targets match the current filters. Try lowering Min xBA or raising Max K%.")
+    else:
+        st.markdown(render_targets_html(fdf, mode="tb"), unsafe_allow_html=True)
+        st.markdown(
+            '<div style="margin: 6px 0 4px 0; color:#64748b; font-size:.82rem;">'
+            'Tiers — Elite ≥75 · Strong ≥65 · Average ≥55 · Soft <55. '
+            'Sort: TB Score ↓.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        dl_cols = [c for c in fdf.columns if not c.startswith("_")]
+        csv_bytes = fdf[dl_cols].to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download Total Bases Targets (CSV)",
+            data=csv_bytes,
+            file_name=f"total_bases_targets_{selected_date}.csv",
+            mime="text/csv",
+            use_container_width=False,
+        )
+    st.stop()
+
+# ============== HRR 1.5+ view (Hits + Runs + RBI) ==============
+if _view == "🎯 HRR 1.5+":
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '🎯 Over 1.5 H+R+RBI — Top Targets</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Best plays for clearing 1.5 combined Hits + Runs + RBI. '
+        'HRR Score (0-100) blends <b>On-base</b> 35% (xBA, xOBP, AVG) · '
+        '<b>Power</b> 20% (xSLG, ISO, Barrel%) · <b>Lineup spot</b> 25% '
+        '(spots 2-5 strongly favored — they bat more & drive runs) · '
+        '<b>Tonight’s matchup</b> 20% (opp SP, park, weather, ceiling).'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    if batters_df.empty:
+        st.warning("Batter CSV hasn’t loaded yet.")
+        st.stop()
+
+    with st.spinner("Scoring HRR targets across the slate…"):
+        hrr_df = build_targets_table(schedule_df, batters_df, pitchers_df, mode="hrr")
+
+    if hrr_df.empty:
+        st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
+        st.stop()
+
+    # Filters
+    f_cols = st.columns([1.0, 1.0, 1.0, 1.0, 1.6])
+    with f_cols[0]:
+        _max_spot = st.number_input("Max lineup spot", min_value=1, max_value=9, value=6, step=1,
+                                    key="hrr_max_spot",
+                                    help="Bottom-of-order bats struggle for combined H+R+RBI volume.")
+    with f_cols[1]:
+        _min_xobp = st.number_input("Min xOBP", min_value=0.000, max_value=0.500, value=0.310, step=0.005,
+                                    format="%.3f", key="hrr_min_xobp",
+                                    help="Floor for expected on-base — you need to reach base for R/RBI.")
+    with f_cols[2]:
+        _max_k = st.number_input("Max K%", min_value=10.0, max_value=40.0, value=28.0, step=0.5,
+                                 key="hrr_max_k",
+                                 help="K-prone hitters struggle for hits + production.")
+    with f_cols[3]:
+        _min_pa = st.number_input("Min PA", min_value=0, max_value=700, value=80, step=10,
+                                  key="hrr_min_pa")
+    with f_cols[4]:
+        _topn = st.slider("Show top N", min_value=10, max_value=30, value=15, step=5, key="hrr_topn")
+
+    fdf = hrr_df.copy()
+    fdf = fdf[fdf["Spot"] <= int(_max_spot)]
+    if _min_xobp and _min_xobp > 0:
+        fdf = fdf[fdf["xOBP"].fillna(-1) >= float(_min_xobp)]
+    if _max_k and _max_k < 40:
+        fdf = fdf[fdf["K%"].fillna(99) <= float(_max_k)]
+    if _min_pa and _min_pa > 0:
+        fdf = fdf[fdf["PA"].fillna(0).astype(float) >= float(_min_pa)]
+    fdf = fdf.head(int(_topn)).reset_index(drop=True)
+
+    if fdf.empty:
+        st.info("No targets match the current filters. Try lowering Min xOBP or raising Max K%.")
+    else:
+        st.markdown(render_targets_html(fdf, mode="hrr"), unsafe_allow_html=True)
+        st.markdown(
+            '<div style="margin: 6px 0 4px 0; color:#64748b; font-size:.82rem;">'
+            'Tiers — Elite ≥75 · Strong ≥65 · Average ≥55 · Soft <55. '
+            'Sort: HRR Score ↓.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        dl_cols = [c for c in fdf.columns if not c.startswith("_")]
+        csv_bytes = fdf[dl_cols].to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download HRR Targets (CSV)",
+            data=csv_bytes,
+            file_name=f"hrr_targets_{selected_date}.csv",
             mime="text/csv",
             use_container_width=False,
         )

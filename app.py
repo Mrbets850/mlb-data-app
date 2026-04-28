@@ -132,6 +132,22 @@ DEFAULT_PARK_FACTORS = {
     "SEA": 95, "STL": 100, "TB": 97, "TEX": 106, "TOR": 103, "WSH": 101
 }
 
+# Compass bearing FROM HOME PLATE TO CENTER FIELD for each park.
+# Lets us turn raw wind direction into "out / in / cross" relative to CF.
+# Source: public stadium-orientation tables (degrees, 0=N, 90=E).
+STADIUM_CF_BEARING = {
+    "ARI":   2, "ATL":  60, "BAL":  33, "BOS":  43, "CHC":  46, "CWS":  37,
+    "CIN":  29, "CLE":   0, "COL":   0, "DET":  47, "HOU":  20, "KC":   34,
+    "LAA":  40, "LAD":  24, "MIA":  40, "MIL":  40, "MIN":   2, "NYM":  25,
+    "NYY":  75, "ATH":  60, "PHI":  16, "PIT":  60, "SD":   55, "SF":   88,
+    "SEA":   8, "STL":  62, "TB":   45, "TEX":   3, "TOR":   0, "WSH":  35,
+}
+
+# Domed / retractable-roof parks where outdoor wind is irrelevant when closed.
+# We assume "closed" by default for these; on a hot summer day Houston/AZ might
+# have it open but we can't know that without scraping, so we play it safe.
+DOMED_PARKS = {"ARI", "HOU", "MIA", "MIL", "SEA", "TB", "TOR", "TEX"}
+
 ABBR_TO_ID = {info["abbr"]: info["id"] for info in TEAM_INFO.values()}
 
 def logo_url(team_id: int, size: int = 60) -> str:
@@ -618,28 +634,150 @@ def get_schedule(selected_date):
 
 @st.cache_data(ttl=3600)
 def get_weather(lat, lon, game_time_utc):
+    """Pull the hour of weather closest to first pitch from Open-Meteo.
+    Returns temp_f, wind_mph, wind_dir_deg, rain_pct, dew_f, cloud_pct."""
+    blank = {"temp_f": None, "wind_mph": None, "wind_dir_deg": None,
+             "rain_pct": None, "dew_f": None, "cloud_pct": None}
     if lat is None or lon is None or not game_time_utc:
-        return {"temp_f": None, "wind_mph": None, "rain_pct": None}
+        return blank
     url = "https://api.open-meteo.com/v1/forecast"
     params = {"latitude": lat, "longitude": lon,
-              "hourly": "temperature_2m,wind_speed_10m,precipitation_probability",
+              "hourly": ("temperature_2m,wind_speed_10m,wind_direction_10m,"
+                         "precipitation_probability,dew_point_2m,cloud_cover"),
               "forecast_days": 7, "timezone": "UTC"}
     try:
         r = requests.get(url, params=params, headers=HEADERS, timeout=30); r.raise_for_status()
         data = r.json()
     except Exception:
-        return {"temp_f": None, "wind_mph": None, "rain_pct": None}
+        return blank
     hourly = pd.DataFrame(data.get("hourly", {}))
     if hourly.empty or "time" not in hourly.columns:
-        return {"temp_f": None, "wind_mph": None, "rain_pct": None}
+        return blank
     hourly["time"] = pd.to_datetime(hourly["time"])
     game_time = pd.to_datetime(game_time_utc, utc=True).tz_convert(None)
     idx = (hourly["time"] - game_time).abs().idxmin()
     row = hourly.loc[idx]
     temp_c = row.get("temperature_2m")
-    return {"temp_f": None if pd.isna(temp_c) else round((temp_c * 9/5) + 32, 1),
-            "wind_mph": row.get("wind_speed_10m"),
-            "rain_pct": row.get("precipitation_probability")}
+    dew_c = row.get("dew_point_2m")
+    return {
+        "temp_f":       None if pd.isna(temp_c) else round((temp_c * 9/5) + 32, 1),
+        "wind_mph":     row.get("wind_speed_10m"),
+        "wind_dir_deg": row.get("wind_direction_10m"),
+        "rain_pct":     row.get("precipitation_probability"),
+        "dew_f":        None if pd.isna(dew_c) else round((dew_c * 9/5) + 32, 1),
+        "cloud_pct":    row.get("cloud_cover"),
+    }
+
+# ---------------------------------------------------------------------------
+# Weather-impact model (Kevin Roth-style HR/Runs/K boost percentages)
+# All math is transparent and tunable. No external service.
+# ---------------------------------------------------------------------------
+import math as _math
+
+def _wind_component_out(wind_mph, wind_dir_deg, cf_bearing_deg):
+    """Return signed wind speed projected onto the home-plate->CF axis.
+    Positive = blowing OUT (toward CF, helps HRs).
+    Negative = blowing IN (toward plate, kills HRs).
+    Wind direction from Open-Meteo = where the wind is coming FROM.
+    A wind FROM 0° (north) blowing TO 180° (south)."""
+    if wind_mph is None or wind_dir_deg is None or cf_bearing_deg is None:
+        return 0.0, "calm"
+    try:
+        w = float(wind_mph); d = float(wind_dir_deg); c = float(cf_bearing_deg)
+    except Exception:
+        return 0.0, "calm"
+    if w < 1: return 0.0, "calm"
+    # wind is moving TO (d + 180) mod 360. Project onto CF direction c.
+    blow_to = (d + 180.0) % 360.0
+    delta = _math.radians(blow_to - c)
+    component = w * _math.cos(delta)  # +out, -in
+    if component > w * 0.5:    label = "out to CF"
+    elif component > w * 0.15:  label = "out"
+    elif component < -w * 0.5:  label = "in from CF"
+    elif component < -w * 0.15: label = "in"
+    else:                       label = "crosswind"
+    return component, label
+
+def compute_weather_impact(weather: dict, park_factor: float, home_abbr: str) -> dict:
+    """Translate forecast + park into HR / Runs / K boost percentages,
+    plus the meta tags (sky condition, wind direction label, sample size).
+
+    Model (transparent, tunable):
+      HR%    = park_HR_effect + temp_effect + wind_out_effect - humidity_drag
+      Runs%  = 0.55 * HR% + small temp/wind contribution
+      K%     = small inverse of HR% (cold/heavy air → more Ks, hot/dry → fewer)
+    Returns ints rounded to nearest %.
+    """
+    domed = home_abbr in DOMED_PARKS
+    temp = weather.get("temp_f")
+    wind = weather.get("wind_mph") or 0
+    wind_dir = weather.get("wind_dir_deg")
+    dew = weather.get("dew_f")
+    cloud = weather.get("cloud_pct") or 0
+    rain = weather.get("rain_pct") or 0
+
+    # ---- Sky / sample labels ----
+    if rain >= 60: sky = "Rain risk";   sky_icon = "🌧️"
+    elif rain >= 30: sky = "Showers";   sky_icon = "🌦️"
+    elif cloud >= 80: sky = "OVERcast"; sky_icon = "☁️"
+    elif cloud >= 50: sky = "Cloudy";   sky_icon = "🌤️"
+    else:             sky = "Clear";    sky_icon = "☀️"
+    if domed: sky = "Roof / Dome"; sky_icon = "🏟️"
+
+    # ---- Park base effect (HR pct from park factor index, capped) ----
+    pf = float(park_factor) if park_factor is not None else 100.0
+    park_hr_pct = max(-12.0, min(15.0, (pf - 100.0) * 0.7))
+
+    # ---- Temperature: +1°F over 70 ≈ +0.4% HR (Statcast finding) ----
+    if temp is None: temp_hr_pct = 0.0
+    else:            temp_hr_pct = max(-6.0, min(8.0, (float(temp) - 70.0) * 0.4))
+
+    # ---- Wind out/in to CF ----
+    if domed or wind_dir is None:
+        wind_component, wind_label = 0.0, ("roof closed" if domed else "unknown")
+        wind_hr_pct = 0.0
+    else:
+        cf = STADIUM_CF_BEARING.get(home_abbr)
+        wind_component, wind_label = _wind_component_out(wind, wind_dir, cf)
+        # ~+1% HR per 1 mph of out-to-CF component, capped
+        wind_hr_pct = max(-12.0, min(12.0, wind_component * 1.0))
+
+    # ---- Humidity / dew point (heavier air = shorter flights) ----
+    # Light effect: every 10°F of dew above 60 ≈ -0.6% HR
+    if dew is None: hum_hr_pct = 0.0
+    else:           hum_hr_pct = max(-3.0, min(2.0, (60.0 - float(dew)) * 0.06))
+
+    # Combined HR delta
+    hr_pct = park_hr_pct + temp_hr_pct + wind_hr_pct + hum_hr_pct
+    # Runs scales sub-linearly with HRs; small temp boost too
+    temp_run_pct = 0.0 if temp is None else max(-3.0, min(4.0, (float(temp) - 70.0) * 0.18))
+    runs_pct = 0.55 * hr_pct + 0.4 * temp_run_pct
+    # Strikeouts: cold heavy air = a hair more, hot light air = a hair less
+    k_pct = -0.25 * temp_hr_pct - 0.15 * wind_hr_pct
+
+    # ---- Sample size: based on park factor confidence + park type ----
+    # We don't have actual game count without a DB, so we tag a qualitative label.
+    if domed: sample = ("Stable sample", 90)  # roof closed = consistent indoors
+    elif abs(hr_pct) >= 10: sample = ("Strong signal", 75)
+    elif abs(hr_pct) >= 4:  sample = ("Moderate signal", 50)
+    else:                   sample = ("Neutral", 30)
+
+    return {
+        "hr_pct":     int(round(hr_pct)),
+        "runs_pct":   int(round(runs_pct)),
+        "k_pct":      int(round(k_pct)),
+        "sky":        sky,
+        "sky_icon":   sky_icon,
+        "wind_label": wind_label,
+        "sample":     sample[0],
+        "sample_score": sample[1],
+        # raw inputs for the small "chip strip" at the top of the card
+        "temp":       temp,
+        "wind":       wind,
+        "wind_dir_deg": wind_dir,
+        "dew":        dew,
+        "rain_pct":   rain,
+    }
 
 @st.cache_data(ttl=1800)
 def get_boxscore(game_pk):
@@ -2323,10 +2461,124 @@ def render_game_carousel(schedule_df, selected_idx):
         unsafe_allow_html=True,
     )
 
+def _impact_tile(label: str, pct: int, sub: str = "") -> str:
+    """One of the three Weather-Impact tiles (HR / Runs / K).
+    Color: green for boost, red for suppress, amber for neutral.
+    Always shows a signed number with %."""
+    if pct >= 4:    bg, fg, sign = "#dcfce7", "#15803d", "+"
+    elif pct >= 1:  bg, fg, sign = "#ecfdf5", "#16a34a", "+"
+    elif pct <= -4: bg, fg, sign = "#fee2e2", "#b91c1c", ""   # "-" already in number
+    elif pct <= -1: bg, fg, sign = "#fef2f2", "#dc2626", ""
+    else:           bg, fg, sign = "#fef9c3", "#a16207", "+" if pct >= 0 else ""
+    return (
+        f'<div style="flex:1; background:{bg}; border:1px solid #e2e8f0; '
+        f'border-radius:12px; padding:10px 12px; min-width:0;">'
+        f'<div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; '
+        f'letter-spacing:.08em; font-weight:800;">{label}</div>'
+        f'<div style="font-size:1.6rem; font-weight:900; color:{fg}; line-height:1.1; '
+        f'margin-top:2px;">{sign}{pct}%</div>'
+        f'<div style="font-size:0.7rem; color:#475569; font-weight:700; margin-top:2px; '
+        f'min-height:1em;">{sub}</div>'
+        f'</div>'
+    )
+
+def _avg_bar(label: str, pct: int) -> str:
+    """Horizontal 'vs MLB average' bar. 50% center = avg; right of center = above."""
+    # map -15..+15 to 0..100
+    pos = max(0, min(100, 50 + pct * 3.3))
+    # color the right segment green for boost, red for suppress
+    if pct >= 1:    fill = "#16a34a"
+    elif pct <= -1: fill = "#dc2626"
+    else:           fill = "#94a3b8"
+    sign = "+" if pct >= 0 else ""
+    return (
+        f'<div style="display:flex; align-items:center; gap:10px; margin:6px 0;">'
+        f'<div style="width:42px; font-size:0.72rem; color:#475569; font-weight:800; '
+        f'text-transform:uppercase; flex-shrink:0;">{label}</div>'
+        f'<div style="flex:1; position:relative; height:8px; background:#e2e8f0; border-radius:999px;">'
+        f'<div style="position:absolute; top:-3px; bottom:-3px; left:50%; width:2px; '
+        f'background:#94a3b8;"></div>'
+        f'<div style="position:absolute; top:0; bottom:0; '
+        f'{"left:50%" if pct >= 0 else f"right:50%"}; width:{abs(pct*3.3)}%; '
+        f'background:{fill}; border-radius:999px;"></div>'
+        f'</div>'
+        f'<div style="width:46px; text-align:right; font-size:0.78rem; font-weight:900; '
+        f'color:{fill if pct != 0 else "#475569"};">{sign}{pct}%</div>'
+        f'</div>'
+    )
+
+def render_weather_impact_card(weather: dict, park_factor, home_abbr: str) -> str:
+    """Build the Kevin Roth-style Weather Impact panel: chip strip on top,
+    three impact tiles, then the vs-MLB-average bars. Returns HTML string."""
+    imp = compute_weather_impact(weather, park_factor, home_abbr)
+    temp = imp["temp"]; wind = imp["wind"]; dew = imp["dew"]
+    rain = imp["rain_pct"]
+    temp_str = f"{int(round(temp))}°F" if temp is not None else "—"
+    wind_val = f"{int(round(float(wind)))}" if wind not in (None, 0) else "0"
+    dew_str = f"{int(round(dew))}°" if dew is not None else "—"
+    rain_str = f"{int(rain)}%" if rain not in (None, 0) else "0%"
+    # tile sub-lines (Kevin's style: "X.X HR/gm these conditions / Y.Y HR/gm park avg")
+    pf = float(park_factor) if park_factor is not None else 100.0
+    base_hr = 2.37 * (pf / 100.0)  # MLB avg ~2.37 HR/gm scaled by park factor
+    hr_today = base_hr * (1 + imp["hr_pct"] / 100.0)
+    hr_sub = f"{hr_today:.1f} HR/gm · park avg {base_hr:.1f}"
+    runs_sub = f"{9.0 * (1 + imp['runs_pct']/100):.1f} R/gm · mlb 9.0"
+    k_sub = f"{16.8 * (1 + imp['k_pct']/100):.1f} K/gm · mlb 16.8"
+    # sample dot color
+    if imp["sample"] == "Strong signal": dot = "#16a34a"
+    elif imp["sample"] == "Moderate signal": dot = "#facc15"
+    elif imp["sample"] == "Stable sample": dot = "#22d3ee"
+    else: dot = "#94a3b8"
+    return (
+        '<div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; '
+        'padding:0; margin-top:14px; overflow:hidden; '
+        'box-shadow:0 2px 8px rgba(15,23,42,.06);">'
+        # ---- Top chip strip: temp, dew, wind, rain, sky, sample ----
+        '<div style="background:linear-gradient(180deg,#0f3a2e 0%,#0b1f15 100%); '
+        'color:#fef3c7; padding:10px 14px; display:flex; flex-wrap:wrap; gap:10px 18px; '
+        'align-items:center; border-bottom:2px solid #facc15;">'
+        f'<div style="font-size:1.05rem; font-weight:900;">{temp_str}'
+        f'<span style="font-size:0.7rem; opacity:.85; font-weight:800; margin-left:3px;">TEMP</span></div>'
+        f'<div style="font-size:0.92rem; font-weight:800; opacity:.92;">'
+        f'<span style="opacity:.7; font-size:0.7rem; font-weight:800;">DEW</span> {dew_str}</div>'
+        f'<div style="font-size:0.92rem; font-weight:800; opacity:.92;">'
+        f'<span style="opacity:.7; font-size:0.7rem; font-weight:800;">WIND</span> {wind_val} mph '
+        f'<span style="opacity:.65; font-size:0.78rem;">({imp["wind_label"]})</span></div>'
+        f'<div style="font-size:0.92rem; font-weight:800; opacity:.92;">'
+        f'<span style="opacity:.7; font-size:0.7rem; font-weight:800;">RAIN</span> {rain_str}</div>'
+        f'<div style="margin-left:auto; display:flex; gap:14px; align-items:center;">'
+        f'<div style="font-size:0.95rem; font-weight:900; color:#facc15;">'
+        f'{imp["sky_icon"]} {imp["sky"]}</div>'
+        f'<div style="font-size:0.78rem; font-weight:800; display:flex; align-items:center; gap:6px;">'
+        f'<span style="width:9px; height:9px; border-radius:50%; background:{dot}; '
+        f'box-shadow:0 0 0 2px rgba(255,255,255,.15);"></span>{imp["sample"]}</div>'
+        '</div></div>'
+        # ---- "WEATHER IMPACT VS THIS PARK" header ----
+        '<div style="padding:12px 14px 4px;">'
+        '<div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; '
+        'letter-spacing:.1em; font-weight:800; margin-bottom:8px;">'
+        'Weather Impact vs This Park</div>'
+        # ---- 3 impact tiles ----
+        '<div style="display:flex; gap:8px; flex-wrap:wrap;">'
+        + _impact_tile("Home Runs", imp["hr_pct"], hr_sub)
+        + _impact_tile("Runs",      imp["runs_pct"], runs_sub)
+        + _impact_tile("Strikeouts", imp["k_pct"],  k_sub)
+        + '</div>'
+        # ---- vs MLB average bars ----
+        '<div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; '
+        'letter-spacing:.1em; font-weight:800; margin-top:14px; margin-bottom:4px;">'
+        'vs MLB Average</div>'
+        + _avg_bar("HR",   imp["hr_pct"])
+        + _avg_bar("RUNS", imp["runs_pct"])
+        + _avg_bar("K’s", imp["k_pct"])
+        + '<div style="font-size:0.68rem; color:#94a3b8; font-weight:700; '
+        'margin-top:8px; padding-top:6px; border-top:1px dashed #e2e8f0;">'
+        'Model blends park factor, temp, wind to/from CF, and dew point. Tunable in code — '
+        'transparent, free data (Open-Meteo).</div>'
+        '</div></div>'
+    )
+
 def render_game_header(game_row, ctx, weather):
-    rain = weather.get("rain_pct"); rain_str = f"{int(rain)}%" if rain is not None else "N/A"
-    temp = weather.get("temp_f");   temp_str = f"{temp}°F" if temp is not None else "N/A"
-    wind = weather.get("wind_mph"); wind_str = f"{round(float(wind))} mph" if wind is not None else "N/A"
     away_logo = logo_url(game_row["away_id"]) if game_row["away_id"] else ""
     home_logo = logo_url(game_row["home_id"]) if game_row["home_id"] else ""
     def _status_pill(s):
@@ -2335,6 +2587,7 @@ def render_game_header(game_row, ctx, weather):
         return "tier-avoid"
     away_pill = _status_pill(ctx["away_status"])
     home_pill = _status_pill(ctx["home_status"])
+    weather_card_html = render_weather_impact_card(weather, game_row.get("park_factor"), game_row.get("home_abbr", ""))
     st.markdown(f"""
     <div class="section-card dark">
         <div class="game-header">
@@ -2354,11 +2607,8 @@ def render_game_header(game_row, ctx, weather):
                 <div>vs {game_row['home_probable']} <span class="hand">({ctx['home_pitch_hand'] or '?'})</span></div>
             </div>
         </div>
-        <div class="kpi-row">
-            <div class="kpi"><span class="k">Park</span>{game_row['park_factor']}</div>
-            <div class="kpi"><span class="k">Temp</span>{temp_str}</div>
-            <div class="kpi"><span class="k">Wind</span>{wind_str}</div>
-            <div class="kpi"><span class="k">Rain</span>{rain_str}</div>
+        {weather_card_html}
+        <div class="kpi-row" style="margin-top:10px;">
             <div class="kpi"><span class="tier {away_pill}">{game_row['away_abbr']}: {ctx['away_status']}</span></div>
             <div class="kpi"><span class="tier {home_pill}">{game_row['home_abbr']}: {ctx['home_status']}</span></div>
         </div>

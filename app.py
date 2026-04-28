@@ -8,7 +8,17 @@ import urllib.parse
 import io
 import os
 import base64
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+# Streamlit Cloud servers run in UTC, so date.today() flips at 7pm CT (8pm CDT)
+# and breaks the slate-date picker for late-evening users. Always anchor
+# "today" to America/Chicago so the date matches when MLB games are played.
+MLB_TZ = ZoneInfo("America/Chicago")
+
+def today_ct() -> date:
+    """Return today's date in Central Time (matches the MLB slate day)."""
+    return datetime.now(MLB_TZ).date()
 
 # ===========================================================================
 # Config
@@ -2355,12 +2365,12 @@ st.markdown(
 # Streamlit forbids writing to st.session_state[<widget_key>] after the widget
 # has been created, so we use a one-shot flag and rerun pattern.
 if st.session_state.pop("_reset_to_today", False):
-    st.session_state["slate_date_picker"] = date.today()
+    st.session_state["slate_date_picker"] = today_ct()
     st.session_state["_selected_idx"] = 0
 
 top_cols = st.columns([2.2, 1, 1])
 with top_cols[0]:
-    selected_date = st.date_input("📅 Slate date", value=date.today(), key="slate_date_picker")
+    selected_date = st.date_input("📅 Slate date", value=today_ct(), key="slate_date_picker")
 with top_cols[1]:
     st.markdown('<div class="toolbar-spacer-label">.</div>', unsafe_allow_html=True)
     if st.button("🔄 Refresh data", use_container_width=True, key="refresh_btn"):

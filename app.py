@@ -903,6 +903,158 @@ def get_boxscore(game_pk):
     r = requests.get(url, headers=HEADERS, timeout=30); r.raise_for_status()
     return r.json()
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_team_injuries(team_id, team_name=None):
+    """Return list of injured players currently on the team's MLB roster.
+    Single API call (hydrates transactions for all roster members).
+    Status codes: D7/D10/D15/D60 = IL, DTD = day-to-day, ILF/BRV/PL = other.
+    Each item: {name, position, status, status_code, injury, return_date}.
+    Filters to MLB-level players (parentTeamId == team_id) and uses the most
+    recent MLB-team IL placement transaction for the injury detail.
+    """
+    if not team_id:
+        return []
+    try:
+        url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster"
+        params = {
+            "rosterType": "fullRoster",
+            "hydrate": "person(transactions)",
+        }
+        r = requests.get(url, params=params, headers=HEADERS, timeout=25)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return []
+
+    # Only show MLB-level injuries (10/15/60-day IL + DTD)
+    INJURY_CODES = {"D10", "D15", "D60", "DTD"}
+    team_name_lower = (team_name or "").lower()
+    out = []
+    for p in data.get("roster", []):
+        status = p.get("status", {}) or {}
+        code = (status.get("code") or "").upper()
+        if code not in INJURY_CODES:
+            continue
+        # Must be an MLB-level player on this team
+        if p.get("parentTeamId") != team_id:
+            continue
+        person = p.get("person", {}) or {}
+        name = person.get("fullName", "")
+        pos = (p.get("position", {}) or {}).get("abbreviation", "")
+        status_desc = status.get("description", "")
+
+        # Find the most recent IL placement BY the MLB parent club.
+        # If no such transaction exists, this player is on a minor-league IL (skip).
+        injury_text = ""
+        return_date = ""
+        txns = person.get("transactions", []) or []
+        for t in reversed(txns):
+            desc = (t.get("description") or "")
+            desc_low = desc.lower()
+            if "injured list" not in desc_low or "placed" not in desc_low:
+                continue
+            if team_name_lower and team_name_lower not in desc_low:
+                continue
+            injury_text = desc
+            return_date = t.get("effectiveDate", "") or t.get("date", "")
+            break
+        # Skip if this is not an MLB-level IL placement — these are minor-league injuries
+        if not injury_text and code != "DTD":
+            continue
+
+        out.append({
+            "name": name,
+            "position": pos,
+            "status": status_desc,
+            "status_code": code,
+            "injury": injury_text,
+            "return_date": return_date,
+        })
+    # Sort: 60-day first, then 15-day, 10-day, day-to-day
+    order = {"D60": 0, "D15": 1, "D10": 2, "DTD": 3}
+    out.sort(key=lambda x: (order.get(x["status_code"], 9), x["name"]))
+    return out
+
+
+def render_team_injury_panel(team_label, team_abbr, injuries):
+    """Render a single team's injury list as styled HTML."""
+    if not injuries:
+        return (
+            f"<div style='background:#0f3a2e;border:2px solid #facc15;border-radius:14px;"
+            f"padding:14px 16px;margin:8px 0;'>"
+            f"<div style='color:#facc15;font-weight:900;font-size:1.05rem;margin-bottom:6px;'>"
+            f"{team_label} <span style='opacity:0.7;font-weight:700;'>({team_abbr})</span></div>"
+            f"<div style='color:#a7f3d0;font-size:0.92rem;'>No reported injuries — full roster available.</div>"
+            f"</div>"
+        )
+    # Status pill colors
+    PILL = {
+        "D60": ("#7f1d1d", "#fecaca"),
+        "D15": ("#991b1b", "#fecaca"),
+        "D10": ("#b45309", "#fde68a"),
+        "D7":  ("#b45309", "#fde68a"),
+        "DTD": ("#1e3a8a", "#bfdbfe"),
+        "PL":  ("#581c87", "#e9d5ff"),
+        "BRV": ("#374151", "#e5e7eb"),
+    }
+    rows_html = []
+    for inj in injuries:
+        bg, fg = PILL.get(inj["status_code"], ("#374151", "#e5e7eb"))
+        pill = (
+            f"<span style='background:{bg};color:{fg};border-radius:999px;"
+            f"padding:2px 10px;font-size:0.78rem;font-weight:800;letter-spacing:0.3px;"
+            f"white-space:nowrap;'>{inj['status']}</span>"
+        )
+        injury_line = inj.get("injury") or "Details unavailable"
+        # Trim noisy prefixes from MLB transaction text — keep only the meaningful part
+        if injury_line and injury_line != "Details unavailable":
+            # Strip leading "<Team> placed <POS> <Name> on the X-day injured list" boilerplate,
+            # leaving the actual injury description / retroactive date.
+            import re as _re
+            m = _re.search(r"injured list(?:\s+retroactive\s+to\s+([^.]+))?\.\s*(.*)", injury_line, _re.I)
+            if m:
+                retro = (m.group(1) or "").strip()
+                detail = (m.group(2) or "").strip()
+                bits = []
+                if detail:
+                    bits.append(detail)
+                if retro:
+                    bits.append(f"Placed retroactive to {retro}.")
+                if bits:
+                    injury_line = " ".join(bits)
+        rows_html.append(
+            f"<div style='display:flex;flex-direction:column;gap:3px;"
+            f"padding:10px 0;border-bottom:1px solid rgba(250,204,21,0.18);'>"
+            f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
+            f"<span style='color:#fff;font-weight:800;font-size:0.98rem;'>{inj['name']}</span>"
+            f"<span style='color:#facc15;font-weight:700;font-size:0.82rem;'>{inj['position']}</span>"
+            f"{pill}"
+            f"</div>"
+            f"<div style='color:#d1fae5;font-size:0.85rem;line-height:1.35;'>{injury_line}</div>"
+            f"</div>"
+        )
+    count_il = sum(1 for x in injuries if x["status_code"].startswith("D") and x["status_code"] != "DTD")
+    count_dtd = sum(1 for x in injuries if x["status_code"] == "DTD")
+    summary_bits = []
+    if count_il:
+        summary_bits.append(f"{count_il} on IL")
+    if count_dtd:
+        summary_bits.append(f"{count_dtd} day-to-day")
+    summary = " · ".join(summary_bits) if summary_bits else f"{len(injuries)} reported"
+    return (
+        f"<div style='background:#0f3a2e;border:2px solid #facc15;border-radius:14px;"
+        f"padding:14px 16px;margin:8px 0;'>"
+        f"<div style='display:flex;justify-content:space-between;align-items:center;"
+        f"margin-bottom:6px;flex-wrap:wrap;gap:6px;'>"
+        f"<div style='color:#facc15;font-weight:900;font-size:1.05rem;'>"
+        f"{team_label} <span style='opacity:0.7;font-weight:700;'>({team_abbr})</span></div>"
+        f"<div style='color:#a7f3d0;font-size:0.82rem;font-weight:700;'>{summary}</div>"
+        f"</div>"
+        + "".join(rows_html) +
+        f"</div>"
+    )
+
+
 @st.cache_data(ttl=3600)
 def get_recent_completed_games(team_id, before_date_str, n=12):
     """Return up to `n` of the team's most recent completed games before the given date."""
@@ -3480,8 +3632,8 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
-tab_matchup, tab_rolling, tab_p_zones, tab_h_zones, tab_hot, tab_cold = st.tabs(
-    ["📊 Matchup", "📈 Rolling", "🎯 Pitcher Zones", "🌡️ Hitter Zones", "🔥 Hot Batters", "🧊 Cold Batters"]
+tab_matchup, tab_rolling, tab_p_zones, tab_h_zones, tab_hot, tab_cold, tab_injuries = st.tabs(
+    ["📊 Matchup", "📈 Rolling", "🎯 Pitcher Zones", "🌡️ Hitter Zones", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
 )
 
 # ============== Matchup tab ==============
@@ -3773,6 +3925,46 @@ with tab_cold:
         'unders, and pitcher-side bets.'
         '</div>', unsafe_allow_html=True)
     _render_leaderboard(_slate_df, "🧊 Cold Batters — Bottom 15", top=False, n=15, sort_col="Matchup")
+
+# ============== Injuries tab ==============
+with tab_injuries:
+    st.markdown(
+        '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Injured List + day-to-day players for both teams. Pulled live from MLB StatsAPI '
+        '(updated hourly). Status legend: '
+        '<span style="background:#7f1d1d;color:#fecaca;border-radius:999px;padding:1px 8px;font-size:0.75rem;font-weight:800;">60-Day IL</span> '
+        '<span style="background:#991b1b;color:#fecaca;border-radius:999px;padding:1px 8px;font-size:0.75rem;font-weight:800;">15-Day IL</span> '
+        '<span style="background:#b45309;color:#fde68a;border-radius:999px;padding:1px 8px;font-size:0.75rem;font-weight:800;">10-Day IL</span> '
+        '<span style="background:#1e3a8a;color:#bfdbfe;border-radius:999px;padding:1px 8px;font-size:0.75rem;font-weight:800;">DTD</span>'
+        '</div>', unsafe_allow_html=True)
+    try:
+        away_team_id = game_row.get("away_id")
+        home_team_id = game_row.get("home_id")
+        away_label = game_row.get("away_team", "Away")
+        home_label = game_row.get("home_team", "Home")
+        away_abbr = game_row.get("away_abbr", "")
+        home_abbr = game_row.get("home_abbr", "")
+        col_a, col_h = st.columns(2)
+        with col_a:
+            with st.spinner(f"Loading {away_abbr} injuries…"):
+                away_inj = get_team_injuries(away_team_id, away_label)
+            st.markdown(
+                render_team_injury_panel(away_label, away_abbr, away_inj),
+                unsafe_allow_html=True,
+            )
+        with col_h:
+            with st.spinner(f"Loading {home_abbr} injuries…"):
+                home_inj = get_team_injuries(home_team_id, home_label)
+            st.markdown(
+                render_team_injury_panel(home_label, home_abbr, home_inj),
+                unsafe_allow_html=True,
+            )
+        st.caption(
+            "Source: MLB StatsAPI roster + transactions. Detail text comes from the most recent IL transaction "
+            "and may be terse. Refresh the app to re-pull (cached 1 hour)."
+        )
+    except Exception as _inj_e:
+        st.warning(f"Couldn't load injuries: {_inj_e}")
 
 # ----- Data status -----
 with st.expander("📊 Data status & sources", expanded=False):

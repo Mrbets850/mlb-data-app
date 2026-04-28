@@ -863,6 +863,95 @@ def find_player_row(df, name_key, team):
     if not exact2.empty: return exact2.iloc[0]
     return None
 
+# ===========================================================================
+# Pitch-arsenal data (Baseball Savant pitch-arsenal-stats endpoint)
+# Used by:
+#   - Top 3 Hitters card  -> "Crushes" line (best pitch types per hitter)
+#   - Pitcher Vulnerability panel -> "Pitch Mix" mini-table
+# ===========================================================================
+PITCH_NAME_MAP = {
+    "FF": "4-Seam", "SI": "Sinker", "FC": "Cutter",
+    "SL": "Slider", "ST": "Sweeper", "SV": "Slurve",
+    "CU": "Curve",  "KC": "Knuckle Curve", "CS": "Slow Curve",
+    "CH": "Change", "FS": "Splitter", "FO": "Forkball",
+    "SC": "Screwball", "KN": "Knuckler", "EP": "Eephus",
+}
+PITCH_EMOJI = {
+    "FF": "🔥", "SI": "⤵️",  "FC": "✂️",
+    "SL": "➡️", "ST": "🌪️", "SV": "➿",
+    "CU": "🎣", "KC": "🪝", "CS": "🪝",
+    "CH": "🎃", "FS": "💧", "FO": "🍴",
+    "SC": "🌀", "KN": "🦄", "EP": "🌞",
+}
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_pitch_arsenal_csv(kind: str, year: int) -> pd.DataFrame:
+    """Pull Baseball Savant per-player per-pitch-type leaderboard.
+    kind: 'pitcher' (what they throw / results allowed)
+          'batter'  (what they face / results produced).
+    Returns df with columns including: player_id, pitch_type, pitch_name,
+    pitch_usage, pa, woba, slg, ba, whiff_percent, run_value_per_100, est_woba."""
+    if kind not in ("pitcher", "batter"): return pd.DataFrame()
+    url = ("https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats?"
+           f"year={year}&team=&min=10&type={kind}&pitchType=&csv=true")
+    try:
+        df = pd.read_csv(url, encoding="utf-8-sig",
+                         storage_options={"User-Agent": "Mozilla/5.0"})
+    except Exception:
+        try:
+            import urllib.request
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                raw = resp.read()
+            df = pd.read_csv(io.BytesIO(raw), encoding="utf-8-sig")
+        except Exception:
+            return pd.DataFrame()
+    if df.empty: return df
+    # normalize
+    df.columns = [c.strip().strip('"') for c in df.columns]
+    if "player_id" in df.columns:
+        df["player_id"] = pd.to_numeric(df["player_id"], errors="coerce").astype("Int64")
+    for c in ("pitch_usage", "woba", "est_woba", "slg", "ba", "whiff_percent",
+              "run_value_per_100", "pa", "pitches"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+def load_pitch_arsenal(kind: str) -> pd.DataFrame:
+    """Get arsenal data for current year, falling back to prior year if empty."""
+    yr = today_ct().year
+    df = _fetch_pitch_arsenal_csv(kind, yr)
+    if df.empty or len(df) < 30:  # spring/early-season fallback
+        df = _fetch_pitch_arsenal_csv(kind, yr - 1)
+    return df
+
+def pitcher_pitch_mix(arsenal_p: pd.DataFrame, player_id) -> pd.DataFrame:
+    """Subset of pitcher arsenal for one pitcher, sorted by usage desc."""
+    if arsenal_p is None or arsenal_p.empty or not player_id: return pd.DataFrame()
+    try: pid = int(player_id)
+    except Exception: return pd.DataFrame()
+    sub = arsenal_p[arsenal_p["player_id"] == pid].copy()
+    if sub.empty: return sub
+    if "pitch_usage" in sub.columns:
+        sub = sub.sort_values("pitch_usage", ascending=False)
+    return sub.reset_index(drop=True)
+
+def hitter_pitch_crush(arsenal_b: pd.DataFrame, player_id, top_n: int = 2,
+                       min_pa: int = 15) -> pd.DataFrame:
+    """Pitch types this hitter crushes most (highest woba, then est_woba),
+    filtered to pitches with at least min_pa plate appearances against."""
+    if arsenal_b is None or arsenal_b.empty or not player_id: return pd.DataFrame()
+    try: pid = int(player_id)
+    except Exception: return pd.DataFrame()
+    sub = arsenal_b[arsenal_b["player_id"] == pid].copy()
+    if sub.empty: return sub
+    if "pa" in sub.columns:
+        sub = sub[sub["pa"].fillna(0) >= min_pa]
+    if sub.empty: return sub
+    if "woba" in sub.columns:
+        sub = sub.sort_values(["woba", "slg"], ascending=[False, False])
+    return sub.head(top_n).reset_index(drop=True)
+
 def find_pitcher_row(df, pitcher_name):
     if df.empty or not pitcher_name or pitcher_name == "TBD": return None
     key = clean_name(pitcher_name)
@@ -2290,7 +2379,68 @@ def render_lineup_banner(team_id, team_abbr, opp_pitcher, status):
     </div>
     """, unsafe_allow_html=True)
 
-def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row):
+def render_pitch_mix_block(mix_df: pd.DataFrame, surface_bg: str = "#ffffff") -> str:
+    """Build the 'Pitch Mix' mini-table HTML for a pitcher.
+    Columns: pitch (emoji+name), Use%, wOBA allowed, Whiff%, RV/100.
+    Color-codes wOBA allowed: green = strong (low), red = vulnerable (high)."""
+    if mix_df is None or mix_df.empty:
+        return (
+            '<div style="margin-top:10px; font-size:0.78rem; color:#64748b; '
+            'font-weight:700;">No pitch-mix data yet — may not have enough '
+            "pitches thrown this season.</div>"
+        )
+    rows_html = []
+    for _, r in mix_df.iterrows():
+        pt = str(r.get("pitch_type", "")).strip().upper()
+        name = PITCH_NAME_MAP.get(pt, str(r.get("pitch_name", pt)))
+        emoji = PITCH_EMOJI.get(pt, "⚾")
+        use = r.get("pitch_usage")
+        woba = r.get("woba")
+        whiff = r.get("whiff_percent")
+        rv100 = r.get("run_value_per_100")
+        # color the wOBA cell: <.300 great (green), >.360 leaky (red)
+        try:
+            w = float(woba)
+            if w <= 0.300: woba_col = "#16a34a"
+            elif w <= 0.340: woba_col = "#65a30d"
+            elif w <= 0.380: woba_col = "#d97706"
+            else: woba_col = "#dc2626"
+            woba_str = f"{w:.3f}"
+        except Exception:
+            woba_col, woba_str = "#475569", "—"
+        use_str = f"{float(use):.0f}%" if pd.notna(use) else "—"
+        whiff_str = f"{float(whiff):.0f}%" if pd.notna(whiff) else "—"
+        try: rv_str = f"{float(rv100):+.1f}"
+        except Exception: rv_str = "—"
+        rows_html.append(
+            f'<tr>'
+            f'<td style="padding:5px 6px; font-weight:800; color:#0f172a; white-space:nowrap;">{emoji} {name}</td>'
+            f'<td style="padding:5px 6px; text-align:right; font-weight:800; color:#0f172a;">{use_str}</td>'
+            f'<td style="padding:5px 6px; text-align:right; font-weight:900; color:{woba_col};">{woba_str}</td>'
+            f'<td style="padding:5px 6px; text-align:right; font-weight:700; color:#475569;">{whiff_str}</td>'
+            f'<td style="padding:5px 6px; text-align:right; font-weight:700; color:#475569;">{rv_str}</td>'
+            f'</tr>'
+        )
+    return (
+        '<div style="margin-top:12px; background:' + surface_bg + '; border:1px solid #e2e8f0; '
+        'border-radius:10px; padding:6px 4px;">'
+        '<div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; '
+        'letter-spacing:.08em; font-weight:800; padding:2px 8px 4px;">Pitch Mix — what they throw &amp; results allowed</div>'
+        '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">'
+        '<thead><tr style="color:#64748b; font-size:0.66rem; font-weight:800; text-transform:uppercase;">'
+        '<th style="text-align:left; padding:3px 6px;">Pitch</th>'
+        '<th style="text-align:right; padding:3px 6px;">Use</th>'
+        '<th style="text-align:right; padding:3px 6px;">wOBA</th>'
+        '<th style="text-align:right; padding:3px 6px;">Whiff</th>'
+        '<th style="text-align:right; padding:3px 6px;" title="Run value per 100 pitches — negative is better for the pitcher">RV/100</th>'
+        '</tr></thead>'
+        '<tbody>' + "".join(rows_html) + '</tbody></table>'
+        '<div style="font-size:0.7rem; color:#64748b; padding:4px 8px 2px;">'
+        'Green wOBA = pitch is dominant · Red = batters punish it.</div>'
+        '</div>'
+    )
+
+def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=None):
     score, key, verdict = pitcher_vulnerability(p_row)
     if p_row is None:
         k = bb = era_w = barrel = hardhit = "—"
@@ -2302,6 +2452,7 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row):
         hardhit = f"{safe_float(p_row.get('HardHit%')):.1f}%"
     color_bg = {"elite": "#fef2f2", "strong": "#fffbeb", "ok": "#f8fafc", "avoid": "#f0fdf4"}[key]
     border = {"elite": "#ef4444", "strong": "#f59e0b", "ok": "#94a3b8", "avoid": "#16a34a"}[key]
+    mix_html = render_pitch_mix_block(pitch_mix_df, surface_bg="#ffffff") if pitch_mix_df is not None else ""
     st.markdown(f"""
     <div style="background:{color_bg}; border:1px solid #e2e8f0; border-left:6px solid {border};
                 border-radius:14px; padding:12px 14px;">
@@ -2323,6 +2474,7 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row):
           <div><div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; font-weight:700;">Barrel%</div><div style="font-weight:800;">{barrel}</div></div>
           <div><div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; font-weight:700;">HardHit%</div><div style="font-weight:800;">{hardhit}</div></div>
         </div>
+        {mix_html}
     </div>
     """, unsafe_allow_html=True)
 
@@ -2334,6 +2486,12 @@ with st.spinner("Loading Baseball Savant data from GitHub..."):
 batters_df = standardize_columns(csvs.get("batters", pd.DataFrame()))
 pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
 pitcher_stats_df = standardize_columns(csvs.get("pitcher_stats", pd.DataFrame()))
+
+# Pitch-arsenal leaderboards (per pitch type) — fetched directly from
+# Baseball Savant. Cached for an hour. Used by Top 3 Hitters "Crushes" line
+# and by the Pitcher Vulnerability panels' pitch-mix mini-table.
+arsenal_pitcher_df = load_pitch_arsenal("pitcher")
+arsenal_batter_df  = load_pitch_arsenal("batter")
 
 # Render brand bar FIRST so the date picker isn't pinned to Streamlit's top chrome.
 # Use a placeholder count, then re-render after schedule loads.
@@ -2977,6 +3135,39 @@ with tab_matchup:
             else:
                 initials = "".join([p[:1] for p in name.split()[:2]]).upper() or "?"
                 photo_html = f'<div class="top3-photo-fallback">{initials}</div>'
+            # "Crushes" line — the 1-2 pitch types this hitter punishes most.
+            crush_html = ""
+            crush_df = hitter_pitch_crush(arsenal_batter_df, r.get("_player_id"), top_n=2, min_pa=15)
+            if not crush_df.empty:
+                chips = []
+                for _, cr in crush_df.iterrows():
+                    pt = str(cr.get("pitch_type", "")).strip().upper()
+                    pname = PITCH_NAME_MAP.get(pt, str(cr.get("pitch_name", pt)))
+                    pemoji = PITCH_EMOJI.get(pt, "⚾")
+                    cw = cr.get("woba")
+                    cslg = cr.get("slg")
+                    woba_str = f"{float(cw):.3f}" if pd.notna(cw) else "—"
+                    slg_str = f"{float(cslg):.3f}" if pd.notna(cslg) else "—"
+                    chips.append(
+                        f'<span style="display:inline-flex; align-items:center; gap:5px; '
+                        f'background:#fef3c7; color:#78350f; border:1px solid #fbbf24; '
+                        f'border-radius:999px; padding:3px 9px; font-weight:800; font-size:0.78rem; '
+                        f'margin-right:6px; margin-top:4px;">'
+                        f'{pemoji} {pname} '
+                        f'<span style="color:#92400e; font-weight:700;">'
+                        f'· wOBA {woba_str} · SLG {slg_str}</span></span>'
+                    )
+                crush_html = (
+                    '<div style="margin-top:10px;">'
+                    '<div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; '
+                    'letter-spacing:.06em; font-weight:800; margin-bottom:2px;">Pitches They Crush</div>'
+                    + "".join(chips) + '</div>'
+                )
+            else:
+                crush_html = (
+                    '<div style="margin-top:10px; font-size:0.72rem; color:#94a3b8; '
+                    'font-weight:700;">Pitches They Crush — not enough sample yet.</div>'
+                )
             cards.append(
                 f'<div class="top3-card {rank_cls}">'
                 f'<div class="top3-rank">#{i+1}</div>'
@@ -2994,6 +3185,7 @@ with tab_matchup:
                 f'<div class="top3-stat"><span class="lab">kHR</span><span class="val">{khr_v:.1f}</span></div>'
                 f'<div class="top3-stat"><span class="lab">HR Form</span><span class="val">{hrform}</span></div>'
                 f'</div>'
+                f'{crush_html}'
                 f'</div>'
             )
         st.markdown('<div class="top3-row">' + "".join(cards) + '</div>', unsafe_allow_html=True)
@@ -3002,11 +3194,15 @@ with tab_matchup:
     st.markdown('<div class="section-title" style="margin-top:14px;">🎯 Pitcher Vulnerability</div>', unsafe_allow_html=True)
     pc1, pc2 = st.columns(2)
     with pc1:
+        away_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("away_probable_id"))
         render_pitcher_panel(f"Away SP — {game_row['away_abbr']}", game_row["away_probable"],
-                              ctx["away_pitch_hand"], find_pitcher_row(pitchers_df, game_row["away_probable"]))
+                              ctx["away_pitch_hand"], find_pitcher_row(pitchers_df, game_row["away_probable"]),
+                              pitch_mix_df=away_mix)
     with pc2:
+        home_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("home_probable_id"))
         render_pitcher_panel(f"Home SP — {game_row['home_abbr']}", game_row["home_probable"],
-                              ctx["home_pitch_hand"], find_pitcher_row(pitchers_df, game_row["home_probable"]))
+                              ctx["home_pitch_hand"], find_pitcher_row(pitchers_df, game_row["home_probable"]),
+                              pitch_mix_df=home_mix)
 
 # ============== Rolling tab ==============
 with tab_rolling:

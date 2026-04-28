@@ -623,6 +623,7 @@ def get_schedule(selected_date):
                 "away_team": away_name, "away_abbr": away_info["abbr"], "away_id": away_info["id"],
                 "home_team": home_name, "home_abbr": home_info["abbr"], "home_id": home_info["id"],
                 "venue": game.get("venue", {}).get("name", "Unknown"),
+                "venue_id": game.get("venue", {}).get("id"),
                 "away_probable": game.get("teams", {}).get("away", {}).get("probablePitcher", {}).get("fullName", "TBD"),
                 "home_probable": game.get("teams", {}).get("home", {}).get("probablePitcher", {}).get("fullName", "TBD"),
                 "away_probable_id": game.get("teams", {}).get("away", {}).get("probablePitcher", {}).get("id"),
@@ -778,6 +779,123 @@ def compute_weather_impact(weather: dict, park_factor: float, home_abbr: str) ->
         "dew":        dew,
         "rain_pct":   rain,
     }
+
+# ---------------------------------------------------------------------------
+# Historical totals at this park (for the O/U strip on the Weather card)
+# We pull MLB's schedule for last full season + current YTD at this venue,
+# extract the final score for completed games, and compute avg + Under/Over
+# distribution against today's book line.
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_park_history_totals(venue_id: int, home_team_id: int) -> list:
+    """Return a list of total runs scored in completed games at this park
+    over the last ~18 months. Uses MLB Statsapi which is free."""
+    if not venue_id and not home_team_id:
+        return []
+    today = today_ct()
+    last_year = today.year - 1
+    rows = []
+    # Pull team's home schedule for last full season + this season YTD.
+    # Home games guarantees the venue (handles team relocations correctly).
+    for season in (last_year, today.year):
+        try:
+            params = {
+                "sportId": 1, "season": season, "gameType": "R",
+                "teamId": home_team_id, "hydrate": "venue",
+                "startDate": f"{season}-03-01",
+                "endDate": f"{season}-11-15",
+            }
+            r = requests.get("https://statsapi.mlb.com/api/v1/schedule",
+                             params=params, headers=HEADERS, timeout=20)
+            r.raise_for_status()
+            data = r.json()
+        except Exception:
+            continue
+        for date_block in data.get("dates", []):
+            for g in date_block.get("games", []):
+                # Only completed games AT this venue and home for this team
+                if g.get("status", {}).get("abstractGameState") != "Final":
+                    continue
+                home_team = g.get("teams", {}).get("home", {})
+                if int(home_team.get("team", {}).get("id") or 0) != int(home_team_id):
+                    continue
+                # Filter to actual venue match if we have a venue_id
+                if venue_id and int(g.get("venue", {}).get("id") or 0) != int(venue_id):
+                    continue
+                away_runs = g.get("teams", {}).get("away", {}).get("score")
+                home_runs = home_team.get("score")
+                if away_runs is None or home_runs is None:
+                    continue
+                rows.append(int(away_runs) + int(home_runs))
+    return rows
+
+def summarize_park_ou(totals: list, line: float = None) -> dict:
+    """Given a list of historical total-runs and an optional sportsbook line,
+    return avg, n, and (under/push/over) distribution as percentages."""
+    if not totals:
+        return {"n": 0, "avg": None, "under": None, "push": None, "over": None, "line": line}
+    n = len(totals)
+    avg = sum(totals) / n
+    out = {"n": n, "avg": round(avg, 1), "line": line, "under": None, "push": None, "over": None}
+    if line is not None:
+        u = sum(1 for t in totals if t < line)
+        # "push" only happens on whole-number lines
+        if abs(line - round(line)) < 0.01:
+            p = sum(1 for t in totals if abs(t - line) < 0.5)
+            o = n - u - p
+        else:
+            p = 0
+            o = n - u
+        out["under"] = round(100 * u / n)
+        out["push"]  = round(100 * p / n)
+        out["over"]  = round(100 * o / n)
+    return out
+
+# ---------------------------------------------------------------------------
+# Sportsbook O/U totals via the-odds-api.com (free 500/mo tier)
+# Looks for st.secrets["ODDS_API_KEY"]; if missing, returns empty dict.
+# Cached 30 min so we don't burn requests.
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_odds_totals_map() -> dict:
+    """Return {(away_abbr, home_abbr): line_float} for today's MLB games.
+    Returns {} if API key not configured or call fails."""
+    try:
+        key = st.secrets["ODDS_API_KEY"]
+    except Exception:
+        return {}
+    if not key:
+        return {}
+    url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
+    params = {"apiKey": key, "regions": "us", "markets": "totals",
+              "oddsFormat": "american", "dateFormat": "iso"}
+    try:
+        r = requests.get(url, params=params, timeout=15); r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return {}
+    # Map full team names from the API back to your 3-letter abbrs.
+    # TEAM_INFO is keyed by full team name (e.g. "New York Yankees").
+    NAME_TO_ABBR = {name: info["abbr"] for name, info in TEAM_INFO.items()}
+    out = {}
+    for game in data or []:
+        away = NAME_TO_ABBR.get(game.get("away_team"))
+        home = NAME_TO_ABBR.get(game.get("home_team"))
+        if not away or not home:
+            continue
+        # Take the median line across books for stability
+        lines = []
+        for book in game.get("bookmakers", []):
+            for market in book.get("markets", []):
+                if market.get("key") != "totals": continue
+                for o in market.get("outcomes", []):
+                    pt = o.get("point")
+                    if pt is not None: lines.append(float(pt))
+        if lines:
+            lines.sort()
+            mid = lines[len(lines)//2]
+            out[(away, home)] = mid
+    return out
 
 @st.cache_data(ttl=1800)
 def get_boxscore(game_pk):
@@ -2507,9 +2625,66 @@ def _avg_bar(label: str, pct: int) -> str:
         f'</div>'
     )
 
-def render_weather_impact_card(weather: dict, park_factor, home_abbr: str) -> str:
+def _render_ou_strip(ou: dict) -> str:
+    """Render the Historical O/U bar (Under % | Push % | Over %).
+    `ou` comes from summarize_park_ou(); shows N=0 placeholder if no data."""
+    if not ou or ou.get("n", 0) == 0:
+        return (
+            '<div style="font-size:0.7rem; color:#94a3b8; font-weight:700; '
+            'margin-top:10px;">Historical O/U — not enough completed games at this park yet.</div>'
+        )
+    line = ou.get("line")
+    avg = ou.get("avg")
+    n = ou.get("n")
+    line_str = (f"line: <span style='color:#0f172a; font-weight:900;'>{line:.1f}</span>"
+                if line is not None else
+                "<span style='color:#94a3b8;'>line: not set · add ODDS_API_KEY in Streamlit secrets</span>")
+    avg_str = (f"hist. avg: <span style='color:#0f172a; font-weight:900;'>{avg:.1f}</span>"
+               if avg is not None else "")
+    # If we have a line, draw the Under/Push/Over distribution bar
+    if ou.get("under") is not None:
+        u, p, o = ou["under"], ou["push"] or 0, ou["over"]
+        bar_html = (
+            f'<div style="display:flex; height:36px; border-radius:999px; overflow:hidden; '
+            f'border:1px solid #e2e8f0; margin-top:6px;">'
+            f'<div style="flex:{u}; background:linear-gradient(180deg,#fde2e2 0%,#fecaca 100%); '
+            f'display:flex; align-items:center; justify-content:center; '
+            f'color:#7c2d12; font-weight:900; font-size:0.85rem;">'
+            f'<span style="margin-right:6px; opacity:.7; font-size:0.7rem;">UNDER</span>{u}%</div>'
+        )
+        if p > 0:
+            bar_html += (
+                f'<div style="flex:{p}; background:#f1f5f9; '
+                f'display:flex; align-items:center; justify-content:center; '
+                f'color:#475569; font-weight:800; font-size:0.72rem;">'
+                f'<span style="opacity:.7; font-size:0.6rem; margin-right:3px;">PUSH</span>{p}%</div>'
+            )
+        bar_html += (
+            f'<div style="flex:{o}; background:linear-gradient(180deg,#dcfce7 0%,#bbf7d0 100%); '
+            f'display:flex; align-items:center; justify-content:center; '
+            f'color:#14532d; font-weight:900; font-size:0.85rem;">'
+            f'{o}%<span style="margin-left:6px; opacity:.7; font-size:0.7rem;">OVER</span></div>'
+            f'</div>'
+        )
+    else:
+        # No line, just show distribution above/below historical avg
+        bar_html = ""
+    return (
+        '<div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; '
+        'letter-spacing:.1em; font-weight:800; margin-top:14px; margin-bottom:4px; '
+        'display:flex; justify-content:space-between; align-items:baseline; gap:8px;">'
+        f'<span>Historical O/U · {n} games</span>'
+        f'<span style="text-transform:none; letter-spacing:.02em; font-size:0.78rem; '
+        f'color:#475569; font-weight:700;">{line_str}'
+        f'{"  /  " + avg_str if avg_str else ""}</span>'
+        '</div>'
+        + bar_html
+    )
+
+def render_weather_impact_card(weather: dict, park_factor, home_abbr: str,
+                                ou_summary: dict = None) -> str:
     """Build the Kevin Roth-style Weather Impact panel: chip strip on top,
-    three impact tiles, then the vs-MLB-average bars. Returns HTML string."""
+    three impact tiles, vs-MLB-average bars, and historical O/U strip."""
     imp = compute_weather_impact(weather, park_factor, home_abbr)
     temp = imp["temp"]; wind = imp["wind"]; dew = imp["dew"]
     rain = imp["rain_pct"]
@@ -2571,10 +2746,11 @@ def render_weather_impact_card(weather: dict, park_factor, home_abbr: str) -> st
         + _avg_bar("HR",   imp["hr_pct"])
         + _avg_bar("RUNS", imp["runs_pct"])
         + _avg_bar("K’s", imp["k_pct"])
+        + (_render_ou_strip(ou_summary) if ou_summary is not None else "")
         + '<div style="font-size:0.68rem; color:#94a3b8; font-weight:700; '
         'margin-top:8px; padding-top:6px; border-top:1px dashed #e2e8f0;">'
         'Model blends park factor, temp, wind to/from CF, and dew point. Tunable in code — '
-        'transparent, free data (Open-Meteo).</div>'
+        'transparent, free data (Open-Meteo · MLB Statsapi · The Odds API).</div>'
         '</div></div>'
     )
 
@@ -2587,7 +2763,25 @@ def render_game_header(game_row, ctx, weather):
         return "tier-avoid"
     away_pill = _status_pill(ctx["away_status"])
     home_pill = _status_pill(ctx["home_status"])
-    weather_card_html = render_weather_impact_card(weather, game_row.get("park_factor"), game_row.get("home_abbr", ""))
+    # Pull park history + book line for the O/U strip on the card.
+    # Both fail silently if data is unavailable; the card still renders.
+    try:
+        totals = get_park_history_totals(
+            int(game_row.get("venue_id") or 0),
+            int(game_row.get("home_id") or 0),
+        )
+    except Exception:
+        totals = []
+    try:
+        odds_map = get_odds_totals_map()
+        line_today = odds_map.get((game_row.get("away_abbr"), game_row.get("home_abbr")))
+    except Exception:
+        line_today = None
+    ou_summary = summarize_park_ou(totals, line_today)
+    weather_card_html = render_weather_impact_card(
+        weather, game_row.get("park_factor"), game_row.get("home_abbr", ""),
+        ou_summary=ou_summary,
+    )
     st.markdown(f"""
     <div class="section-card dark">
         <div class="game-header">

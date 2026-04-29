@@ -1866,13 +1866,55 @@ def pitcher_vulnerability(p_row):
 # ===========================================================================
 # Build the matchup table for one team's lineup
 # ===========================================================================
-def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, weather, park_factor):
+def _build_pitcher_arsenal_set(arsenal_p, opp_pitcher_id, min_usage=10.0):
+    """Return set of pitch_type codes the opposing pitcher uses meaningfully."""
+    if arsenal_p is None or arsenal_p.empty or not opp_pitcher_id:
+        return set()
+    try: pid = int(opp_pitcher_id)
+    except Exception: return set()
+    sub = arsenal_p[arsenal_p["player_id"] == pid]
+    if sub.empty or "pitch_type" not in sub.columns:
+        return set()
+    if "pitch_usage" in sub.columns:
+        sub = sub[sub["pitch_usage"].fillna(0) >= float(min_usage)]
+    return {str(x).strip().upper() for x in sub["pitch_type"].dropna().tolist() if str(x).strip()}
+
+def _crushes_cell(arsenal_b, player_id, opp_pitches: set, top_n: int = 2, min_pa: int = 15):
+    """Compact text cell describing the pitch types this batter crushes.
+    If a crush pitch overlaps the opposing pitcher's arsenal, prefix with 🔥.
+    Falls back to '—' when sample is insufficient."""
+    crush = hitter_pitch_crush(arsenal_b, player_id, top_n=top_n, min_pa=min_pa)
+    if crush is None or crush.empty:
+        return "—"
+    parts = []
+    overlap_any = False
+    for _, cr in crush.iterrows():
+        pt = str(cr.get("pitch_type", "")).strip().upper()
+        if not pt: continue
+        label = PITCH_NAME_MAP.get(pt, pt)
+        woba = cr.get("woba")
+        try:
+            woba_f = float(woba)
+            woba_str = f"{woba_f:.3f}".lstrip("0") if 0 <= woba_f < 1 else f"{woba_f:.3f}"
+        except Exception:
+            woba_str = "—"
+        is_overlap = pt in opp_pitches
+        if is_overlap: overlap_any = True
+        prefix = "🔥 " if is_overlap else ""
+        parts.append(f"{prefix}{label} {woba_str}")
+    if not parts:
+        return "—"
+    return " · ".join(parts)
+
+def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, weather, park_factor,
+                       arsenal_b=None, arsenal_p=None, opp_pitcher_id=None):
     """The main heatmap-ready dataframe — columns mirror your reference site."""
-    cols = ["Spot", "Hitter", "Team", "Bat", "Matchup", "Test Score",
-            "Ceiling", "Zone Fit", "HR Form", "kHR", "HR", "ISO", "Barrel%", "HardHit%"]
+    cols = ["Spot", "Hitter", "Team", "Matchup", "Test Score",
+            "Ceiling", "Zone Fit", "Crushes", "HR Form", "kHR", "HR", "ISO", "Barrel%", "HardHit%"]
     if lineup_df.empty:
         return pd.DataFrame(columns=cols)
     p_row = find_pitcher_row(pitchers_df, opp_pitcher_name)
+    opp_pitches = _build_pitcher_arsenal_set(arsenal_p, opp_pitcher_id)
     rows = []
     for _, r in lineup_df.iterrows():
         b_row = find_player_row(batters_df, r["name_key"], r["team"])
@@ -1883,15 +1925,17 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
         zf  = zone_fit(b_row, p_row, r["bat_side"], opp_hand)
         hrf, arrow = hr_form_pct(b_row)
         khr = k_adj_hr(b_row, p_row, cl)
+        pid = r.get("player_id") if "player_id" in r.index else None
+        crushes = _crushes_cell(arsenal_b, pid, opp_pitches) if arsenal_b is not None else "—"
         rows.append({
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
             "Hitter": r["player_name"],
             "Team": norm_team(r["team"]),
-            "Bat": r["bat_side"] or "",
             "Matchup": m,
             "Test Score": ts,
             "Ceiling": cl,
             "Zone Fit": zf,
+            "Crushes": crushes,
             "HR Form": f"{int(hrf)}% {arrow}",
             "_HR Form Num": hrf,
             "kHR": khr,
@@ -1899,8 +1943,9 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
             "ISO": safe_float(b_row.get("ISO") if b_row is not None else None, 0.170),
             "Barrel%": safe_float(b_row.get("Barrel%") if b_row is not None else None, 8.0),
             "HardHit%": safe_float(b_row.get("HardHit%") if b_row is not None else None, 38.0),
-            # carried-along (hidden) so the Top 3 cards can show MLB headshots
-            "_player_id": r.get("player_id") if "player_id" in r.index else None,
+            # carried-along (hidden) so the Top 3 cards can show MLB headshots / Bat side
+            "_player_id": pid,
+            "_bat_side": r["bat_side"] or "",
         })
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -2041,8 +2086,8 @@ def heat_hr_form_num(value):
 
 def style_matchup_table(df):
     if df.empty: return df
-    # Hide internal numeric column from display
-    show_cols = [c for c in df.columns if c not in ("_HR Form Num", "_player_id")]
+    # Hide internal columns from display
+    show_cols = [c for c in df.columns if c not in ("_HR Form Num", "_player_id", "_bat_side")]
     styler = df[show_cols].style.format({
         "Matchup": "{:.3f}", "Test Score": "{:.3f}", "Ceiling": "{:.3f}",
         "Zone Fit": "{:.3f}", "kHR": "{:.3f}",
@@ -4369,8 +4414,10 @@ weather = ctx["weather"]
 render_game_header(game_row, ctx, weather)
 
 # ----- Build all tables once -----
-away_matchup = build_matchup_table(ctx["away_lineup"], batters_df, pitchers_df, game_row["home_probable"], weather, game_row["park_factor"])
-home_matchup = build_matchup_table(ctx["home_lineup"], batters_df, pitchers_df, game_row["away_probable"], weather, game_row["park_factor"])
+away_matchup = build_matchup_table(ctx["away_lineup"], batters_df, pitchers_df, game_row["home_probable"], weather, game_row["park_factor"],
+                                   arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=game_row.get("home_probable_id"))
+home_matchup = build_matchup_table(ctx["home_lineup"], batters_df, pitchers_df, game_row["away_probable"], weather, game_row["park_factor"],
+                                   arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=game_row.get("away_probable_id"))
 
 # ----- Tabs -----
 # Tiny hint above the strip so mobile users know to swipe for more views
@@ -4465,7 +4512,7 @@ with tab_matchup:
             name = str(r.get("Hitter", ""))
             team = str(r.get("Team", ""))
             spot = r.get("Spot", "")
-            bat = r.get("Bat", "")
+            bat = r.get("_bat_side", "") or r.get("Bat", "")
             opp_pitcher = game_row["home_probable"] if team == game_row["away_abbr"] else game_row["away_probable"]
             matchup_v = r.get("Matchup", 0)
             ceiling_v = r.get("Ceiling", 0)
@@ -4617,8 +4664,10 @@ def _build_slate_dataframe(_schedule_df, _batters_df, _pitchers_df, cache_key):
     for _, g in _schedule_df.iterrows():
         try:
             cc = build_game_context(g)
-            a = build_matchup_table(cc["away_lineup"], _batters_df, _pitchers_df, g["home_probable"], cc["weather"], g["park_factor"])
-            h = build_matchup_table(cc["home_lineup"], _batters_df, _pitchers_df, g["away_probable"], cc["weather"], g["park_factor"])
+            a = build_matchup_table(cc["away_lineup"], _batters_df, _pitchers_df, g["home_probable"], cc["weather"], g["park_factor"],
+                                    arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=g.get("home_probable_id"))
+            h = build_matchup_table(cc["home_lineup"], _batters_df, _pitchers_df, g["away_probable"], cc["weather"], g["park_factor"],
+                                    arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=g.get("away_probable_id"))
             for _, r in a.iterrows():
                 d = r.to_dict(); d["Game"] = g["short_label"]; d["OppPitcher"] = g["home_probable"]; rows.append(d)
             for _, r in h.iterrows():
@@ -4642,7 +4691,7 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
         return
     ranked = df.sort_values(sort_col, ascending=not top).head(n).reset_index(drop=True)
     ranked.insert(0, "#", range(1, len(ranked) + 1))
-    show_cols = [c for c in ["#", "Hitter", "Team", "Game", "Spot", "Bat", "OppPitcher",
+    show_cols = [c for c in ["#", "Hitter", "Team", "Game", "Spot", "OppPitcher", "Crushes",
                               "Matchup", "Test Score", "Ceiling", "Zone Fit", "HR Form", "kHR",
                               "ISO", "Barrel%", "HardHit%"] if c in ranked.columns]
     out = ranked[show_cols]

@@ -34,6 +34,10 @@ CSV_FILES = {
     # Pitcher results (xwOBA, Whiff%, Barrel%-against, HH%, FB%, K%, BB%, etc.)
     # used by the Slate Pitchers tab. Joined to the slate by player_id.
     "pitcher_stats":   "Data:savant_pitcher_stats.csv",
+    # Per-batter bat-tracking leaderboard: real avg_bat_speed (mph) and
+    # swing_length (ft) per player_id. Merged into batters_df below so the
+    # lineup tables can show actual Bat Speed instead of a placeholder.
+    "bat_tracking":    "Data:savant_bat_tracking.csv",
 }
 
 def raw_github_url(path: str) -> str:
@@ -778,6 +782,7 @@ def load_all_csvs():
         "batters":       "Baseball Savant · Batter Statcast leaderboard",
         "pitchers":      "Baseball Savant · Pitcher Statcast leaderboard",
         "pitcher_stats": "Baseball Savant · Pitcher results leaderboard",
+        "bat_tracking":  "Baseball Savant · Bat-tracking leaderboard",
     }
     # Savant CSVs are refreshed nightly via GitHub Actions, so a 36-hr
     # cushion accounts for in-day Savant publishing latency without
@@ -850,7 +855,11 @@ def standardize_columns(df):
         "pull_percent": "Pull%", "opposite_percent": "Oppo%",
         "groundballs_percent": "GB%", "flyballs_percent": "FB%",
         "linedrives_percent": "LD%",
-        "avg_swing_speed": "SwingSpeed",
+        # Bat-tracking metrics. The custom batter leaderboard does not include
+        # these; they come from a separate Savant bat-tracking CSV that is
+        # merged into batters_df by player_id at app startup.
+        "avg_swing_speed": "BatSpeed",
+        "avg_bat_speed": "BatSpeed",
         "p_throws": "pitch_hand", "throws": "pitch_hand",
         "stand": "bat_side", "bats": "bat_side",
     }
@@ -2010,11 +2019,20 @@ def build_pitcher_zones_table(pitcher_name, pitchers_df):
 
 def build_hitter_zones_table(lineup_df, batters_df):
     """Hitter batted-ball / swing profile — shows where each hitter does damage."""
-    cols = ["Spot", "Hitter", "Team", "Pull%", "Oppo%", "FB%", "LD%", "GB%", "SwingSpeed", "Whiff%"]
+    cols = ["Spot", "Hitter", "Team", "Pull%", "Oppo%", "FB%", "LD%", "GB%", "Bat Speed", "Whiff%"]
     if lineup_df.empty: return pd.DataFrame(columns=cols)
     rows = []
     for _, r in lineup_df.iterrows():
         b = find_player_row(batters_df, r["name_key"], r["team"])
+        # Real Bat Speed comes from the Savant bat-tracking CSV merge above.
+        # If the batter has no bat-tracking row (fewer than the qualifier's
+        # competitive swings), leave it as NaN so the table renders "—"
+        # instead of a misleading constant placeholder.
+        bs_raw = b.get("BatSpeed") if b is not None else None
+        try:
+            bs_val = float(bs_raw) if bs_raw is not None and not pd.isna(bs_raw) else None
+        except (TypeError, ValueError):
+            bs_val = None
         rows.append({
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
             "Hitter": r["player_name"],
@@ -2024,7 +2042,7 @@ def build_hitter_zones_table(lineup_df, batters_df):
             "FB%":     round(safe_float(b.get("FB%") if b is not None else None, 35), 1),
             "LD%":     round(safe_float(b.get("LD%") if b is not None else None, 22), 1),
             "GB%":     round(safe_float(b.get("GB%") if b is not None else None, 43), 1),
-            "SwingSpeed": round(safe_float(b.get("SwingSpeed") if b is not None else None, 70), 1),
+            "Bat Speed": round(bs_val, 1) if bs_val is not None else None,
             "Whiff%":  round(safe_float(b.get("Whiff%") if b is not None else None, 25), 1),
         })
     df = pd.DataFrame(rows)
@@ -2129,7 +2147,9 @@ def style_rolling_table(df):
 
 def style_zones_table(df, kind="hitter"):
     if df.empty: return df
-    styler = df.style.format(precision=1)
+    # na_rep="—" so missing Bat Speed (batter not in Savant bat-tracking
+    # leaderboard yet) shows a clear placeholder instead of "nan" or 0.
+    styler = df.style.format(precision=1, na_rep="—")
     base_text = [
         {"selector": "th", "props": [("color", "#0f172a"), ("font-size", "12px"),
                                      ("font-weight", "800"), ("background-color", "#f1f5f9"),
@@ -2140,7 +2160,7 @@ def style_zones_table(df, kind="hitter"):
     if kind == "hitter":
         for c, lo, hi, rev in [("Pull%", 30, 50, False), ("Oppo%", 18, 32, False),
                                 ("FB%", 28, 45, False), ("LD%", 18, 28, False),
-                                ("GB%", 35, 50, True),  ("SwingSpeed", 65, 78, False),
+                                ("GB%", 35, 50, True),  ("Bat Speed", 68, 78, False),
                                 ("Whiff%", 18, 35, True)]:
             if c in df.columns:
                 styler = styler.map(lambda v, lo=lo, hi=hi, rev=rev: heat_color(v, lo, hi, reverse=rev), subset=[c])
@@ -3637,6 +3657,31 @@ with st.spinner("Loading Baseball Savant data from GitHub..."):
 batters_df = standardize_columns(csvs.get("batters", pd.DataFrame()))
 pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
 pitcher_stats_df = standardize_columns(csvs.get("pitcher_stats", pd.DataFrame()))
+
+# Merge real per-batter bat-tracking data (avg_bat_speed in mph) into
+# batters_df, keyed on player_id. The custom batter leaderboard does NOT
+# expose bat speed, so without this merge the lineup tables fall back to a
+# constant placeholder. If the bat-tracking CSV is missing or empty, the
+# Bat Speed column simply renders as "—" downstream rather than a fake value.
+_bat_tracking_df = csvs.get("bat_tracking", pd.DataFrame())
+if (
+    not batters_df.empty
+    and _bat_tracking_df is not None
+    and not _bat_tracking_df.empty
+    and "player_id" in batters_df.columns
+):
+    _bt = _bat_tracking_df.copy()
+    _bt.columns = [str(c).strip() for c in _bt.columns]
+    if "id" in _bt.columns and "avg_bat_speed" in _bt.columns:
+        _bt = _bt[["id", "avg_bat_speed"]].rename(
+            columns={"id": "player_id", "avg_bat_speed": "BatSpeed"}
+        )
+        _bt["player_id"] = pd.to_numeric(_bt["player_id"], errors="coerce").astype("Int64")
+        _bt["BatSpeed"] = pd.to_numeric(_bt["BatSpeed"], errors="coerce")
+        batters_df["player_id"] = pd.to_numeric(batters_df["player_id"], errors="coerce").astype("Int64")
+        # Drop any pre-existing BatSpeed so the merge cleanly populates it.
+        batters_df = batters_df.drop(columns=[c for c in ("BatSpeed",) if c in batters_df.columns])
+        batters_df = batters_df.merge(_bt.drop_duplicates("player_id"), on="player_id", how="left")
 
 # Pitch-arsenal leaderboards (per pitch type) — fetched directly from
 # Baseball Savant. Cached for an hour. Used by Top 3 Hitters "Crushes" line

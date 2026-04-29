@@ -8,6 +8,7 @@ to the repo root with the exact filenames the app expects:
   Data:savant_batters.csv.csv     - batter season Statcast leaderboard
   Data:savant_pitchers.csv.csv    - pitcher arsenal / pitch-mix leaderboard
   Data:savant_pitcher_stats.csv   - pitcher results leaderboard
+  Data:savant_bat_tracking.csv    - per-batter Statcast bat-tracking (avg_bat_speed, swing_length)
 
 Run nightly via GitHub Actions (.github/workflows/refresh-data.yml).
 
@@ -73,6 +74,17 @@ TARGETS = [
         "&chart=false&x=pa&y=pa&r=no&chartType=beeswarm&csv=true",
     ),
     (
+        "Data:savant_bat_tracking.csv",
+        # Baseball Savant per-batter bat-tracking leaderboard. Provides real
+        # avg_bat_speed (mph) and swing_length (ft) per player_id, which the
+        # custom batter leaderboard does NOT expose. Keyed by `id` (= player_id).
+        "https://baseballsavant.mlb.com/leaderboard/bat-tracking?"
+        "attackZone=&batSide=&contact=&count=&dateRangeStart=&dateRangeEnd="
+        "&gameType=R&groupBy=&isHardHit=&minSwings=q&minGroupSwings=1"
+        "&pitchHand=&pitchType=&seasonStart={year}&seasonEnd={year}"
+        "&team=&type=batter&csv=true",
+    ),
+    (
         "Data:savant_pitcher_stats.csv",
         "https://baseballsavant.mlb.com/leaderboard/custom?"
         "year={year}&type=pitcher&filter=&sort=4&sortDir=desc&min=q"
@@ -113,7 +125,11 @@ def download(url: str, retries: int = 3, timeout: int = 60) -> bytes:
                     "likely an error page or empty leaderboard."
                 )
             head = data[:200].decode("utf-8", errors="replace")
-            if "last_name" not in head and "player_id" not in head:
+            # Accept any of the canonical Savant identifier columns. The
+            # bat-tracking leaderboard uses "id"/"name" instead of
+            # "player_id"/"last_name, first_name".
+            head_lower = head.lower()
+            if not any(tok in head_lower for tok in ("last_name", "player_id", '"id"', "avg_bat_speed")):
                 raise RuntimeError(
                     "Response does not look like a Savant CSV header. "
                     f"First 200 bytes: {head!r}"

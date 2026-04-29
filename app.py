@@ -289,7 +289,37 @@ def score_tier(score):
 st.markdown("""
 <style>
 /* ---- base ---- */
-.block-container { padding-top: 0.4rem; padding-bottom: 3rem; max-width: 1280px; }
+/* Wide PC layout: use the full viewport, not a 1280px center column. */
+.block-container {
+    padding-top: 0.4rem;
+    padding-bottom: 3rem;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+    max-width: 100% !important;
+    width: 100% !important;
+}
+[data-testid="stAppViewContainer"] > .main,
+[data-testid="stMain"],
+section.main,
+section[data-testid="stMain"] > div,
+[data-testid="stAppViewContainer"] section.main > div {
+    max-width: 100% !important;
+    width: 100% !important;
+}
+[data-testid="stAppViewContainer"], [data-testid="stMain"] { background: #f1f5f9; }
+@media (min-width: 1200px) {
+    .block-container { padding-left: 2rem; padding-right: 2rem; }
+}
+@media (min-width: 1600px) {
+    .block-container { padding-left: 2.5rem; padding-right: 2.5rem; }
+}
+@media (max-width: 640px) {
+    .block-container { padding-left: 0.6rem; padding-right: 0.6rem; }
+}
+/* Let wide tables scroll horizontally instead of being clipped */
+[data-testid="stDataFrame"], [data-testid="stTable"] { width: 100% !important; }
+[data-testid="stDataFrame"] > div { overflow-x: auto !important; }
+.stDataFrame, .stTable { width: 100% !important; }
 html, body, [class*="css"] {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Arial, sans-serif;
     color: #0f172a;

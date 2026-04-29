@@ -310,15 +310,37 @@ section[data-testid="stMain"] > div,
     width: 100% !important;
 }
 /* Neutralize the outermost app shell so the dark/green Streamlit theme
-   default never shows through on the far-left strip or collapsed sidebar. */
+   default never shows through on the far-left strip, the right gutter,
+   or the collapsed sidebar. We cover every wrapper Streamlit uses
+   between the iframe root and the content block, including the
+   right-side toolbar/decoration that sits flush with the viewport edge. */
 html, body,
 [data-testid="stApp"],
 [data-testid="stAppViewContainer"],
 [data-testid="stHeader"],
 [data-testid="stMain"],
 [data-testid="stSidebar"],
-[data-testid="stSidebarCollapsedControl"] {
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+[data-testid="stBottom"],
+section.main,
+.main,
+.stApp {
     background: #f1f5f9 !important;
+    background-color: #f1f5f9 !important;
+    background-image: none !important;
+}
+/* Belt-and-suspenders: a body::before strip that paints any uncovered
+   pixel behind the iframe content. Sits at z-index:-1 so it never
+   overlaps actual UI. */
+body::before {
+    content: "";
+    position: fixed; inset: 0;
+    background: #f1f5f9;
+    z-index: -1;
+    pointer-events: none;
 }
 @media (min-width: 1200px) {
     .block-container { padding-left: 2rem; padding-right: 2rem; }
@@ -548,8 +570,16 @@ html, body, [class*="css"] {
     overflow-x: auto;
     scrollbar-width: thin;
 }
-/* Right-edge fade so users see there's more to swipe to */
-.stTabs::after {
+/* Right-edge fade so users see there's more to swipe to.
+   IMPORTANT: scope this to the tab-list only. Previously it was on
+   .stTabs::after with top:0/bottom:0, which made the green fade extend
+   down the FULL HEIGHT of the tab container — i.e. a vertical green
+   strip running alongside every tab's content panel. That looked like
+   "the whole right side of the page is tinted green". The fix: anchor
+   the fade inside the [data-baseweb="tab-list"] element so it only
+   covers the horizontal tab strip itself. */
+.stTabs [data-baseweb="tab-list"] { position: relative; }
+.stTabs [data-baseweb="tab-list"]::after {
     content: "";
     position: absolute; top: 0; right: 0; bottom: 0; width: 36px;
     pointer-events: none;

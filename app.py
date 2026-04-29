@@ -289,14 +289,17 @@ def score_tier(score):
 st.markdown("""
 <style>
 /* ---- base ---- */
-/* Wide PC layout: use the full viewport, not a 1280px center column. */
+/* Wide PC layout: bounded max-width (~1600px) centered, with neutral
+   background outside the content area so no green tint bleeds through. */
 .block-container {
     padding-top: 0.4rem;
     padding-bottom: 3rem;
     padding-left: 1.25rem;
     padding-right: 1.25rem;
-    max-width: 100% !important;
+    max-width: 1600px !important;
     width: 100% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
 }
 [data-testid="stAppViewContainer"] > .main,
 [data-testid="stMain"],
@@ -306,7 +309,17 @@ section[data-testid="stMain"] > div,
     max-width: 100% !important;
     width: 100% !important;
 }
-[data-testid="stAppViewContainer"], [data-testid="stMain"] { background: #f1f5f9; }
+/* Neutralize the outermost app shell so the dark/green Streamlit theme
+   default never shows through on the far-left strip or collapsed sidebar. */
+html, body,
+[data-testid="stApp"],
+[data-testid="stAppViewContainer"],
+[data-testid="stHeader"],
+[data-testid="stMain"],
+[data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"] {
+    background: #f1f5f9 !important;
+}
 @media (min-width: 1200px) {
     .block-container { padding-left: 2rem; padding-right: 2rem; }
 }
@@ -323,6 +336,32 @@ section[data-testid="stMain"] > div,
 html, body, [class*="css"] {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Arial, sans-serif;
     color: #0f172a;
+    font-size: 16px;
+}
+/* ---- desktop readability: bump font sizes on wider screens ---- */
+@media (min-width: 1100px) {
+    html, body, [class*="css"] { font-size: 17px; }
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] li { font-size: 1rem; line-height: 1.55; }
+    [data-testid="stWidgetLabel"], label { font-size: 0.98rem !important; }
+    .stTabs [data-baseweb="tab"] { font-size: 1rem !important; padding: 11px 18px !important; }
+    [data-testid="stRadio"] label { font-size: 1rem !important; }
+    [data-testid="stDataFrame"] { font-size: 0.98rem; }
+    [data-testid="stDataFrame"] td,
+    [data-testid="stDataFrame"] th { font-size: 0.95rem !important; }
+    [data-testid="stTable"] td, [data-testid="stTable"] th { font-size: 0.95rem !important; }
+    .hrs-table td, .hrs-table th,
+    .tg-table td,  .tg-table th,
+    .sp-table td,  .sp-table th { font-size: 0.95rem !important; }
+}
+@media (min-width: 1500px) {
+    html, body, [class*="css"] { font-size: 18px; }
+    .stTabs [data-baseweb="tab"] { font-size: 1.05rem !important; padding: 12px 20px !important; }
+    [data-testid="stDataFrame"] td,
+    [data-testid="stDataFrame"] th { font-size: 1rem !important; }
+    .hrs-table td, .hrs-table th,
+    .tg-table td,  .tg-table th,
+    .sp-table td,  .sp-table th { font-size: 1rem !important; }
 }
 
 /* hide empty markdown wrappers */

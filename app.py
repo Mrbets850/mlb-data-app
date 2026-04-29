@@ -2458,6 +2458,16 @@ def _spot_hrr_weight(lineup_spot):
     try: return table.get(int(lineup_spot), 40)
     except: return 40
 
+def _spot_rbi_weight(lineup_spot):
+    """Score for 2+ RBI opportunity. Heart-of-order spots crush this — they
+    bat with runners on base most often. Spots 3-5 are king, 2/6 are decent,
+    1 is weak (leads off the inning), bottom of order is dead.
+    1 -> 50, 2 -> 80, 3 -> 100, 4 -> 100, 5 -> 95, 6 -> 70,
+    7 -> 45, 8 -> 25, 9 -> 15."""
+    table = {1:50, 2:80, 3:100, 4:100, 5:95, 6:70, 7:45, 8:25, 9:15}
+    try: return table.get(int(lineup_spot), 30)
+    except: return 30
+
 def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb"):
     """Build a target-prop sleeper table for either:
        mode="tb"  -> Over 1.5 Total Bases
@@ -2516,6 +2526,17 @@ def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb"):
                     spot_part    = 0.15 * _spot_pa_weight(r.get("lineup_spot", 9))
                     matchup_part = 0.12*n_match + 0.08*n_ceil
                     score = contact_part + power_part + spot_part + matchup_part
+                elif mode == "rbi2":
+                    # 2+ RBI: heart-of-order power bats vs vulnerable SP.
+                    # Power 40% (xSLG, ISO, Barrel%, HardHit%) ·
+                    # Spot 30% (3-5 dominate) ·
+                    # Matchup 20% (opp SP / park / weather / ceiling) ·
+                    # Contact 10% (xBA — need to actually put the ball in play).
+                    power_part   = 0.14*n_xslg + 0.12*n_iso + 0.08*n_barrel + 0.06*n_hh
+                    spot_part    = 0.30 * _spot_rbi_weight(r.get("lineup_spot", 9))
+                    matchup_part = 0.12*n_match + 0.08*n_ceil
+                    contact_part = 0.10*n_xba
+                    score = power_part + spot_part + matchup_part + contact_part
                 else:  # hrr
                     onbase_part  = 0.12*n_xba + 0.13*n_xobp + 0.10*n_avg
                     power_part   = 0.10*n_xslg + 0.06*n_iso + 0.04*n_barrel
@@ -2605,6 +2626,9 @@ def render_targets_html(df, mode="tb"):
     if mode == "tb":
         # TB: AVG, xBA, xSLG, ISO, Barrel%, K%, LD%, Matchup
         headers = ["#", "Hitter", "Game", "TB Score", "AVG", "xBA", "xSLG", "ISO", "Barrel%", "K%", "Match"]
+    elif mode == "rbi2":
+        # 2+ RBI: AVG, xSLG, ISO, Barrel%, HardHit%, K%, Matchup
+        headers = ["#", "Hitter", "Game", "RBI Score", "AVG", "xSLG", "ISO", "Barrel%", "HardHit%", "K%", "Match"]
     else:
         # HRR: AVG, xBA, xOBP, xSLG, ISO, Barrel%, K%, Matchup
         headers = ["#", "Hitter", "Game", "HRR Score", "AVG", "xBA", "xOBP", "xSLG", "ISO", "K%", "Match"]
@@ -2628,6 +2652,16 @@ def render_targets_html(df, mode="tb"):
                 f'<td class="tg-num">{_fmt_num(r.get("xSLG"), 3)}</td>'
                 f'<td class="tg-num">{_fmt_num(r.get("ISO"), 3)}</td>'
                 f'<td class="tg-num">{_fmt_pct(r.get("Barrel%"))}</td>'
+                f'<td class="tg-num">{_fmt_pct(r.get("K%"))}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("Matchup"), 1)}</td>'
+            )
+        elif mode == "rbi2":
+            metrics_html = (
+                f'<td class="tg-num">{_fmt_num(r.get("AVG"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("xSLG"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_num(r.get("ISO"), 3)}</td>'
+                f'<td class="tg-num">{_fmt_pct(r.get("Barrel%"))}</td>'
+                f'<td class="tg-num">{_fmt_pct(r.get("HardHit%"))}</td>'
                 f'<td class="tg-num">{_fmt_pct(r.get("K%"))}</td>'
                 f'<td class="tg-num">{_fmt_num(r.get("Matchup"), 1)}</td>'
             )
@@ -3162,6 +3196,97 @@ if schedule_df.empty:
     st.stop()
 
 # ===========================================================================
+# 🔥 Hero strip: Top 15 — 2+ RBI Plays Tonight
+# Always rendered at the very top of the slate. A compact, scrollable
+# horizontal carousel of the highest-scoring 2+ RBI candidates across the
+# entire slate — so users see the night's best RBI plays before drilling
+# into a specific game or view. Falls back gracefully when lineups aren't
+# posted yet.
+# ===========================================================================
+def _render_rbi_hero_strip():
+    if batters_df is None or batters_df.empty:
+        return
+    try:
+        _hero_df = build_targets_table(schedule_df, batters_df, pitchers_df, mode="rbi2")
+    except Exception:
+        return
+    if _hero_df is None or _hero_df.empty:
+        return
+    # Light pre-filter so the strip surfaces realistic 2+ RBI plays:
+    # spots 1-6, with at least some power profile.
+    _hero_df = _hero_df[_hero_df["Spot"] <= 6]
+    _hero_df = _hero_df[_hero_df["ISO"].fillna(-1) >= 0.130]
+    _hero_df = _hero_df.head(15).reset_index(drop=True)
+    if _hero_df.empty:
+        return
+
+    css = (
+        "<style>"
+        ".rbi-hero { margin: 4px 0 16px 0; padding: 14px 14px 10px; "
+        "  background: linear-gradient(135deg, #7f1d1d 0%, #b91c1c 50%, #dc2626 100%); "
+        "  border-radius: 16px; border: 2px solid #fbbf24; "
+        "  box-shadow: 0 4px 16px rgba(127,29,29,.35); }"
+        ".rbi-hero-title { color:#fde68a; font-weight:900; font-size:1.15rem; "
+        "  letter-spacing:.02em; margin: 0 0 4px 0; "
+        "  text-shadow: 0 1px 2px rgba(0,0,0,.4); }"
+        ".rbi-hero-sub { color:#fee2e2; font-size:.82rem; margin: 0 0 10px 0; }"
+        ".rbi-hero-rail { display:flex; gap:10px; overflow-x:auto; "
+        "  padding: 4px 2px 8px; scroll-snap-type: x mandatory; "
+        "  -webkit-overflow-scrolling: touch; }"
+        ".rbi-hero-rail::-webkit-scrollbar { height:6px; }"
+        ".rbi-hero-rail::-webkit-scrollbar-thumb { background:#fbbf24; border-radius:3px; }"
+        ".rbi-card { flex: 0 0 auto; min-width: 180px; max-width: 200px; "
+        "  background:#fff; border-radius:12px; padding:10px 12px; "
+        "  scroll-snap-align: start; "
+        "  box-shadow: 0 2px 6px rgba(0,0,0,.15); }"
+        ".rbi-card-rank { display:inline-block; background:#0f3a2e; color:#facc15; "
+        "  font-weight:900; font-size:.72rem; padding:2px 8px; border-radius:999px; "
+        "  letter-spacing:.05em; }"
+        ".rbi-card-score { float:right; font-weight:900; font-size:1.05rem; "
+        "  color:#dc2626; }"
+        ".rbi-card-name { font-weight:800; color:#0f172a; font-size:.96rem; "
+        "  margin-top:6px; line-height:1.15; }"
+        ".rbi-card-meta { color:#64748b; font-size:.74rem; margin-top:2px; }"
+        ".rbi-card-game { color:#475569; font-size:.74rem; margin-top:6px; "
+        "  border-top:1px solid #f1f5f9; padding-top:5px; }"
+        ".rbi-card-stats { display:flex; gap:8px; margin-top:6px; "
+        "  font-variant-numeric: tabular-nums; font-size:.72rem; color:#0f172a; }"
+        ".rbi-card-stats span b { color:#dc2626; }"
+        "</style>"
+    )
+
+    cards_html = []
+    for i, r in _hero_df.iterrows():
+        iso = r.get("ISO")
+        bar = r.get("Barrel%")
+        iso_s  = f"{iso:.3f}" if iso is not None and not pd.isna(iso) else "—"
+        bar_s  = f"{bar:.1f}%" if bar is not None and not pd.isna(bar) else "—"
+        cards_html.append(
+            '<div class="rbi-card">'
+            f'<span class="rbi-card-rank">#{i+1}</span>'
+            f'<span class="rbi-card-score">{r.get("Score",0):.0f}</span>'
+            f'<div class="rbi-card-name">{r.get("Hitter","")}</div>'
+            f'<div class="rbi-card-meta">{r.get("Team","")} · Bat {r.get("Bat","")} · Spot {r.get("Spot","")}</div>'
+            f'<div class="rbi-card-game">{r.get("Game","")}<br/>vs {r.get("Opp SP","")}</div>'
+            f'<div class="rbi-card-stats"><span>ISO <b>{iso_s}</b></span>'
+            f'<span>Barrel <b>{bar_s}</b></span></div>'
+            '</div>'
+        )
+
+    html = (
+        css +
+        '<div class="rbi-hero">'
+        '<div class="rbi-hero-title">🔥 Top 15 — 2+ RBI Plays Tonight</div>'
+        '<div class="rbi-hero-sub">Heart-of-order power bats with the best '
+        'RBI matchup — swipe to see all 15. Open the <b>🔥 2+ RBI</b> tab for filters &amp; full table.</div>'
+        '<div class="rbi-hero-rail">' + "".join(cards_html) + '</div>'
+        '</div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+_render_rbi_hero_strip()
+
+# ===========================================================================
 # Top-level tab switcher: "⚾ Games" vs "🥎 Slate Pitchers"
 # Implemented as a styled radio so we can toggle large sections of the page
 # without re-indenting the entire game flow.
@@ -3269,7 +3394,7 @@ if _qp_view is None:
 st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
 _view = st.radio(
     "View",
-    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+"],
+    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI"],
     horizontal=True,
     label_visibility="collapsed",
     key="top_view_tab",
@@ -3584,6 +3709,86 @@ if _view == "🎯 HRR 1.5+":
             "⬇️ Download HRR Targets (CSV)",
             data=csv_bytes,
             file_name=f"hrr_targets_{selected_date}.csv",
+            mime="text/csv",
+            use_container_width=False,
+        )
+    st.stop()
+
+# ============== 2+ RBI view ==============
+if _view == "🔥 2+ RBI":
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '🔥 2+ RBI Plays — Top Targets</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Best plays for clearing 2+ RBI tonight. RBI Score (0-100) blends '
+        '<b>Power</b> 40% (xSLG, ISO, Barrel%, HardHit%) · <b>Lineup spot</b> 30% '
+        '(spots 3-5 dominate — they bat with runners on most often) · '
+        '<b>Tonight’s matchup</b> 20% (opp SP, park, weather, ceiling) · '
+        '<b>Contact</b> 10% (xBA — must put it in play).'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    if batters_df.empty:
+        st.warning("Batter CSV hasn’t loaded yet.")
+        st.stop()
+
+    with st.spinner("Scoring 2+ RBI targets across the slate…"):
+        rbi_df = build_targets_table(schedule_df, batters_df, pitchers_df, mode="rbi2")
+
+    if rbi_df.empty:
+        st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
+        st.stop()
+
+    # Filters
+    f_cols = st.columns([1.0, 1.0, 1.0, 1.0, 1.6])
+    with f_cols[0]:
+        _max_spot = st.number_input("Max lineup spot", min_value=1, max_value=9, value=6, step=1,
+                                    key="rbi_max_spot",
+                                    help="Bottom-of-order bats rarely come up with runners on.")
+    with f_cols[1]:
+        _min_iso = st.number_input("Min ISO", min_value=0.000, max_value=0.400, value=0.150, step=0.005,
+                                   format="%.3f", key="rbi_min_iso",
+                                   help="Floor for power — RBIs usually need an XBH or HR.")
+    with f_cols[2]:
+        _min_barrel = st.number_input("Min Barrel%", min_value=0.0, max_value=20.0, value=6.0, step=0.5,
+                                      key="rbi_min_barrel",
+                                      help="Power profile floor. League average is ~7%.")
+    with f_cols[3]:
+        _min_pa = st.number_input("Min PA", min_value=0, max_value=700, value=80, step=10,
+                                  key="rbi_min_pa")
+    with f_cols[4]:
+        _topn = st.slider("Show top N", min_value=10, max_value=30, value=15, step=5, key="rbi_topn")
+
+    fdf = rbi_df.copy()
+    fdf = fdf[fdf["Spot"] <= int(_max_spot)]
+    if _min_iso and _min_iso > 0:
+        fdf = fdf[fdf["ISO"].fillna(-1) >= float(_min_iso)]
+    if _min_barrel and _min_barrel > 0:
+        fdf = fdf[fdf["Barrel%"].fillna(-1) >= float(_min_barrel)]
+    if _min_pa and _min_pa > 0:
+        fdf = fdf[fdf["PA"].fillna(0).astype(float) >= float(_min_pa)]
+    fdf = fdf.head(int(_topn)).reset_index(drop=True)
+
+    if fdf.empty:
+        st.info("No targets match the current filters. Try lowering Min ISO or Min Barrel%.")
+    else:
+        st.markdown(render_targets_html(fdf, mode="rbi2"), unsafe_allow_html=True)
+        st.markdown(
+            '<div style="margin: 6px 0 4px 0; color:#64748b; font-size:.82rem;">'
+            'Tiers — Elite ≥75 · Strong ≥65 · Average ≥55 · Soft <55. '
+            'Sort: RBI Score ↓.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        dl_cols = [c for c in fdf.columns if not c.startswith("_")]
+        csv_bytes = fdf[dl_cols].to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download 2+ RBI Targets (CSV)",
+            data=csv_bytes,
+            file_name=f"rbi_targets_{selected_date}.csv",
             mime="text/csv",
             use_container_width=False,
         )

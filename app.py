@@ -158,6 +158,115 @@ def logo_url(team_id: int, size: int = 60) -> str:
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # ===========================================================================
+# Data-source freshness registry
+# ---------------------------------------------------------------------------
+# Every external data fetch records its outcome here so we can surface
+# per-source timestamps and "stale / unavailable / live" badges in the UI
+# instead of silently using empty or stale data.
+#
+# Each entry: {
+#   "label":       human-readable name (e.g. "MLB StatsAPI · Schedule")
+#   "url":         source URL or endpoint
+#   "fetched_at":  pd.Timestamp UTC of the last successful fetch (None if never)
+#   "status":      "live" | "stale" | "fallback" | "error" | "unconfigured"
+#   "detail":      short freeform string (row counts, err msg, fallback reason)
+#   "max_age_min": int — how many minutes until this source is considered stale
+# }
+# ===========================================================================
+DATA_SOURCES: dict = {}
+
+def _utc_now() -> pd.Timestamp:
+    # Use tz-aware now then drop the tz, so we stay naive-UTC like the
+    # Last-Modified parsing path. Using Timestamp.utcnow() raises a
+    # deprecation warning in newer pandas.
+    return pd.Timestamp.now(tz="UTC").tz_localize(None)
+
+def record_source(key: str, *, label: str, url: str = "", status: str = "live",
+                  detail: str = "", max_age_min: int = 60,
+                  fetched_at: "pd.Timestamp | None" = None) -> None:
+    """Record the outcome of a data fetch. Called from inside fetcher
+    functions. If status='live' and fetched_at is omitted, uses now()."""
+    if status == "live" and fetched_at is None:
+        fetched_at = _utc_now()
+    prev = DATA_SOURCES.get(key, {})
+    DATA_SOURCES[key] = {
+        "label":       label or prev.get("label", key),
+        "url":         url   or prev.get("url", ""),
+        "status":      status,
+        "detail":      detail,
+        "fetched_at":  fetched_at if fetched_at is not None else prev.get("fetched_at"),
+        "max_age_min": max_age_min,
+    }
+
+def source_age_minutes(key: str) -> "float | None":
+    info = DATA_SOURCES.get(key)
+    if not info or info.get("fetched_at") is None:
+        return None
+    delta = (_utc_now() - info["fetched_at"]).total_seconds() / 60.0
+    return max(0.0, delta)
+
+def source_is_stale(key: str) -> bool:
+    """True if the source has data but it's older than its max_age."""
+    info = DATA_SOURCES.get(key)
+    if not info: return False
+    age = source_age_minutes(key)
+    if age is None: return False
+    return age > float(info.get("max_age_min", 60))
+
+def render_source_chips(keys: "list[str]") -> str:
+    """Render small inline status chips for the given source keys.
+    Used beneath player-prop tables so the user sees *exactly* which feeds
+    fed the table and how fresh each one is."""
+    chips = []
+    for key in keys:
+        info = DATA_SOURCES.get(key)
+        if not info:
+            continue
+        bg, fg, txt = status_pill(info.get("status", ""))
+        age = source_age_minutes(key)
+        age_str = ("never" if age is None else
+                   ("just now" if age < 1 else
+                    f"{int(round(age))}m" if age < 60 else
+                    f"{age/60:.1f}h" if age < 24*60 else
+                    f"{age/(60*24):.1f}d"))
+        chips.append(
+            f'<span style="display:inline-block;margin:2px 6px 2px 0;'
+            f'background:#f1f5f9;border-radius:8px;padding:2px 8px;'
+            f'font-size:.74rem;color:#0f172a;">'
+            f'<span style="background:{bg};color:{fg};border-radius:999px;'
+            f'padding:1px 6px;margin-right:6px;font-weight:800;font-size:.65rem;'
+            f'letter-spacing:.04em;">{txt}</span>'
+            f'<b>{info.get("label", key)}</b> · '
+            f'<span style="color:#475569;">{age_str}</span></span>'
+        )
+    if not chips:
+        return ""
+    return ('<div style="margin:4px 0 8px 0;line-height:1.7;">' + "".join(chips) + '</div>')
+
+
+def fmt_age(minutes: "float | None") -> str:
+    if minutes is None:
+        return "never"
+    m = float(minutes)
+    if m < 1:    return "just now"
+    if m < 60:   return f"{int(round(m))} min ago"
+    if m < 24*60:
+        h = m / 60.0
+        return f"{h:.1f} hr ago"
+    d = m / (60.0 * 24.0)
+    return f"{d:.1f} d ago"
+
+def status_pill(status: str) -> "tuple[str, str, str]":
+    """Return (background, foreground, label) for a status badge."""
+    s = (status or "").lower()
+    if s == "live":         return ("#065f46", "#d1fae5", "LIVE")
+    if s == "stale":        return ("#92400e", "#fde68a", "STALE")
+    if s == "fallback":     return ("#1e3a8a", "#bfdbfe", "FALLBACK")
+    if s == "error":        return ("#7f1d1d", "#fecaca", "ERROR")
+    if s == "unconfigured": return ("#374151", "#e5e7eb", "OFF")
+    return ("#374151", "#e5e7eb", s.upper() or "—")
+
+# ===========================================================================
 # Tier system (calibrated to actual matchup_score distribution: ~85-200)
 # ===========================================================================
 TIER_ELITE  = 130
@@ -524,12 +633,34 @@ def _flip_last_first(name):
 # ===========================================================================
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_remote_csv(url):
+    """Fetch a Savant CSV via raw GitHub.
+
+    Returns (df, last_modified_utc). last_modified_utc is the GitHub
+    object's Last-Modified header parsed to a UTC timestamp, or None
+    if not available. We HEAD the URL first (cheap) so we know exactly
+    how stale the underlying file in the repo is — independent of our
+    in-process cache TTL."""
+    last_modified = None
+    try:
+        # Try a HEAD request to capture the file's actual last-modified time.
+        # raw.githubusercontent.com returns Last-Modified for committed files.
+        head = requests.head(url, headers=HEADERS, timeout=15, allow_redirects=True)
+        lm = head.headers.get("Last-Modified") or head.headers.get("last-modified")
+        if lm:
+            try:
+                last_modified = pd.to_datetime(lm, utc=True).tz_convert(None)
+            except Exception:
+                last_modified = None
+    except Exception:
+        last_modified = None
+
     try:
         df = pd.read_csv(url)
     except Exception as exc:
         st.warning(f"CSV load failed: {url} :: {exc}")
-        return pd.DataFrame()
-    if df.empty: return df
+        return pd.DataFrame(), last_modified
+    if df.empty:
+        return df, last_modified
     name_col = None
     for c in df.columns:
         if str(c).strip().lower() in ("last_name, first_name", "player_name", "name", "player"):
@@ -538,11 +669,49 @@ def load_remote_csv(url):
         df[name_col] = df[name_col].apply(_flip_last_first)
         if name_col != "Name":
             df = df.rename(columns={name_col: "Name"})
-    return df
+    return df, last_modified
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_all_csvs():
-    return {label: load_remote_csv(url) for label, url in CSV_URLS.items()}
+    """Load every Savant CSV and register source freshness for each."""
+    out = {}
+    SOURCE_LABEL = {
+        "batters":       "Baseball Savant · Batter Statcast leaderboard",
+        "pitchers":      "Baseball Savant · Pitcher Statcast leaderboard",
+        "pitcher_stats": "Baseball Savant · Pitcher results leaderboard",
+    }
+    # Savant CSVs are refreshed nightly via GitHub Actions, so a 36-hr
+    # cushion accounts for in-day Savant publishing latency without
+    # flagging a healthy file as stale.
+    for label, url in CSV_URLS.items():
+        df, last_mod = load_remote_csv(url)
+        out[label] = df
+        key = f"savant:{label}"
+        if df is None or df.empty:
+            record_source(
+                key,
+                label=SOURCE_LABEL.get(label, f"Savant · {label}"),
+                url=url, status="error",
+                detail="Empty CSV — Savant may have rate-limited the nightly refresh.",
+                max_age_min=36 * 60,
+                fetched_at=last_mod,
+            )
+            continue
+        status = "live"
+        detail = f"{len(df):,} rows"
+        if last_mod is not None:
+            age_min = (_utc_now() - last_mod).total_seconds() / 60.0
+            if age_min > 36 * 60:
+                status = "stale"
+                detail += f" · file last updated {fmt_age(age_min)}"
+        record_source(
+            key,
+            label=SOURCE_LABEL.get(label, f"Savant · {label}"),
+            url=url, status=status, detail=detail,
+            max_age_min=36 * 60,
+            fetched_at=last_mod,
+        )
+    return out
 
 def standardize_columns(df):
     """Map raw Savant columns to canonical names. Keeps original columns too."""
@@ -601,9 +770,17 @@ def get_schedule(selected_date):
     url = "https://statsapi.mlb.com/api/v1/schedule"
     params = {"sportId": 1, "date": selected_date.strftime("%Y-%m-%d"),
               "hydrate": "probablePitcher,team"}
-    r = requests.get(url, params=params, headers=HEADERS, timeout=30)
-    r.raise_for_status()
-    data = r.json()
+    try:
+        r = requests.get(url, params=params, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as exc:
+        record_source("statsapi:schedule",
+                      label="MLB StatsAPI · Schedule + probable pitchers",
+                      url=url, status="error",
+                      detail=f"Schedule fetch failed: {exc}",
+                      max_age_min=30)
+        raise
     rows = []
     for d in data.get("dates", []):
         for game in d.get("games", []):
@@ -632,6 +809,20 @@ def get_schedule(selected_date):
                 "lat": home_info["lat"], "lon": home_info["lon"],
                 "park_factor": DEFAULT_PARK_FACTORS.get(home_info["abbr"], 100),
             })
+    # Count probable pitchers posted vs TBD so we can flag a slate where
+    # MLB hasn't published probables yet.
+    n_games = len(rows)
+    n_probable = sum(
+        1 for row in rows
+        if (row["away_probable"] not in ("", "TBD") and row["home_probable"] not in ("", "TBD"))
+    )
+    record_source(
+        "statsapi:schedule",
+        label="MLB StatsAPI · Schedule + probable pitchers",
+        url=url, status="live",
+        detail=f"{n_games} games · {n_probable} have both probables posted",
+        max_age_min=30,
+    )
     return pd.DataFrame(rows)
 
 @st.cache_data(ttl=3600)
@@ -650,11 +841,26 @@ def get_weather(lat, lon, game_time_utc):
     try:
         r = requests.get(url, params=params, headers=HEADERS, timeout=30); r.raise_for_status()
         data = r.json()
-    except Exception:
+    except Exception as exc:
+        record_source("openmeteo:weather",
+                      label="Open-Meteo · Hourly forecast",
+                      url=url, status="error",
+                      detail=f"Forecast fetch failed: {exc}",
+                      max_age_min=180)
         return blank
     hourly = pd.DataFrame(data.get("hourly", {}))
     if hourly.empty or "time" not in hourly.columns:
+        record_source("openmeteo:weather",
+                      label="Open-Meteo · Hourly forecast",
+                      url=url, status="error",
+                      detail="Forecast response had no hourly data.",
+                      max_age_min=180)
         return blank
+    record_source("openmeteo:weather",
+                  label="Open-Meteo · Hourly forecast",
+                  url=url, status="live",
+                  detail="Per-game forecast available",
+                  max_age_min=180)
     hourly["time"] = pd.to_datetime(hourly["time"])
     game_time = pd.to_datetime(game_time_utc, utc=True).tz_convert(None)
     idx = (hourly["time"] - game_time).abs().idxmin()
@@ -861,11 +1067,19 @@ def summarize_park_ou(totals: list, line: float = None) -> dict:
 def get_odds_totals_map() -> dict:
     """Return {(away_abbr, home_abbr): line_float} for today's MLB games.
     Returns {} if API key not configured or call fails."""
+    SRC = "oddsapi:totals"
+    LABEL = "the-odds-api · MLB totals (O/U lines)"
     try:
         key = st.secrets["ODDS_API_KEY"]
     except Exception:
+        record_source(SRC, label=LABEL, status="unconfigured",
+                      detail="No ODDS_API_KEY secret. Park-history O/U falls back to no book line.",
+                      max_age_min=60)
         return {}
     if not key:
+        record_source(SRC, label=LABEL, status="unconfigured",
+                      detail="ODDS_API_KEY is empty.",
+                      max_age_min=60)
         return {}
     url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
     params = {"apiKey": key, "regions": "us", "markets": "totals",
@@ -873,7 +1087,10 @@ def get_odds_totals_map() -> dict:
     try:
         r = requests.get(url, params=params, timeout=15); r.raise_for_status()
         data = r.json()
-    except Exception:
+    except Exception as exc:
+        record_source(SRC, label=LABEL, url=url, status="error",
+                      detail=f"Odds fetch failed: {exc}",
+                      max_age_min=60)
         return {}
     # Map full team names from the API back to your 3-letter abbrs.
     # TEAM_INFO is keyed by full team name (e.g. "New York Yankees").
@@ -896,13 +1113,29 @@ def get_odds_totals_map() -> dict:
             lines.sort()
             mid = lines[len(lines)//2]
             out[(away, home)] = mid
+    record_source(SRC, label=LABEL, url=url,
+                  status="live" if out else "error",
+                  detail=f"{len(out)} game O/U lines parsed" if out else "No usable totals in response",
+                  max_age_min=60)
     return out
 
 @st.cache_data(ttl=1800)
 def get_boxscore(game_pk):
     url = f"https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore"
-    r = requests.get(url, headers=HEADERS, timeout=30); r.raise_for_status()
-    return r.json()
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=30); r.raise_for_status()
+        record_source("statsapi:boxscore",
+                      label="MLB StatsAPI · Boxscore + lineups",
+                      url="https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore",
+                      status="live", detail="Live confirmed lineups when posted; projected fallback otherwise.",
+                      max_age_min=20)
+        return r.json()
+    except Exception as exc:
+        record_source("statsapi:boxscore",
+                      label="MLB StatsAPI · Boxscore + lineups",
+                      status="error", detail=f"Boxscore fetch failed: {exc}",
+                      max_age_min=20)
+        raise
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_team_injuries(team_id, team_name=None):
@@ -924,7 +1157,11 @@ def get_team_injuries(team_id, team_name=None):
         r = requests.get(url, params=params, headers=HEADERS, timeout=25)
         r.raise_for_status()
         data = r.json()
-    except Exception:
+    except Exception as exc:
+        record_source("statsapi:injuries",
+                      label="MLB StatsAPI · Roster + IL transactions",
+                      status="error", detail=f"Roster fetch failed: {exc}",
+                      max_age_min=120)
         return []
 
     # Only show MLB-level injuries (10/15/60-day IL + DTD)
@@ -974,6 +1211,12 @@ def get_team_injuries(team_id, team_name=None):
     # Sort: 60-day first, then 15-day, 10-day, day-to-day
     order = {"D60": 0, "D15": 1, "D10": 2, "DTD": 3}
     out.sort(key=lambda x: (order.get(x["status_code"], 9), x["name"]))
+    record_source("statsapi:injuries",
+                  label="MLB StatsAPI · Roster + IL transactions",
+                  url="https://statsapi.mlb.com/api/v1/teams/{team_id}/roster",
+                  status="live",
+                  detail="Live MLB roster status (IL, DTD, etc.).",
+                  max_age_min=120)
     return out
 
 
@@ -1328,10 +1571,26 @@ def _fetch_pitch_arsenal_csv(kind: str, year: int) -> pd.DataFrame:
 
 def load_pitch_arsenal(kind: str) -> pd.DataFrame:
     """Get arsenal data for current year, falling back to prior year if empty."""
+    src_key = f"savant:arsenal:{kind}"
+    label = f"Baseball Savant · Pitch arsenal ({kind})"
     yr = today_ct().year
     df = _fetch_pitch_arsenal_csv(kind, yr)
-    if df.empty or len(df) < 30:  # spring/early-season fallback
+    fell_back = False
+    if df is None or df.empty or len(df) < 30:  # spring/early-season fallback
         df = _fetch_pitch_arsenal_csv(kind, yr - 1)
+        fell_back = True
+    if df is None or df.empty:
+        record_source(src_key, label=label, status="error",
+                      detail="Savant arsenal endpoint returned no rows for current or prior season.",
+                      max_age_min=24 * 60)
+    elif fell_back:
+        record_source(src_key, label=label, status="fallback",
+                      detail=f"Using {yr - 1} arsenal — current season has too few PA so far ({len(df):,} rows).",
+                      max_age_min=24 * 60)
+    else:
+        record_source(src_key, label=label, status="live",
+                      detail=f"{len(df):,} rows · {yr} season",
+                      max_age_min=24 * 60)
     return df
 
 def pitcher_pitch_mix(arsenal_p: pd.DataFrame, player_id) -> pd.DataFrame:
@@ -2469,6 +2728,45 @@ def _spot_rbi_weight(lineup_spot):
     try: return table.get(int(lineup_spot), 30)
     except: return 30
 
+def _summarize_weather_short(weather: dict) -> str:
+    """Compact one-cell weather string for prop tables.
+    e.g. '78°F · W 12 mph out · 10% rain' or 'Dome' when applicable."""
+    if not weather:
+        return "—"
+    temp = weather.get("temp_f")
+    wind = weather.get("wind_mph")
+    wind_dir = weather.get("wind_dir_deg")
+    rain = weather.get("rain_pct")
+    bits = []
+    if temp is not None:
+        try:
+            bits.append(f"{int(round(float(temp)))}°F")
+        except Exception:
+            pass
+    if wind is not None and float(wind) >= 1:
+        try:
+            wmph = int(round(float(wind)))
+            wdir_label = ""
+            if wind_dir is not None:
+                d = float(wind_dir)
+                # Compass to 8-pt
+                dirs = ["N","NE","E","SE","S","SW","W","NW"]
+                wdir_label = dirs[int(((d + 22.5) % 360) // 45)]
+            bits.append(f"{wdir_label} {wmph} mph".strip())
+        except Exception:
+            pass
+    if rain is not None:
+        try:
+            rp = int(round(float(rain)))
+            if rp >= 20:
+                bits.append(f"{rp}% rain")
+        except Exception:
+            pass
+    if not bits:
+        return "—"
+    return " · ".join(bits)
+
+
 def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb"):
     """Build a target-prop sleeper table for either:
        mode="tb"  -> Over 1.5 Total Bases
@@ -2545,14 +2843,27 @@ def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb"):
                     matchup_part = 0.12*n_match + 0.08*n_ceil
                     score = onbase_part + power_part + spot_part + matchup_part
 
+                # Lineup status: "Confirmed" once MLB posts the official
+                # batting order, "Projected" when we infer from recent games,
+                # "Not Posted" if we have nothing.
+                lineup_status = (cc["away_status"] if side == "away"
+                                 else cc["home_status"]) or "Not Posted"
+                # Opposing pitcher handedness — drives platoon edge in props.
+                opp_p_hand = (cc["home_pitch_hand"] if side == "away"
+                              else cc["away_pitch_hand"]) or ""
                 rows.append({
                     "_player_id": r.get("player_id"),
                     "Hitter":   r["player_name"],
                     "Team":     norm_team(r["team"]),
                     "Bat":      r["bat_side"] or "",
                     "Spot":     int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
+                    "LineupStatus": lineup_status,
                     "Game":     g["short_label"],
                     "Opp SP":   opp_pitcher,
+                    "OppHand":  opp_p_hand,
+                    "Park":     g.get("home_abbr", ""),
+                    "ParkFactor": g.get("park_factor", 100),
+                    "Weather":  _summarize_weather_short(cc.get("weather", {})),
                     "Score":    round(score, 1),
                     "AVG":      avg if not pd.isna(avg) else None,
                     "xBA":      xba if not pd.isna(xba) else None,
@@ -2601,6 +2912,19 @@ def render_targets_html(df, mode="tb"):
         ".tg-name { font-weight:800; color:#0f172a; }"
         ".tg-meta { color:#64748b; font-size:.78rem; }"
         ".tg-num { font-variant-numeric: tabular-nums; }"
+        # Lineup-status mini-pills shown inline next to player name.
+        ".tg-lp { display:inline-block; padding:1px 7px; border-radius:999px; "
+        "  font-weight:800; font-size:.66rem; letter-spacing:.04em; "
+        "  margin-left:6px; vertical-align: middle; }"
+        ".tg-lp.confirmed { background:#dcfce7; color:#065f46; }"
+        ".tg-lp.projected { background:#dbeafe; color:#1e3a8a; }"
+        ".tg-lp.notposted { background:#fee2e2; color:#7f1d1d; }"
+        # Park-factor pill colored by neutral / hitter-friendly / pitcher-friendly.
+        ".tg-park { display:inline-block; padding:1px 7px; border-radius:6px; "
+        "  font-weight:700; font-size:.7rem; }"
+        ".tg-park.hot   { background:#fee2e2; color:#7f1d1d; }"
+        ".tg-park.neut  { background:#f1f5f9; color:#334155; }"
+        ".tg-park.cold  { background:#dbeafe; color:#1e3a8a; }"
         "</style>"
     )
 
@@ -2623,26 +2947,66 @@ def render_targets_html(df, mode="tb"):
         try: return f"{float(v):.{n}f}"
         except: return "—"
 
-    # Pick column layout per mode — keep clean (8 metric cols max)
+    # Pick column layout per mode — keep clean (8 metric cols max).
+    # Every layout now includes a Context column (park · weather) so users
+    # see the environmental edge alongside the prop metrics.
     if mode == "tb":
         # TB: AVG, xBA, xSLG, ISO, Barrel%, K%, LD%, Matchup
-        headers = ["#", "Hitter", "Game", "TB Score", "AVG", "xBA", "xSLG", "ISO", "Barrel%", "K%", "Match"]
+        headers = ["#", "Hitter", "Game", "Context", "TB Score", "AVG", "xBA", "xSLG", "ISO", "Barrel%", "K%", "Match"]
     elif mode == "rbi2":
         # 2+ RBI: AVG, xSLG, ISO, Barrel%, HardHit%, K%, Matchup
-        headers = ["#", "Hitter", "Game", "RBI Score", "AVG", "xSLG", "ISO", "Barrel%", "HardHit%", "K%", "Match"]
+        headers = ["#", "Hitter", "Game", "Context", "RBI Score", "AVG", "xSLG", "ISO", "Barrel%", "HardHit%", "K%", "Match"]
     else:
         # HRR: AVG, xBA, xOBP, xSLG, ISO, Barrel%, K%, Matchup
-        headers = ["#", "Hitter", "Game", "HRR Score", "AVG", "xBA", "xOBP", "xSLG", "ISO", "K%", "Match"]
+        headers = ["#", "Hitter", "Game", "Context", "HRR Score", "AVG", "xBA", "xOBP", "xSLG", "ISO", "K%", "Match"]
+
+    def _lineup_pill(status: str) -> str:
+        s = (status or "Not Posted").strip()
+        if s == "Confirmed": return '<span class="tg-lp confirmed">CONF</span>'
+        if s == "Projected": return '<span class="tg-lp projected">PROJ</span>'
+        return '<span class="tg-lp notposted">TBD</span>'
+
+    def _park_chip(abbr: str, factor) -> str:
+        try:
+            f = float(factor)
+        except Exception:
+            f = 100.0
+        cls = "neut"
+        if f >= 105: cls = "hot"
+        elif f <= 95: cls = "cold"
+        return f'<span class="tg-park {cls}">{abbr or "—"} {int(round(f))}</span>'
+
+    def _platoon_marker(bat: str, opp_hand: str) -> str:
+        """Return ★ for a clean platoon edge (LHB vs RHP / RHB vs LHP),
+        ✓ for switch hitters, '' otherwise."""
+        b = (bat or "").upper()[:1]
+        h = (opp_hand or "").upper()[:1]
+        if b == "S": return ' <span title="Switch hitter" style="color:#16a34a;font-weight:900;">⇄</span>'
+        if (b == "L" and h == "R") or (b == "R" and h == "L"):
+            return ' <span title="Platoon edge" style="color:#dc2626;font-weight:900;">★</span>'
+        return ""
 
     rows_html = []
     for i, r in df.iterrows():
         tier_cls, tier_label = _tier(r.get("Score"))
+        lineup_pill = _lineup_pill(r.get("LineupStatus"))
+        opp_hand = (r.get("OppHand") or "").upper()
+        opp_hand_chip = (
+            f'<span style="color:#475569;font-weight:700;font-size:.72rem;'
+            f'margin-left:4px;">({opp_hand}HP)</span>' if opp_hand else ""
+        )
+        platoon = _platoon_marker(r.get("Bat", ""), opp_hand)
+        park_chip = _park_chip(r.get("Park", ""), r.get("ParkFactor", 100))
+        weather_str = r.get("Weather", "—") or "—"
         common = (
             "<tr>"
             f'<td class="tg-num">{i+1}</td>'
-            f'<td><div class="tg-name">{r.get("Hitter","")}</div>'
+            f'<td><div class="tg-name">{r.get("Hitter","")}{platoon}{lineup_pill}</div>'
             f'<div class="tg-meta">{r.get("Team","")} · Bat {r.get("Bat","")} · Spot {r.get("Spot","")}</div></td>'
-            f'<td class="tg-meta">{r.get("Game","")}<br/><span style="color:#475569;">vs {r.get("Opp SP","")}</span></td>'
+            f'<td class="tg-meta">{r.get("Game","")}<br/>'
+            f'<span style="color:#475569;">vs {r.get("Opp SP","")}{opp_hand_chip}</span></td>'
+            f'<td class="tg-meta">{park_chip}<br/>'
+            f'<span style="color:#475569;">{weather_str}</span></td>'
             f'<td><span class="tg-score">{r.get("Score",0):.1f}</span> '
             f'<span class="tg-pill {tier_cls}" style="margin-left:6px;">{tier_label}</span></td>'
         )
@@ -2724,6 +3088,18 @@ def render_brand_bar(slate_count):
         if LOGO_URI else '<span class="brand-logo" style="display:flex;align-items:center;'
                          'justify-content:center;font-size:1.6rem;">👑</span>'
     )
+    # Time-stamp the brand bar with the slate's freshness in Central Time.
+    # Also surface a quick health summary: live / total sources.
+    try:
+        now_ct = datetime.now(MLB_TZ).strftime("%a %b %-d · %-I:%M %p CT")
+    except Exception:
+        now_ct = ""
+    live_n = sum(1 for v in DATA_SOURCES.values() if v.get("status") == "live")
+    total_n = len(DATA_SOURCES)
+    if total_n == 0:
+        health_html = "Live data · Auto-refresh 30 min"
+    else:
+        health_html = f"{live_n}/{total_n} live sources · As of {now_ct}" if now_ct else f"{live_n}/{total_n} live sources"
     st.markdown(f"""
     <div class="brand-bar">
         <div class="brand-left">
@@ -2735,7 +3111,7 @@ def render_brand_bar(slate_count):
         </div>
         <div class="brand-meta">
             <div class="big">{slate_count} {'game' if slate_count == 1 else 'games'} on slate</div>
-            <div>Live data · Auto-refresh 30 min</div>
+            <div>{health_html}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -3196,6 +3572,46 @@ if schedule_df.empty:
     st.warning("No games found for this date.")
     st.stop()
 
+# ---------------------------------------------------------------------------
+# Data-freshness banner (only renders when at least one core source is
+# stale, errored, or fell back). Lets users know up front that some signals
+# may be using older data — no silent staleness.
+# ---------------------------------------------------------------------------
+def _render_freshness_banner():
+    bad = []
+    for key, info in DATA_SOURCES.items():
+        s = info.get("status", "")
+        if s in ("stale", "error", "fallback"):
+            bad.append((key, info))
+        elif s == "live" and source_is_stale(key):
+            bad.append((key, {**info, "status": "stale"}))
+    if not bad:
+        return
+    items_html = []
+    for _, info in bad:
+        bg, fg, txt = status_pill(info.get("status", ""))
+        items_html.append(
+            f'<span style="background:{bg};color:{fg};border-radius:999px;'
+            f'padding:2px 9px;font-size:.72rem;font-weight:800;letter-spacing:.04em;'
+            f'margin-right:6px;">{txt}</span>'
+            f'<b>{info.get("label", "")}</b> '
+            f'<span style="color:#475569;">— {info.get("detail", "") or "see Data status panel"}</span>'
+        )
+    st.markdown(
+        '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:12px;'
+        'padding:10px 14px;margin:6px 0 12px 0;color:#78350f;font-size:.92rem;'
+        'line-height:1.45;">'
+        '<div style="font-weight:900;margin-bottom:4px;">⚠️ Data freshness notice</div>'
+        + "<br/>".join(items_html) +
+        '<div style="margin-top:6px;color:#92400e;font-size:.82rem;">'
+        'Open the <b>📊 Data status &amp; sources</b> panel at the bottom for full '
+        'per-source timestamps. Some prop scores below may use these signals.</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+_render_freshness_banner()
+
 # ===========================================================================
 # 🔥 Hero strip: Top 15 — 2+ RBI Plays Tonight
 # Always rendered at the very top of the slate. A compact, scrollable
@@ -3618,9 +4034,20 @@ if _view == "📊 Total Bases 1.5+":
     else:
         st.markdown(render_targets_html(fdf, mode="tb"), unsafe_allow_html=True)
         st.markdown(
+            render_source_chips([
+                "savant:batters", "savant:pitchers",
+                "statsapi:schedule", "statsapi:boxscore",
+                "openmeteo:weather",
+            ]),
+            unsafe_allow_html=True,
+        )
+        st.markdown(
             '<div style="margin: 6px 0 4px 0; color:#64748b; font-size:.82rem;">'
             'Tiers — Elite ≥75 · Strong ≥65 · Average ≥55 · Soft <55. '
-            'Sort: TB Score ↓.'
+            'Sort: TB Score ↓. '
+            'Pills next to a hitter: <b>CONF</b> = MLB has posted the lineup, '
+            '<b>PROJ</b> = inferred from recent games, <b>TBD</b> = not yet known. '
+            '★ marks a platoon edge (LHB vs RHP / RHB vs LHP).'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -3698,9 +4125,19 @@ if _view == "🎯 HRR 1.5+":
     else:
         st.markdown(render_targets_html(fdf, mode="hrr"), unsafe_allow_html=True)
         st.markdown(
+            render_source_chips([
+                "savant:batters", "savant:pitchers",
+                "statsapi:schedule", "statsapi:boxscore",
+                "openmeteo:weather",
+            ]),
+            unsafe_allow_html=True,
+        )
+        st.markdown(
             '<div style="margin: 6px 0 4px 0; color:#64748b; font-size:.82rem;">'
             'Tiers — Elite ≥75 · Strong ≥65 · Average ≥55 · Soft <55. '
-            'Sort: HRR Score ↓.'
+            'Sort: HRR Score ↓. '
+            'Pills: <b>CONF</b>/<b>PROJ</b>/<b>TBD</b> for lineup status. '
+            '★ = platoon edge.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -3778,9 +4215,19 @@ if _view == "🔥 2+ RBI":
     else:
         st.markdown(render_targets_html(fdf, mode="rbi2"), unsafe_allow_html=True)
         st.markdown(
+            render_source_chips([
+                "savant:batters", "savant:pitchers",
+                "statsapi:schedule", "statsapi:boxscore",
+                "openmeteo:weather",
+            ]),
+            unsafe_allow_html=True,
+        )
+        st.markdown(
             '<div style="margin: 6px 0 4px 0; color:#64748b; font-size:.82rem;">'
             'Tiers — Elite ≥75 · Strong ≥65 · Average ≥55 · Soft <55. '
-            'Sort: RBI Score ↓.'
+            'Sort: RBI Score ↓. '
+            'Pills: <b>CONF</b>/<b>PROJ</b>/<b>TBD</b> for lineup status. '
+            '★ = platoon edge.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -4173,11 +4620,72 @@ with tab_injuries:
         st.warning(f"Couldn't load injuries: {_inj_e}")
 
 # ----- Data status -----
+def _render_data_status_table() -> str:
+    """Render the full per-source freshness table as styled HTML."""
+    if not DATA_SOURCES:
+        return '<div style="color:#64748b;">No data-source telemetry recorded yet.</div>'
+
+    css = (
+        "<style>"
+        ".ds-tbl { width:100%; border-collapse: separate; border-spacing:0; "
+        "  font-size:.92rem; background:#fff; border-radius:12px; overflow:hidden; "
+        "  box-shadow: 0 2px 10px rgba(15,23,42,.06); margin: 6px 0 4px 0; }"
+        ".ds-tbl th { background:#0f3a2e; color:#fcd34d; text-align:left; "
+        "  font-weight:800; padding:9px 10px; letter-spacing:.03em; font-size:.78rem; "
+        "  text-transform:uppercase; }"
+        ".ds-tbl td { padding:8px 10px; border-bottom:1px solid #f1f5f9; "
+        "  color:#0f172a; vertical-align: top; }"
+        ".ds-tbl tr:nth-child(even) td { background:#fafafa; }"
+        ".ds-pill { display:inline-block; padding:3px 9px; border-radius:999px; "
+        "  font-weight:800; font-size:.74rem; letter-spacing:.04em; "
+        "  white-space:nowrap; }"
+        ".ds-detail { color:#475569; font-size:.82rem; line-height:1.35; }"
+        "</style>"
+    )
+    rows_html = []
+    # Stable order: live first, then fallback, stale, error, unconfigured.
+    order = {"live": 0, "fallback": 1, "stale": 2, "error": 3, "unconfigured": 4}
+    items = sorted(
+        DATA_SOURCES.items(),
+        key=lambda kv: (order.get(kv[1].get("status", ""), 9), kv[1].get("label", kv[0]))
+    )
+    for key, info in items:
+        bg, fg, txt = status_pill(info.get("status", ""))
+        pill = (f'<span class="ds-pill" style="background:{bg};color:{fg};">{txt}</span>')
+        age = source_age_minutes(key)
+        age_str = fmt_age(age) if age is not None else "—"
+        rows_html.append(
+            "<tr>"
+            f'<td><b>{info.get("label", key)}</b></td>'
+            f'<td>{pill}</td>'
+            f'<td class="ds-detail">{age_str}</td>'
+            f'<td class="ds-detail">{info.get("detail", "") or "—"}</td>'
+            "</tr>"
+        )
+    return css + (
+        '<table class="ds-tbl">'
+        '<thead><tr><th>Source</th><th>Status</th><th>Last fetched</th>'
+        '<th>Detail</th></tr></thead>'
+        f'<tbody>{"".join(rows_html)}</tbody></table>'
+    )
+
+
 with st.expander("📊 Data status & sources", expanded=False):
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1: st.metric("Batters loaded", len(batters_df))
     with c2: st.metric("Pitchers loaded", len(pitchers_df))
-    st.caption("Source: raw GitHub URLs (auto-refresh 30 min). Update data by committing new CSVs to the repo and clicking Refresh data.")
+    with c3:
+        live_n = sum(1 for v in DATA_SOURCES.values() if v.get("status") == "live")
+        st.metric("Live sources", f"{live_n}/{len(DATA_SOURCES)}")
+    st.markdown(_render_data_status_table(), unsafe_allow_html=True)
+    st.caption(
+        "Status legend: **LIVE** = fresh fetch this session · **FALLBACK** = using "
+        "prior-season or projected data because the live feed is not yet usable · "
+        "**STALE** = data older than its refresh budget · **ERROR** = fetch failed · "
+        "**OFF** = optional source (e.g. odds API) not configured. Use the 🔄 Refresh "
+        "data button up top to force a re-pull."
+    )
+    st.markdown("**Source URLs:**")
     for label, url in CSV_URLS.items():
         st.markdown(f"- **{label}**: [{CSV_FILES[label]}]({url})")
 

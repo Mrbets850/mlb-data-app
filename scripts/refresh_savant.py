@@ -62,8 +62,12 @@ TARGETS = [
     ),
     (
         "Data:savant_pitchers.csv.csv",
+        # min=1 (>=1 batter faced) instead of min=q so the slate-pitchers
+        # board has data for every probable starter, not just qualified
+        # workhorses. Qualified-only filter caps the leaderboard at ~80
+        # pitchers and leaves the majority of slate starters with blanks.
         "https://baseballsavant.mlb.com/leaderboard/custom?"
-        "year={year}&type=pitcher&filter=&sort=4&sortDir=desc&min=q"
+        "year={year}&type=pitcher&filter=&sort=4&sortDir=desc&min=1"
         "&selections=pa,hit,single,double,triple,home_run,strikeout,walk,"
         "k_percent,bb_percent,batting_avg,slg_percent,on_base_percent,"
         "on_base_plus_slg,isolated_power,xba,xslg,woba,xwoba,xobp,xiso,"
@@ -86,8 +90,10 @@ TARGETS = [
     ),
     (
         "Data:savant_pitcher_stats.csv",
+        # min=1 — see note on Data:savant_pitchers.csv.csv above. This
+        # leaderboard is the primary data source for the Slate Pitchers tab.
         "https://baseballsavant.mlb.com/leaderboard/custom?"
-        "year={year}&type=pitcher&filter=&sort=4&sortDir=desc&min=q"
+        "year={year}&type=pitcher&filter=&sort=4&sortDir=desc&min=1"
         "&selections=pa,k_percent,bb_percent,batting_avg,slg_percent,"
         "on_base_percent,on_base_plus_slg,xba,xslg,woba,xwoba,xobp,"
         "exit_velocity_avg,launch_angle_avg,sweet_spot_percent,"

@@ -2193,6 +2193,76 @@ def _fetch_pitcher_throws(player_id: int) -> str:
     except Exception:
         return ""
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def _fetch_pitcher_season_stats(player_id: int, season: int) -> dict:
+    """Fall back to MLB StatsAPI per-pitcher season pitching stats when the
+    Savant leaderboard has no row for this pitcher (e.g. first big-league
+    appearance, very small sample, recent call-up). StatsAPI exposes K%, BB%,
+    IP, ERA, WHIP, BAA from box-score totals — nowhere near the depth of
+    Statcast but a real number is always better than a blank.
+
+    Returns a dict with canonical app keys ('K%', 'BB%', etc.) so callers can
+    treat it as a partial Savant row."""
+    if not player_id:
+        return {}
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{int(player_id)}/stats",
+            params={"stats": "season", "group": "pitching", "season": int(season)},
+            headers=HEADERS, timeout=15,
+        )
+        r.raise_for_status()
+        stats = r.json().get("stats", [])
+        if not stats:
+            return {}
+        splits = stats[0].get("splits", [])
+        if not splits:
+            return {}
+        s = splits[0].get("stat", {}) or {}
+
+        def _pct(s_val):
+            if s_val in (None, "", "-.--"):
+                return None
+            try:
+                # StatsAPI returns "23.4" for percentages, sometimes ".234"
+                x = float(s_val)
+                return x * 100.0 if x <= 1.0 else x
+            except Exception:
+                return None
+
+        def _f(s_val):
+            if s_val in (None, "", "-.--"):
+                return None
+            try: return float(s_val)
+            except Exception: return None
+
+        ip = _f(s.get("inningsPitched"))
+        bf = s.get("battersFaced")
+        try: bf = int(bf) if bf is not None else None
+        except Exception: bf = None
+        out = {
+            "K%":   _pct(s.get("strikeoutsPer9Inn")) and None,  # we'll compute below
+            "BB%":  _pct(s.get("walksPer9Inn")) and None,
+            "IP":   ip,
+            "ERA":  _f(s.get("era")),
+            "WHIP": _f(s.get("whip")),
+            "BAA":  _f(s.get("avg")),
+            "BF":   bf,
+        }
+        # Compute K% / BB% from raw counts since StatsAPI doesn't ship them
+        # directly. Falls back to per-9 rates when batters-faced isn't published.
+        try:
+            so = int(s.get("strikeOuts") or 0)
+            bb = int(s.get("baseOnBalls") or 0)
+            if bf and bf > 0:
+                out["K%"]  = round(100.0 * so / bf, 1)
+                out["BB%"] = round(100.0 * bb / bf, 1)
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return {}
+
 def _coerce_pct_or_decimal(v):
     """Savant CSV percentages can come through as either '0.265' (decimal-of-1)
     or '26.5' (already a percent). Normalize so anything <= 1.0 is treated as a
@@ -2220,8 +2290,14 @@ def _slate_pitcher_lookup(pitcher_stats_df: pd.DataFrame, player_id: int) -> dic
     return match.iloc[0].to_dict()
 
 def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
-    """Build one display row for the Slate Pitchers table by joining the
-    schedule's probable-pitcher id to the Savant pitcher_stats CSV."""
+    """Build one display row for the Slate Pitchers table.
+
+    Data hierarchy per pitcher:
+      1. Baseball Savant 2026 leaderboard (Statcast / xwOBA / Whiff% / Barrel%)
+      2. MLB StatsAPI 2026 season pitching totals (K%, BB%, IP, ERA, WHIP)
+         used to fill K%/BB% blanks when a pitcher has no Savant row yet.
+      3. No data — emit None so the renderer shows '—', never a fake constant.
+    """
     pid = game_row.get(f"{side}_probable_id")
     pname = game_row.get(f"{side}_probable") or ""
     if not pid or pname in ("", "TBD"):
@@ -2252,13 +2328,29 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
     meatball = _g("meatball_percent")
     barrel = _g("Barrel%")
     hardhit = _g("HardHit%")
-    sweet  = _g("SweetSpot%")
     fb_pct = _g("FB%")
     gb_pct = _g("GB%")
-    ev_best   = _g("avg_best_speed")
-    ev_hyper  = _g("avg_hyper_speed")
 
-    # SwStr% (true): swing-rate × whiff-on-swing.
+    have_savant = bool(stat) and (xwoba is not None or whiff is not None or k_pct is not None)
+
+    # StatsAPI: ALWAYS fetched for the per-pitcher season totals (IP, ERA,
+    # WHIP) — these don't appear in the Savant leaderboard but are baseline
+    # prop context every prop bettor expects. K%/BB% are only used as a
+    # fallback when Savant doesn't have them, since Savant's percent is
+    # computed off plate appearances and is the more accurate one.
+    season_year = 2026
+    api_stats = _fetch_pitcher_season_stats(int(pid), season_year)
+    if k_pct is None:
+        k_pct = api_stats.get("K%")
+    if bb_pct is None:
+        bb_pct = api_stats.get("BB%")
+
+    ip   = api_stats.get("IP")
+    era  = api_stats.get("ERA")
+    whip = api_stats.get("WHIP")
+    bf   = api_stats.get("BF")
+
+    # SwStr% (true): swing-rate × whiff-on-swing. Only computable from Savant.
     sw_str = (swing / 100.0) * (whiff / 100.0) * 100.0 if (swing is not None and whiff is not None) else None
     # CSW% proxy: called-strike + whiff. The CSV doesn't expose called-strike
     # rate directly; use first-pitch-strike rate * (1 - whiff fraction) as a
@@ -2270,40 +2362,66 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
         csw_proxy = None
 
     # ---- composite scores (higher = stronger pitcher) ----
-    def _norm(v, lo, hi, reverse=False, default=50.0):
+    # Returns None when the input is missing so we never blend a real number
+    # with a placeholder 50.0 — the score is either grounded in real data or
+    # it's '—'.
+    def _norm(v, lo, hi, reverse=False):
         if v is None:
-            return default
+            return None
         try:
             x = float(v)
         except Exception:
-            return default
+            return None
         x = max(lo, min(hi, x))
         pct = (x - lo) / (hi - lo) * 100.0
         return 100.0 - pct if reverse else pct
 
+    def _weighted(parts):
+        """Weighted average over the parts that aren't None.
+        parts is a list of (weight, normalized_value_or_None).
+        Returns (score, weight_used) so callers can require >= 0.6 coverage
+        before publishing the score."""
+        num = 0.0; den = 0.0
+        for w, v in parts:
+            if v is None: continue
+            num += w * v; den += w
+        if den == 0:
+            return None, 0.0
+        return num / den, den
+
     # Convert xwoba like 0.265 -> 265 for normalization.
     xwoba_scaled = (xwoba * 1000.0) if (xwoba is not None and xwoba <= 1.0) else xwoba
-    woba_scaled  = (woba  * 1000.0) if (woba  is not None and woba  <= 1.0) else woba
 
-    # 35% xwOBA-against (lower good) + 25% K-BB% (higher) + 20% Whiff% (higher)
-    # + 20% Barrel%-against (lower good)
-    pitch_score = round(
-        0.35 * _norm(xwoba_scaled, 250.0, 360.0, reverse=True)
-        + 0.25 * _norm((k_pct or 0) - (bb_pct or 0), 5.0, 25.0)
-        + 0.20 * _norm(whiff, 18.0, 33.0)
-        + 0.20 * _norm(barrel, 4.0, 12.0, reverse=True),
-        1,
-    )
-    strikeout_score = round(
-        0.55 * _norm(k_pct,  18.0, 32.0)
-        + 0.45 * _norm(whiff, 18.0, 33.0),
-        1,
-    )
+    # Pitch Score: 35% xwOBA-against (lower good) + 25% K-BB% (higher) +
+    # 20% Whiff% (higher) + 20% Barrel%-against (lower good). Require ≥60%
+    # weight to publish so a starter with only K%/BB% from StatsAPI can't
+    # generate a misleading "63.0" Pitch Score.
+    kbb_norm = None
+    if k_pct is not None and bb_pct is not None:
+        kbb_norm = _norm(k_pct - bb_pct, 5.0, 25.0)
+    parts = [
+        (0.35, _norm(xwoba_scaled, 250.0, 360.0, reverse=True)),
+        (0.25, kbb_norm),
+        (0.20, _norm(whiff, 18.0, 33.0)),
+        (0.20, _norm(barrel, 4.0, 12.0, reverse=True)),
+    ]
+    raw_pitch, w_pitch = _weighted(parts)
+    pitch_score = round(raw_pitch, 1) if (raw_pitch is not None and w_pitch >= 0.60) else None
+
+    k_parts = [
+        (0.55, _norm(k_pct, 18.0, 32.0)),
+        (0.45, _norm(whiff, 18.0, 33.0)),
+    ]
+    raw_k, w_k = _weighted(k_parts)
+    # K% alone (StatsAPI fallback) is enough; require any input.
+    strikeout_score = round(raw_k, 1) if (raw_k is not None and w_k >= 0.45) else None
 
     if side == "away":
         team_id = game_row["away_id"]; team_abbr = game_row["away_abbr"]; loc_marker = "@"
+        opp_abbr = game_row["home_abbr"]
     else:
         team_id = game_row["home_id"]; team_abbr = game_row["home_abbr"]; loc_marker = "vs"
+        opp_abbr = game_row["away_abbr"]
 
     def _r(v, n=1):
         if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -2311,13 +2429,39 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
         try: return round(float(v), n)
         except Exception: return None
 
+    # Sample size + source classification.
+    if have_savant:
+        try:
+            pa_int = int(pa) if pa is not None else 0
+        except Exception:
+            pa_int = 0
+        if pa_int >= 75:
+            source_tag = "Savant"
+        elif pa_int >= 25:
+            source_tag = "Savant·sm"   # small Statcast sample
+        else:
+            source_tag = "Savant·xs"   # very small Statcast sample
+    elif api_stats:
+        source_tag = "StatsAPI"
+    else:
+        source_tag = "No sample"
+
+    sample = None
+    if pa is not None:
+        try: sample = int(pa)
+        except Exception: sample = None
+    if sample is None and bf is not None:
+        sample = int(bf)
+
     return {
         "_logo": logo_url(team_id) if team_id else "",
         "_player_id": int(pid),
+        "_source_tag": source_tag,
         "Loc": loc_marker,
         "Team": team_abbr,
         "Pitcher": pname,
         "Throws": throws,
+        "Opp": opp_abbr,
         "Game": game_row["short_label"],
         "Time": game_row["time_short"],
         "Pitch Score": pitch_score,
@@ -2336,7 +2480,11 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
         "FB%": _r(fb_pct, 1),
         "GB%": _r(gb_pct, 1),
         "Meatball%": _r(meatball, 1),
-        "PA": int(pa) if pa is not None else None,
+        "IP": _r(ip, 1),
+        "ERA": _r(era, 2),
+        "WHIP": _r(whip, 2),
+        "PA": sample,
+        "Source": source_tag,
     }
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -2395,6 +2543,8 @@ SLATE_PITCHER_HEATMAP = {
     "FB%":             (30.0, 48.0,   False),
     "GB%":             (38.0, 55.0,   False),
     "Meatball%":       (5.0,  9.0,    True),
+    "ERA":             (2.50, 5.50,   True),
+    "WHIP":            (1.00, 1.50,   True),
 }
 
 SLATE_PITCHER_FORMAT = {
@@ -2405,7 +2555,8 @@ SLATE_PITCHER_FORMAT = {
     "F-Strike%": "{:.1f}", "Zone%": "{:.1f}",
     "Barrel%": "{:.1f}", "HH%": "{:.1f}",
     "FB%": "{:.1f}", "GB%": "{:.1f}", "Meatball%": "{:.1f}",
-    "PA": "{:.0f}",
+    "PA": "{:.0f}", "IP": "{:.1f}",
+    "ERA": "{:.2f}", "WHIP": "{:.2f}",
 }
 
 def render_slate_pitcher_html(df, schedule_df=None):
@@ -2423,7 +2574,19 @@ def render_slate_pitcher_html(df, schedule_df=None):
         for i, srow in schedule_df.reset_index(drop=True).iterrows():
             label_to_idx[str(srow.get("short_label", ""))] = i
 
-    show_cols = [c for c in df.columns if not c.startswith("_") and c != "Loc"]
+    # Preferred display order. Anything in the DataFrame that isn't listed
+    # here gets appended at the end (keeps the table forward-compatible if
+    # we add new metrics later).
+    PREFERRED = [
+        "Team", "Pitcher", "Throws", "Opp", "Time", "Source",
+        "Pitch Score", "Strikeout Score",
+        "xwOBA", "wOBA", "K%", "BB%",
+        "Whiff%", "SwStr%", "CSW%*", "F-Strike%", "Zone%",
+        "Barrel%", "HH%", "FB%", "GB%", "Meatball%",
+        "ERA", "WHIP", "IP", "PA", "Game",
+    ]
+    available = [c for c in df.columns if not c.startswith("_") and c != "Loc"]
+    show_cols = [c for c in PREFERRED if c in available] + [c for c in available if c not in PREFERRED]
     css = (
         "<style>"
         ".sp-wrap { overflow-x:auto; border-radius:14px; border:1px solid #e2e8f0; "
@@ -2449,6 +2612,14 @@ def render_slate_pitcher_html(df, schedule_df=None):
         ".sp-na { color:#94a3b8; }"
         ".sp-empty { padding:14px 18px; color:#64748b; background:#f8fafc; border-radius:14px; "
         "  border:1px dashed #cbd5e1; }"
+        ".sp-src { display:inline-block; padding: 2px 8px; border-radius: 999px; "
+        "  font-size: .68rem; font-weight: 800; letter-spacing: .04em; "
+        "  text-transform: uppercase; line-height: 1.4; }"
+        ".sp-src-savant   { background:#dcfce7; color:#166534; border:1px solid #86efac; }"
+        ".sp-src-savant-sm{ background:#fef3c7; color:#854d0e; border:1px solid #fde68a; }"
+        ".sp-src-savant-xs{ background:#ffedd5; color:#9a3412; border:1px solid #fed7aa; }"
+        ".sp-src-statsapi { background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe; }"
+        ".sp-src-none     { background:#f1f5f9; color:#64748b; border:1px solid #cbd5e1; }"
         "</style>"
     )
 
@@ -2492,8 +2663,30 @@ def render_slate_pitcher_html(df, schedule_df=None):
                 else:
                     cells.append(f'<td class="sp-pitcher">{v}</td>')
                 continue
-            if c in ("Throws", "Game", "Time"):
+            if c in ("Throws", "Game", "Time", "Opp"):
                 cells.append(f"<td>{v if v not in (None, '') else '<span class=\"sp-na\">—</span>'}</td>")
+                continue
+            if c == "Source":
+                tag = str(v or "")
+                cls_map = {
+                    "Savant":     "sp-src-savant",
+                    "Savant·sm":  "sp-src-savant-sm",
+                    "Savant·xs":  "sp-src-savant-xs",
+                    "StatsAPI":   "sp-src-statsapi",
+                    "No sample":  "sp-src-none",
+                }
+                cls = cls_map.get(tag, "sp-src-none")
+                title_map = {
+                    "Savant":     "Baseball Savant 2026 (Statcast, ≥75 BF)",
+                    "Savant·sm":  "Baseball Savant 2026 (small sample, 25–74 BF)",
+                    "Savant·xs":  "Baseball Savant 2026 (very small sample, <25 BF)",
+                    "StatsAPI":   "MLB StatsAPI 2026 season totals (no Statcast yet)",
+                    "No sample":  "No 2026 sample available",
+                }
+                title = title_map.get(tag, "")
+                cells.append(
+                    f'<td><span class="sp-src {cls}" title="{title}">{tag or "—"}</span></td>'
+                )
                 continue
             # Numeric / heatmap column.
             if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -4045,13 +4238,31 @@ if _view == "🥎 Slate Pitchers":
                 sp_df_filtered["PA"].fillna(-1).astype(float) >= float(_min_pa)
             ]
 
-        # Highlight if any pitcher couldn't be matched to the CSV (use unfiltered df).
-        unmatched = sp_df[sp_df["xwOBA"].isna() & sp_df["K%"].isna()]
+        # Coverage summary — one chip per data tier so the user can see at a
+        # glance how much of the slate is grounded in real Statcast data.
+        if "Source" in sp_df.columns:
+            counts = sp_df["Source"].fillna("No sample").value_counts().to_dict()
+            total = int(sum(counts.values()))
+            def _ct(tag): return int(counts.get(tag, 0))
+            n_savant = _ct("Savant") + _ct("Savant·sm") + _ct("Savant·xs")
+            n_api    = _ct("StatsAPI")
+            n_none   = _ct("No sample")
+            st.markdown(
+                f'<div style="margin: 4px 0 10px 0; font-size:.85rem; color:#334155;">'
+                f'<b>{total}</b> probable starters · '
+                f'<span style="color:#166534;">●</span> {n_savant} Savant 2026 · '
+                f'<span style="color:#1e40af;">●</span> {n_api} StatsAPI fallback · '
+                f'<span style="color:#64748b;">●</span> {n_none} no sample'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        # Highlight if any pitcher couldn't be matched to ANY 2026 source.
+        unmatched = sp_df[sp_df["Source"] == "No sample"] if "Source" in sp_df.columns else pd.DataFrame()
         if not unmatched.empty and not _hide_unmatched:
             names = ", ".join(unmatched["Pitcher"].astype(str).tolist())
             st.caption(
-                f"⚠️ No Savant CSV row found for: **{names}**. They’ll appear with blank metrics. "
-                "Update `Data:savant_pitcher_stats.csv` to include them."
+                f"ℹ️ No 2026 sample yet for: **{names}**. Likely a season debut "
+                "or recent call-up — metrics will populate after their first appearance."
             )
         if sp_df_filtered.empty:
             st.info("No pitchers match the current filters. Try lowering Min PA or unchecking Hide TBD.")
@@ -4059,11 +4270,14 @@ if _view == "🥎 Slate Pitchers":
         st.markdown(
             '<div class="sp-legend">'
             'Sorted by <code>↓ Pitch Score</code> (35% xwOBA-against · 25% K-BB% · '
-            '20% Whiff% · 20% Barrel%-against). Green = stronger pitcher, red = weaker. '
-            '<code>SwStr%</code> is computed as Swing% × Whiff%. '
-            '<code>CSW%*</code> is a proxy (called-strike portion estimated from F-Strike% '
-            '× take-rate, plus SwStr%). All other metrics are direct from your '
-            '<code>savant_pitcher_stats.csv</code>.'
+            '20% Whiff% · 20% Barrel%-against). Pitch Score is only published when '
+            '≥60% of those inputs are real (no placeholder fills). Green = stronger '
+            'pitcher, red = weaker. <code>SwStr%</code> = Swing% × Whiff%. '
+            '<code>CSW%*</code> is a proxy (F-Strike% × take-rate, plus SwStr%). '
+            'Source chip shows where each row’s data came from: '
+            '<b>Savant</b> 2026 (Statcast), <b>Savant·sm</b>/<b>·xs</b> (small sample), '
+            '<b>StatsAPI</b> fallback (season totals only — fills K%, BB%, ERA, WHIP, IP), '
+            'or <b>No sample</b> (— shown across the row).'
             '</div>',
             unsafe_allow_html=True,
         )

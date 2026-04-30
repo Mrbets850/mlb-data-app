@@ -2307,9 +2307,7 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
 
     # standardize_columns has already mapped raw Savant columns to canonical
     # names where possible: K%, BB%, xwOBA, wOBA, Whiff%, Swing%, Barrel%,
-    # HardHit%, FB%, GB%, SweetSpot%. Things it leaves alone (CSV-only):
-    # f_strike_percent, in_zone_percent, meatball_percent, avg_best_speed,
-    # avg_hyper_speed.
+    # HardHit%, FB%, GB%, SweetSpot%.
     def _g(key):
         if not stat:
             return None
@@ -2323,9 +2321,6 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
     xwoba  = _g("xwOBA")
     whiff  = _g("Whiff%")
     swing  = _g("Swing%")
-    fstrike = _g("f_strike_percent")
-    in_zone = _g("in_zone_percent")
-    meatball = _g("meatball_percent")
     barrel = _g("Barrel%")
     hardhit = _g("HardHit%")
     fb_pct = _g("FB%")
@@ -2352,14 +2347,6 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
 
     # SwStr% (true): swing-rate × whiff-on-swing. Only computable from Savant.
     sw_str = (swing / 100.0) * (whiff / 100.0) * 100.0 if (swing is not None and whiff is not None) else None
-    # CSW% proxy: called-strike + whiff. The CSV doesn't expose called-strike
-    # rate directly; use first-pitch-strike rate * (1 - whiff fraction) as a
-    # rough called-strike proxy, then add SwStr.
-    if (fstrike is not None) and (whiff is not None) and (swing is not None):
-        called_proxy = fstrike * (1.0 - swing / 100.0)
-        csw_proxy = called_proxy + (sw_str or 0.0)
-    else:
-        csw_proxy = None
 
     # ---- composite scores (higher = stronger pitcher) ----
     # Returns None when the input is missing so we never blend a real number
@@ -2472,14 +2459,10 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
         "BB%": _r(bb_pct, 1),
         "Whiff%": _r(whiff, 1),
         "SwStr%": _r(sw_str, 1),
-        "CSW%*": _r(csw_proxy, 1),
-        "F-Strike%": _r(fstrike, 1),
-        "Zone%": _r(in_zone, 1),
         "Barrel%": _r(barrel, 1),
         "HH%": _r(hardhit, 1),
         "FB%": _r(fb_pct, 1),
         "GB%": _r(gb_pct, 1),
-        "Meatball%": _r(meatball, 1),
         "IP": _r(ip, 1),
         "ERA": _r(era, 2),
         "WHIP": _r(whip, 2),
@@ -2535,14 +2518,10 @@ SLATE_PITCHER_HEATMAP = {
     "BB%":             (5.0,  11.0,   True),
     "Whiff%":          (20.0, 32.0,   False),
     "SwStr%":          (9.0,  15.0,   False),
-    "CSW%*":           (28.0, 34.0,   False),
-    "F-Strike%":       (58.0, 68.0,   False),
-    "Zone%":           (40.0, 52.0,   False),
     "Barrel%":         (4.0,  12.0,   True),
     "HH%":             (32.0, 45.0,   True),
     "FB%":             (30.0, 48.0,   False),
     "GB%":             (38.0, 55.0,   False),
-    "Meatball%":       (5.0,  9.0,    True),
     "ERA":             (2.50, 5.50,   True),
     "WHIP":            (1.00, 1.50,   True),
 }
@@ -2551,10 +2530,9 @@ SLATE_PITCHER_FORMAT = {
     "Pitch Score": "{:.1f}", "Strikeout Score": "{:.1f}",
     "xwOBA": "{:.3f}", "wOBA": "{:.3f}",
     "K%": "{:.1f}", "BB%": "{:.1f}",
-    "Whiff%": "{:.1f}", "SwStr%": "{:.1f}", "CSW%*": "{:.1f}",
-    "F-Strike%": "{:.1f}", "Zone%": "{:.1f}",
+    "Whiff%": "{:.1f}", "SwStr%": "{:.1f}",
     "Barrel%": "{:.1f}", "HH%": "{:.1f}",
-    "FB%": "{:.1f}", "GB%": "{:.1f}", "Meatball%": "{:.1f}",
+    "FB%": "{:.1f}", "GB%": "{:.1f}",
     "PA": "{:.0f}", "IP": "{:.1f}",
     "ERA": "{:.2f}", "WHIP": "{:.2f}",
 }
@@ -2581,11 +2559,32 @@ def render_slate_pitcher_html(df, schedule_df=None):
         "Team", "Pitcher", "Throws", "Opp", "Time", "Source",
         "Pitch Score", "Strikeout Score",
         "xwOBA", "wOBA", "K%", "BB%",
-        "Whiff%", "SwStr%", "CSW%*", "F-Strike%", "Zone%",
-        "Barrel%", "HH%", "FB%", "GB%", "Meatball%",
+        "Whiff%", "SwStr%",
+        "Barrel%", "HH%", "FB%", "GB%",
         "ERA", "WHIP", "IP", "PA", "Game",
     ]
     available = [c for c in df.columns if not c.startswith("_") and c != "Loc"]
+    # Hide any column that is fully blank across the slate so unpopulated metrics
+    # don't render as a wall of "—". Identity/context columns are always kept so
+    # rows still anchor visually even when their numeric metrics are empty.
+    _always_keep = {"Team", "Pitcher", "Throws", "Opp", "Time", "Game", "Source"}
+    def _col_has_data(col):
+        if col in _always_keep:
+            return True
+        s = df[col]
+        try:
+            non_null = s.dropna()
+        except Exception:
+            return True
+        if non_null.empty:
+            return False
+        # Treat empty strings as missing for object columns.
+        if non_null.dtype == object:
+            non_null = non_null[non_null.astype(str).str.strip() != ""]
+            if non_null.empty:
+                return False
+        return True
+    available = [c for c in available if _col_has_data(c)]
     show_cols = [c for c in PREFERRED if c in available] + [c for c in available if c not in PREFERRED]
     css = (
         "<style>"
@@ -4273,7 +4272,6 @@ if _view == "🥎 Slate Pitchers":
             '20% Whiff% · 20% Barrel%-against). Pitch Score is only published when '
             '≥60% of those inputs are real (no placeholder fills). Green = stronger '
             'pitcher, red = weaker. <code>SwStr%</code> = Swing% × Whiff%. '
-            '<code>CSW%*</code> is a proxy (F-Strike% × take-rate, plus SwStr%). '
             'Source chip shows where each row’s data came from: '
             '<b>Savant</b> 2026 (Statcast), <b>Savant·sm</b>/<b>·xs</b> (small sample), '
             '<b>StatsAPI</b> fallback (season totals only — fills K%, BB%, ERA, WHIP, IP), '

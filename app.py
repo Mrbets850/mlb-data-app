@@ -4192,7 +4192,7 @@ if _qp_view is None:
 st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
 _view = st.radio(
     "View",
-    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI"],
+    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI", "🤖 AI HR Parlay"],
     horizontal=True,
     label_visibility="collapsed",
     key="top_view_tab",
@@ -4640,6 +4640,369 @@ if _view == "🔥 2+ RBI":
             file_name=f"rbi_targets_{selected_date}.csv",
             mime="text/csv",
             use_container_width=False,
+        )
+    st.stop()
+
+# ============== AI HR Parlay view ==============
+# Builds 2-leg and 3-leg HR parlays from the HR Sleepers candidate pool. The
+# selection is fully deterministic (no external LLM required) but reads as an
+# "AI recommendation engine": rank by Sleeper Score, apply a risk profile, and
+# then surface short data-driven reasons per leg from the underlying signals
+# (Barrel%, HardHit%, ISO, FB%, Pull%, Matchup, Ceiling, kHR, lineup spot,
+# season HR total, opposing pitcher).
+if _view == "🤖 AI HR Parlay":
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '🤖 AI HR Parlay Generator</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Two- and three-leg home run parlays built from the slate model. Picks '
+        'rank by <b>HR Sleeper Score</b> (Barrel%, HardHit%, ISO, FB%, Pull%, '
+        'matchup vs opposing SP, park, weather, lineup spot) and are filtered '
+        'by your risk profile. Each leg shows the data-driven reasons it was '
+        'selected.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if batters_df.empty:
+        st.warning("Batter CSV (`Data:savant_batters.csv.csv`) hasn’t loaded yet.")
+        st.stop()
+
+    with st.spinner("Scoring HR candidates across the slate…"):
+        ai_pool_df = build_hr_sleepers_table(schedule_df, batters_df, pitchers_df)
+
+    if ai_pool_df is None or ai_pool_df.empty:
+        st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
+        st.stop()
+
+    # ---- Controls ----
+    c_cols = st.columns([1.4, 1.0, 1.0, 1.0, 1.0])
+    with c_cols[0]:
+        _risk = st.radio(
+            "Risk profile",
+            ["Safer", "Balanced", "Aggressive"],
+            index=1,
+            horizontal=True,
+            key="ai_parlay_risk",
+            help=(
+                "Safer: only Strong+ candidates, max season-HR total relaxed, "
+                "spots 1-6. Balanced: default sleeper view. "
+                "Aggressive: pulls deeper sleepers (lower spots, more upside, more variance)."
+            ),
+        )
+    with c_cols[1]:
+        _avoid_same_game = st.checkbox(
+            "Avoid same game", value=True, key="ai_parlay_avoid_game",
+            help="Prevent two legs from the same game (correlation/blow-up risk).",
+        )
+    with c_cols[2]:
+        _avoid_same_team = st.checkbox(
+            "Avoid same team", value=True, key="ai_parlay_avoid_team",
+            help="Prevent two legs from the same team.",
+        )
+    with c_cols[3]:
+        _pool_size = st.slider(
+            "Candidate pool", min_value=8, max_value=40, value=15, step=1,
+            key="ai_parlay_pool",
+            help="How many top-scored bats the AI considers before assembling the parlays.",
+        )
+    with c_cols[4]:
+        _max_spot = st.slider(
+            "Max lineup spot", min_value=4, max_value=9, value=8, step=1,
+            key="ai_parlay_max_spot",
+            help="Hide bats batting deeper than this in the order.",
+        )
+
+    # Translate risk profile into thresholds.
+    if _risk == "Safer":
+        min_score   = 60.0
+        min_barrel  = 7.0
+        min_hh      = 36.0
+        max_spot    = min(_max_spot, 6)
+        max_hr_szn  = 60        # don't penalize sluggers — safer = stronger profile
+    elif _risk == "Aggressive":
+        min_score   = 40.0
+        min_barrel  = 5.0
+        min_hh      = 30.0
+        max_spot    = _max_spot
+        max_hr_szn  = 60
+    else:  # Balanced
+        min_score   = 50.0
+        min_barrel  = 6.0
+        min_hh      = 33.0
+        max_spot    = _max_spot
+        max_hr_szn  = 60
+
+    pool = ai_pool_df.copy()
+    pool = pool[pool["Sleeper Score"].fillna(0) >= float(min_score)]
+    pool = pool[pool["Barrel%"].fillna(0) >= float(min_barrel)]
+    pool = pool[pool["HardHit%"].fillna(0) >= float(min_hh)]
+    pool = pool[pool["Spot"].fillna(99).astype(int) <= int(max_spot)]
+    pool = pool[pool["HR (Season)"].fillna(0).astype(int) <= int(max_hr_szn)]
+    pool = pool.head(int(_pool_size)).reset_index(drop=True)
+
+    if pool.empty or len(pool) < 2:
+        st.info(
+            "Not enough qualifying bats to build a parlay with the current settings. "
+            "Try the **Aggressive** profile, raise **Max lineup spot**, or grow the **Candidate pool**."
+        )
+        st.stop()
+
+    def _pick_legs(_pool: pd.DataFrame, n: int,
+                   avoid_same_game: bool, avoid_same_team: bool):
+        """Greedy top-down pick respecting same-game / same-team toggles."""
+        legs = []
+        used_games, used_teams = set(), set()
+        for _, row in _pool.iterrows():
+            if len(legs) >= n:
+                break
+            g = str(row.get("Game", "") or "")
+            t = str(row.get("Team", "") or "")
+            if avoid_same_game and g and g in used_games:
+                continue
+            if avoid_same_team and t and t in used_teams:
+                continue
+            legs.append(row)
+            if g: used_games.add(g)
+            if t: used_teams.add(t)
+        # Fall-through: if constraints starved us, fill from the top to honor
+        # the requested leg count.
+        if len(legs) < n:
+            taken_idx = {id(l) for l in legs}
+            for _, row in _pool.iterrows():
+                if len(legs) >= n: break
+                if id(row) in taken_idx: continue
+                legs.append(row)
+        return legs[:n]
+
+    def _reasons_for(row) -> list:
+        """Up to 4 short, data-driven reasons. Pick the strongest signals."""
+        reasons = []
+        def _f(v):
+            try:
+                if v is None: return None
+                f = float(v)
+                if pd.isna(f): return None
+                return f
+            except Exception:
+                return None
+
+        barrel = _f(row.get("Barrel%"))
+        hh     = _f(row.get("HardHit%"))
+        iso    = _f(row.get("ISO"))
+        fb     = _f(row.get("FB%"))
+        pull   = _f(row.get("Pull%"))
+        match  = _f(row.get("Matchup"))
+        ceil   = _f(row.get("Ceiling"))
+        khr    = _f(row.get("kHR"))
+        spot   = row.get("Spot")
+        hr_szn = row.get("HR (Season)")
+
+        candidates = []
+        if barrel is not None and barrel >= 9.0:
+            candidates.append((barrel, f"🎯 Barrel% <b>{barrel:.1f}</b> — elite contact quality"))
+        elif barrel is not None and barrel >= 7.0:
+            candidates.append((barrel, f"🎯 Barrel% <b>{barrel:.1f}</b> above league avg"))
+
+        if hh is not None and hh >= 42.0:
+            candidates.append((hh, f"💥 HardHit% <b>{hh:.1f}</b> — consistently squares up"))
+        elif hh is not None and hh >= 38.0:
+            candidates.append((hh, f"💥 HardHit% <b>{hh:.1f}</b>"))
+
+        if iso is not None and iso >= 0.220:
+            candidates.append((iso * 100, f"⚡ ISO <b>{iso:.3f}</b> — top-tier raw power"))
+        elif iso is not None and iso >= 0.170:
+            candidates.append((iso * 100, f"⚡ ISO <b>{iso:.3f}</b>"))
+
+        if fb is not None and fb >= 38.0:
+            candidates.append((fb, f"🚀 FB% <b>{fb:.1f}</b> — gets the ball airborne"))
+
+        if pull is not None and pull >= 42.0:
+            candidates.append((pull, f"↗️ Pull% <b>{pull:.1f}</b> — pulls into HR alley"))
+
+        if match is not None and match >= 110.0:
+            candidates.append((match, f"🎲 Matchup score <b>{match:.0f}</b> vs {row.get('Opp SP','SP')}"))
+        if ceil is not None and ceil >= 115.0:
+            candidates.append((ceil, f"🏟️ Ceiling <b>{ceil:.0f}</b> (park + weather + opp)"))
+        if khr is not None and khr >= 1.10:
+            candidates.append((khr * 60, f"📈 kHR <b>{khr:.2f}</b> — projected HR rate boost"))
+
+        try:
+            sp = int(spot)
+            if 3 <= sp <= 5:
+                candidates.append((90, f"📋 Bats <b>{sp}</b> — heart of the order"))
+            elif sp <= 2:
+                candidates.append((85, f"📋 Bats <b>{sp}</b> — extra PA upside"))
+        except Exception:
+            pass
+
+        try:
+            hrn = int(hr_szn)
+            if hrn <= 5 and (barrel or 0) >= 7.0:
+                candidates.append((70, f"😴 Only <b>{hrn}</b> HR on season — under-owned sleeper"))
+        except Exception:
+            pass
+
+        # Rank by signal strength; cap to 4 distinct reasons.
+        candidates.sort(key=lambda x: -x[0])
+        seen = set()
+        for _, txt in candidates:
+            key = txt.split("<b>")[0]
+            if key in seen: continue
+            seen.add(key)
+            reasons.append(txt)
+            if len(reasons) >= 4:
+                break
+
+        if not reasons:
+            reasons.append("🔢 Composite Sleeper Score above slate threshold")
+        return reasons
+
+    legs_2 = _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team)
+    legs_3 = _pick_legs(pool, 3, _avoid_same_game, _avoid_same_team)
+
+    def _tier(score):
+        try: s = float(score)
+        except Exception: return ("ok", "Average")
+        if s >= 75: return ("elite",  "Elite")
+        if s >= 65: return ("strong", "Strong")
+        if s >= 55: return ("ok",     "Average")
+        return ("soft", "Soft")
+
+    def _render_parlay_card(title: str, legs: list, badge: str) -> str:
+        if not legs:
+            return (
+                f'<div style="padding:14px;border-radius:14px;background:#fff;'
+                f'box-shadow:0 2px 10px rgba(15,23,42,.06);margin-bottom:16px;">'
+                f'<div style="font-weight:900;font-size:1.05rem;color:#0f3a2e;">{title}</div>'
+                f'<div style="color:#64748b;margin-top:6px;">'
+                f'Not enough qualifying legs for this parlay. Loosen the filters above.'
+                f'</div></div>'
+            )
+        avg_score = sum(float(l.get("Sleeper Score", 0) or 0) for l in legs) / max(1, len(legs))
+        tier_cls, _ = _tier(avg_score)
+        leg_html = []
+        for i, leg in enumerate(legs, 1):
+            t_cls, t_lbl = _tier(leg.get("Sleeper Score"))
+            reasons = _reasons_for(leg)
+            reason_html = "".join(
+                f'<li style="margin:2px 0;">{r}</li>' for r in reasons
+            )
+            try:
+                sleeper_str = f"{float(leg.get('Sleeper Score', 0)):.1f}"
+            except Exception:
+                sleeper_str = "—"
+            leg_html.append(
+                f'<div class="aip-leg">'
+                f'  <div class="aip-leg-head">'
+                f'    <div class="aip-leg-num">Leg {i}</div>'
+                f'    <div class="aip-leg-name">{leg.get("Hitter","")}'
+                f'      <span class="aip-meta">· {leg.get("Team","")} · Bat {leg.get("Bat","") or "—"} · Spot {leg.get("Spot","")}</span>'
+                f'    </div>'
+                f'    <div class="aip-leg-score">'
+                f'      <span class="aip-score">{sleeper_str}</span>'
+                f'      <span class="hrs-pill {t_cls}">{t_lbl}</span>'
+                f'    </div>'
+                f'  </div>'
+                f'  <div class="aip-ctx">{leg.get("Game","")} <span style="color:#94a3b8;">·</span> vs <b>{leg.get("Opp SP","")}</b></div>'
+                f'  <ul class="aip-reasons">{reason_html}</ul>'
+                f'</div>'
+            )
+
+        return (
+            f'<div class="aip-card">'
+            f'  <div class="aip-card-head">'
+            f'    <div>'
+            f'      <div class="aip-card-title">{title}</div>'
+            f'      <div class="aip-card-sub">{len(legs)} legs · avg Sleeper Score '
+            f'<b>{avg_score:.1f}</b></div>'
+            f'    </div>'
+            f'    <span class="hrs-pill {tier_cls} aip-badge">{badge}</span>'
+            f'  </div>'
+            + "".join(leg_html) +
+            f'</div>'
+        )
+
+    css = (
+        "<style>"
+        ".aip-card { background:#fff; border-radius:14px; padding:14px 14px 8px 14px; "
+        "  box-shadow:0 2px 10px rgba(15,23,42,.06); margin: 8px 0 16px 0; "
+        "  border-left:5px solid #0f3a2e; }"
+        ".aip-card-head { display:flex; align-items:center; justify-content:space-between; "
+        "  gap:10px; margin-bottom:6px; flex-wrap:wrap; }"
+        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#0f3a2e; "
+        "  letter-spacing:.01em; }"
+        ".aip-card-sub { color:#64748b; font-size:.82rem; margin-top:2px; }"
+        ".aip-badge { font-size:.74rem; }"
+        ".aip-leg { padding:10px 0; border-top:1px dashed #e2e8f0; }"
+        ".aip-leg:first-of-type { border-top:none; }"
+        ".aip-leg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }"
+        ".aip-leg-num { font-size:.72rem; font-weight:800; letter-spacing:.06em; "
+        "  text-transform:uppercase; color:#fcd34d; background:#0f3a2e; "
+        "  padding:3px 8px; border-radius:6px; }"
+        ".aip-leg-name { font-weight:800; color:#0f172a; flex:1 1 200px; "
+        "  font-size:.98rem; }"
+        ".aip-meta { color:#64748b; font-weight:500; font-size:.82rem; }"
+        ".aip-leg-score { display:flex; align-items:center; gap:6px; }"
+        ".aip-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 6px 0; }"
+        ".aip-reasons { margin: 4px 0 2px 18px; padding:0; color:#0f172a; "
+        "  font-size:.88rem; }"
+        ".aip-reasons li { margin: 1px 0; line-height:1.35; }"
+        ".aip-disclaimer { color:#64748b; font-size:.78rem; margin: 6px 2px 12px 2px; "
+        "  font-style:italic; }"
+        "@media (max-width:520px) { .aip-leg-name { font-size:.92rem; } "
+        "  .aip-card-title { font-size:1rem; } .aip-reasons { font-size:.84rem; } }"
+        "</style>"
+    )
+
+    st.markdown(css, unsafe_allow_html=True)
+
+    badge_2 = f"{_risk} · 2-leg"
+    badge_3 = f"{_risk} · 3-leg"
+    st.markdown(_render_parlay_card("🎯 Recommended 2-Leg HR Parlay", legs_2, badge_2),
+                unsafe_allow_html=True)
+    st.markdown(_render_parlay_card("🚀 Recommended 3-Leg HR Parlay", legs_3, badge_3),
+                unsafe_allow_html=True)
+
+    # Source freshness row — same chips used elsewhere.
+    st.markdown(
+        render_source_chips([
+            "savant:batters", "savant:pitchers",
+            "statsapi:schedule", "statsapi:boxscore",
+            "openmeteo:weather",
+        ]),
+        unsafe_allow_html=True,
+    )
+
+    # Disclaimer.
+    st.markdown(
+        '<div class="aip-disclaimer">'
+        '⚠️ <b>Disclaimer:</b> Recommendations are model-driven analytics built '
+        'from public Statcast / StatsAPI / weather data — <b>not guaranteed outcomes</b>. '
+        'Verify lineups and live odds with your sportsbook before placing any bet. '
+        'Bet responsibly.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("How the AI picks legs"):
+        st.markdown(
+            "- Pool: top batters by **HR Sleeper Score** (Barrel% 22 · HardHit% 14 · "
+            "ISO 10 · FB% 7 · Pull% 7 · Matchup 10 · Ceiling 8 · kHR 7 · "
+            "Sleeper bonus 15).\n"
+            "- **Risk profile** sets minimum Sleeper Score, Barrel%, HardHit%, and "
+            "max lineup spot.\n"
+            "- **Avoid same game / team** prevents correlated legs that tend to "
+            "blow up together.\n"
+            "- Reasons per leg surface the 3–4 strongest signals — power profile, "
+            "park/weather/opposing-SP matchup, lineup spot, and sleeper context.\n"
+            "- All inputs come from the same data feeding the **HR Sleepers** "
+            "tab — refresh the slate to update."
         )
     st.stop()
 

@@ -4751,14 +4751,80 @@ if _view == "🤖 AI HR Parlay":
         )
         st.stop()
 
-    def _pick_legs(_pool: pd.DataFrame, n: int,
-                   avoid_same_game: bool, avoid_same_team: bool):
-        """Greedy top-down pick respecting same-game / same-team toggles."""
+    # ---- Reroll controls: seed + button so the user can generate different
+    # valid parlays from the same qualifying pool. Variety comes from
+    # score-weighted sampling, not random junk.
+    if "ai_parlay_seed" not in st.session_state:
+        st.session_state["ai_parlay_seed"] = 1
+    if "ai_parlay_generated_at" not in st.session_state:
+        st.session_state["ai_parlay_generated_at"] = datetime.now(
+            ZoneInfo("America/New_York")
+        ).strftime("%Y-%m-%d %I:%M:%S %p ET")
+
+    r_cols = st.columns([1.0, 1.0, 2.0])
+    with r_cols[0]:
+        if st.button("🎲 Generate New Parlays", key="ai_parlay_reroll",
+                     use_container_width=True,
+                     help="Reroll: rebuilds 2-leg & 3-leg tickets from the qualifying pool "
+                          "using weighted sampling. Filters & thresholds stay the same."):
+            st.session_state["ai_parlay_seed"] = int(
+                st.session_state.get("ai_parlay_seed", 1)
+            ) + 1
+            st.session_state["ai_parlay_generated_at"] = datetime.now(
+                ZoneInfo("America/New_York")
+            ).strftime("%Y-%m-%d %I:%M:%S %p ET")
+    with r_cols[1]:
+        _show_alts = st.checkbox(
+            "Show alternate tickets", value=True, key="ai_parlay_show_alts",
+            help="Also surface 2 alternate 2-leg and 3-leg tickets from the same pool.",
+        )
+    with r_cols[2]:
+        st.markdown(
+            f'<div style="padding-top:6px; color:#475569; font-size:0.86rem;">'
+            f'🎟️ <b>Ticket #{int(st.session_state["ai_parlay_seed"])}</b> · '
+            f'Generated {st.session_state["ai_parlay_generated_at"]}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    _seed = int(st.session_state["ai_parlay_seed"])
+
+    def _weighted_sample_legs(_pool: pd.DataFrame, n: int,
+                              avoid_same_game: bool, avoid_same_team: bool,
+                              seed: int):
+        """Score-weighted sample without replacement.
+
+        Higher Sleeper Score -> higher pick probability, so picks remain
+        data-driven; reroll changes which top-ranked candidates land in
+        the ticket rather than dipping into low-quality bats.
+        """
+        if _pool is None or _pool.empty:
+            return []
+        rng = np.random.default_rng(int(seed))
+        scores = _pool["Sleeper Score"].fillna(0).to_numpy(dtype=float)
+        # Soften extremes a bit so lower-but-still-qualifying bats can
+        # appear, while keeping top scores clearly favored.
+        weights = np.clip(scores, 1.0, None) ** 1.5
+        if not np.isfinite(weights).any() or weights.sum() <= 0:
+            weights = np.ones_like(scores)
+
+        rows = list(_pool.to_dict("records"))
+        idxs = list(range(len(rows)))
         legs = []
         used_games, used_teams = set(), set()
-        for _, row in _pool.iterrows():
-            if len(legs) >= n:
-                break
+
+        # Sample without replacement, honoring constraints.
+        available = idxs.copy()
+        avail_w = weights.copy()
+        while available and len(legs) < n:
+            w = avail_w[available]
+            if w.sum() <= 0:
+                pick_local = int(rng.integers(0, len(available)))
+            else:
+                p = w / w.sum()
+                pick_local = int(rng.choice(len(available), p=p))
+            pick = available.pop(pick_local)
+            row = rows[pick]
             g = str(row.get("Game", "") or "")
             t = str(row.get("Team", "") or "")
             if avoid_same_game and g and g in used_games:
@@ -4768,15 +4834,21 @@ if _view == "🤖 AI HR Parlay":
             legs.append(row)
             if g: used_games.add(g)
             if t: used_teams.add(t)
-        # Fall-through: if constraints starved us, fill from the top to honor
-        # the requested leg count.
+
+        # Fall-through: constraints starved us — top up by score order so we
+        # always honor the requested leg count when the pool is large enough.
         if len(legs) < n:
-            taken_idx = {id(l) for l in legs}
-            for _, row in _pool.iterrows():
+            taken_names = {l.get("Hitter") for l in legs}
+            for row in rows:
                 if len(legs) >= n: break
-                if id(row) in taken_idx: continue
+                if row.get("Hitter") in taken_names: continue
                 legs.append(row)
         return legs[:n]
+
+    def _pick_legs(_pool: pd.DataFrame, n: int,
+                   avoid_same_game: bool, avoid_same_team: bool,
+                   seed: int = 0):
+        return _weighted_sample_legs(_pool, n, avoid_same_game, avoid_same_team, seed)
 
     def _reasons_for(row) -> list:
         """Up to 4 short, data-driven reasons. Pick the strongest signals."""
@@ -4861,8 +4933,14 @@ if _view == "🤖 AI HR Parlay":
             reasons.append("🔢 Composite Sleeper Score above slate threshold")
         return reasons
 
-    legs_2 = _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team)
-    legs_3 = _pick_legs(pool, 3, _avoid_same_game, _avoid_same_team)
+    legs_2 = _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team, seed=_seed)
+    legs_3 = _pick_legs(pool, 3, _avoid_same_game, _avoid_same_team, seed=_seed * 1000 + 7)
+    # Alternate tickets — derived from the same pool with offset seeds so
+    # they differ from the primary ticket but remain data-driven.
+    alt_2_a = _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team, seed=_seed + 101)
+    alt_2_b = _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team, seed=_seed + 211)
+    alt_3_a = _pick_legs(pool, 3, _avoid_same_game, _avoid_same_team, seed=_seed * 1000 + 313)
+    alt_3_b = _pick_legs(pool, 3, _avoid_same_game, _avoid_same_team, seed=_seed * 1000 + 521)
 
     def _tier(score):
         try: s = float(score)
@@ -4962,12 +5040,73 @@ if _view == "🤖 AI HR Parlay":
 
     st.markdown(css, unsafe_allow_html=True)
 
-    badge_2 = f"{_risk} · 2-leg"
-    badge_3 = f"{_risk} · 3-leg"
+    badge_2 = f"{_risk} · 2-leg · #{_seed}"
+    badge_3 = f"{_risk} · 3-leg · #{_seed}"
     st.markdown(_render_parlay_card("🎯 Recommended 2-Leg HR Parlay", legs_2, badge_2),
                 unsafe_allow_html=True)
     st.markdown(_render_parlay_card("🚀 Recommended 3-Leg HR Parlay", legs_3, badge_3),
                 unsafe_allow_html=True)
+
+    if _show_alts:
+        # De-duplicate alternates against the primary picks (and each other)
+        # by hitter-name signature so users actually see different tickets.
+        def _sig(legs_):
+            return tuple(sorted(str(l.get("Hitter", "")) for l in (legs_ or [])))
+
+        seen_2 = {_sig(legs_2)}
+        seen_3 = {_sig(legs_3)}
+        # Pull additional candidate alternates with more seed offsets if
+        # the first attempts collide with the primary ticket.
+        extra_seeds = [331, 433, 547, 659, 773, 887]
+        alt_2_pool = [alt_2_a, alt_2_b] + [
+            _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team, seed=_seed + s)
+            for s in extra_seeds
+        ]
+        alt_3_pool = [alt_3_a, alt_3_b] + [
+            _pick_legs(pool, 3, _avoid_same_game, _avoid_same_team, seed=_seed * 1000 + s)
+            for s in extra_seeds
+        ]
+
+        chosen_2 = []
+        for cand in alt_2_pool:
+            sig = _sig(cand)
+            if sig in seen_2 or not cand:
+                continue
+            seen_2.add(sig)
+            chosen_2.append(cand)
+            if len(chosen_2) >= 2:
+                break
+
+        chosen_3 = []
+        for cand in alt_3_pool:
+            sig = _sig(cand)
+            if sig in seen_3 or not cand:
+                continue
+            seen_3.add(sig)
+            chosen_3.append(cand)
+            if len(chosen_3) >= 2:
+                break
+
+        if chosen_2 or chosen_3:
+            st.markdown(
+                '<div class="section-title" style="font-size:1.08rem;margin-top:6px;">'
+                '🔁 Alternate Tickets</div>',
+                unsafe_allow_html=True,
+            )
+        for i, cand in enumerate(chosen_2, 1):
+            st.markdown(
+                _render_parlay_card(
+                    f"🎯 Alt 2-Leg Parlay #{i}", cand, f"{_risk} · 2-leg · alt {i}"
+                ),
+                unsafe_allow_html=True,
+            )
+        for i, cand in enumerate(chosen_3, 1):
+            st.markdown(
+                _render_parlay_card(
+                    f"🚀 Alt 3-Leg Parlay #{i}", cand, f"{_risk} · 3-leg · alt {i}"
+                ),
+                unsafe_allow_html=True,
+            )
 
     # Source freshness row — same chips used elsewhere.
     st.markdown(
@@ -5002,7 +5141,10 @@ if _view == "🤖 AI HR Parlay":
             "- Reasons per leg surface the 3–4 strongest signals — power profile, "
             "park/weather/opposing-SP matchup, lineup spot, and sleeper context.\n"
             "- All inputs come from the same data feeding the **HR Sleepers** "
-            "tab — refresh the slate to update."
+            "tab — refresh the slate to update.\n"
+            "- **Generate New Parlays** rerolls the tickets via score-weighted "
+            "sampling on the same qualifying pool — you stay inside the model's "
+            "high-ranked candidates, you just see a different valid combination."
         )
     st.stop()
 

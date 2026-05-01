@@ -1227,6 +1227,130 @@ def get_odds_totals_map() -> dict:
                   max_age_min=60)
     return out
 
+# ---------------------------------------------------------------------------
+# Player HR prop odds (To Hit a Home Run, "batter_home_runs" market) via
+# the-odds-api.com event endpoints. Looks for st.secrets["ODDS_API_KEY"];
+# missing/empty key returns {} so callers can no-op.
+#
+# Returns: { clean_name(player) : {
+#     "best_book": str, "best_price": int,         # highest American price
+#     "bet_mgm": int|None,                          # BetMGM price if seen
+#     "books": { book_key: int },                   # all book prices
+#     "display_name": str,                          # original name from API
+# } }
+# Cached 20 min.
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=1200, show_spinner=False)
+def get_hr_player_odds_map() -> dict:
+    SRC = "oddsapi:hr_props"
+    LABEL = "the-odds-api · MLB batter_home_runs (To Hit a HR)"
+    try:
+        key = st.secrets["ODDS_API_KEY"]
+    except Exception:
+        record_source(SRC, label=LABEL, status="unconfigured",
+                      detail="No ODDS_API_KEY secret. HR-odds filter unavailable.",
+                      max_age_min=30)
+        return {}
+    if not key:
+        record_source(SRC, label=LABEL, status="unconfigured",
+                      detail="ODDS_API_KEY is empty. HR-odds filter unavailable.",
+                      max_age_min=30)
+        return {}
+
+    events_url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/events"
+    try:
+        r = requests.get(events_url, params={"apiKey": key, "dateFormat": "iso"},
+                         timeout=15)
+        r.raise_for_status()
+        events = r.json() or []
+    except Exception as exc:
+        record_source(SRC, label=LABEL, url=events_url, status="error",
+                      detail=f"Events fetch failed: {exc}",
+                      max_age_min=30)
+        return {}
+
+    out: dict = {}
+    parsed_events = 0
+    failed_events = 0
+    for ev in events:
+        ev_id = ev.get("id")
+        if not ev_id:
+            continue
+        ev_url = (
+            f"https://api.the-odds-api.com/v4/sports/baseball_mlb/events/"
+            f"{ev_id}/odds"
+        )
+        params = {
+            "apiKey": key, "regions": "us",
+            "markets": "batter_home_runs",
+            "oddsFormat": "american", "dateFormat": "iso",
+        }
+        try:
+            er = requests.get(ev_url, params=params, timeout=15)
+            if er.status_code != 200:
+                failed_events += 1
+                continue
+            edata = er.json() or {}
+        except Exception:
+            failed_events += 1
+            continue
+        parsed_events += 1
+        for book in edata.get("bookmakers", []) or []:
+            book_key = str(book.get("key") or "").lower()
+            book_title = book.get("title") or book_key
+            for market in book.get("markets", []) or []:
+                if market.get("key") != "batter_home_runs":
+                    continue
+                for o in market.get("outcomes", []) or []:
+                    # "Yes" side = "To Hit a HR". the-odds-api typically
+                    # uses outcome name == player name with "description"
+                    # = "Over"/"Yes". Some books only list the Yes side.
+                    desc = str(o.get("description") or "").strip().lower()
+                    if desc and desc not in {"yes", "over"}:
+                        continue
+                    player = o.get("name") or o.get("participant") or ""
+                    player = str(player).strip()
+                    if not player:
+                        continue
+                    try:
+                        price = int(o.get("price"))
+                    except Exception:
+                        continue
+                    cn = clean_name(player)
+                    if not cn:
+                        continue
+                    rec = out.setdefault(cn, {
+                        "best_book": book_title, "best_price": price,
+                        "bet_mgm": None, "books": {},
+                        "display_name": player,
+                    })
+                    # Track per-book price (keep most recent / highest if dup).
+                    prev = rec["books"].get(book_key)
+                    if prev is None or price > prev:
+                        rec["books"][book_key] = price
+                    if book_key == "betmgm":
+                        if rec["bet_mgm"] is None or price > rec["bet_mgm"]:
+                            rec["bet_mgm"] = price
+                    # Best price across books for "best available" fallback.
+                    if price > rec["best_price"]:
+                        rec["best_price"] = price
+                        rec["best_book"] = book_title
+
+    if out:
+        record_source(SRC, label=LABEL, url=events_url, status="live",
+                      detail=(f"{len(out)} players w/ HR odds across "
+                              f"{parsed_events} games"
+                              + (f"; {failed_events} events skipped"
+                                 if failed_events else "")),
+                      max_age_min=30)
+    else:
+        record_source(SRC, label=LABEL, url=events_url,
+                      status="error" if parsed_events else "unconfigured",
+                      detail=("No HR prop outcomes returned. Plan may not "
+                              "include player-prop markets."),
+                      max_age_min=30)
+    return out
+
 @st.cache_data(ttl=1800)
 def get_boxscore(game_pk):
     url = f"https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore"
@@ -4786,6 +4910,91 @@ if _view == "🤖 AI HR Parlay":
             help="Hide bats batting deeper than this in the order.",
         )
 
+    # ---- HR-odds filter row (BetMGM preferred when available) -------------
+    # Gated on the same ODDS_API_KEY secret that powers totals. If unset,
+    # the toggle still renders but is forced off with a clear note so the
+    # tab keeps working from model scores only.
+    hr_odds_map = get_hr_player_odds_map()
+    _odds_feed_ready = bool(hr_odds_map)
+
+    o_cols = st.columns([1.2, 1.0, 1.2, 1.6])
+    with o_cols[0]:
+        _odds_filter_on = st.checkbox(
+            "Only HR odds +X or longer",
+            value=False,
+            key="ai_parlay_odds_filter",
+            disabled=not _odds_feed_ready,
+            help=("Restrict the candidate pool to home-run players with "
+                  "American odds at or above the minimum below. Requires "
+                  "an odds feed; uses BetMGM when available."),
+        )
+    with o_cols[1]:
+        _min_hr_odds = st.number_input(
+            "Min HR odds", min_value=100, max_value=2500, value=650, step=25,
+            key="ai_parlay_min_hr_odds",
+            help="Minimum American odds (positive). Default +650.",
+        )
+    with o_cols[2]:
+        _book_pref = st.radio(
+            "Book preference",
+            ["BetMGM (fallback best)", "BetMGM only", "Best book"],
+            index=0, horizontal=False,
+            key="ai_parlay_book_pref",
+            help=("BetMGM (fallback best): prefer BetMGM line; if missing, "
+                  "use best available book and label it. "
+                  "BetMGM only: exclude players without a BetMGM line. "
+                  "Best book: always use the highest American price."),
+        )
+    with o_cols[3]:
+        if not _odds_feed_ready:
+            st.markdown(
+                '<div style="padding:8px 10px;border-left:3px solid #b45309;'
+                'background:#fffbeb;border-radius:6px;color:#78350f;'
+                'font-size:.82rem;line-height:1.35;">'
+                'ℹ️ HR odds filter requires a configured odds feed '
+                '(<code>ODDS_API_KEY</code>); generating from model scores only.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            _bm_count = sum(1 for v in hr_odds_map.values()
+                            if v.get("bet_mgm") is not None)
+            st.markdown(
+                f'<div style="padding:8px 10px;border-left:3px solid #0f3a2e;'
+                f'background:#ecfdf5;border-radius:6px;color:#065f46;'
+                f'font-size:.82rem;line-height:1.35;">'
+                f'📈 HR odds loaded for <b>{len(hr_odds_map)}</b> players · '
+                f'BetMGM lines on <b>{_bm_count}</b>.'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    def _resolve_hr_odds(hitter_name: str):
+        """Pick the price + book label for a hitter per book preference.
+        Returns (price:int|None, book_label:str|None, is_betmgm:bool)."""
+        if not hr_odds_map or not hitter_name:
+            return (None, None, False)
+        rec = hr_odds_map.get(clean_name(hitter_name))
+        if not rec:
+            return (None, None, False)
+        bm = rec.get("bet_mgm")
+        best_price = rec.get("best_price")
+        best_book = rec.get("best_book") or "Best"
+        if _book_pref == "BetMGM only":
+            if bm is None:
+                return (None, None, False)
+            return (int(bm), "BetMGM", True)
+        if _book_pref == "Best book":
+            if best_price is None:
+                return (None, None, False)
+            return (int(best_price), str(best_book), False)
+        # "BetMGM (fallback best)"
+        if bm is not None:
+            return (int(bm), "BetMGM", True)
+        if best_price is not None:
+            return (int(best_price), str(best_book), False)
+        return (None, None, False)
+
     # Translate risk profile into thresholds.
     if _risk == "Safer":
         min_score   = 60.0
@@ -4812,9 +5021,32 @@ if _view == "🤖 AI HR Parlay":
     pool = pool[pool["HardHit%"].fillna(0) >= float(min_hh)]
     pool = pool[pool["Spot"].fillna(99).astype(int) <= int(max_spot)]
     pool = pool[pool["HR (Season)"].fillna(0).astype(int) <= int(max_hr_szn)]
+
+    # Apply HR-odds filter BEFORE candidate-pool truncation so the top-N
+    # pool is filled with players who actually meet the odds threshold.
+    _odds_filter_active = bool(_odds_filter_on and _odds_feed_ready)
+    if _odds_filter_active:
+        _min_price = int(_min_hr_odds)
+        def _meets_odds(name):
+            price, _book, _is_bm = _resolve_hr_odds(str(name or ""))
+            if price is None:
+                return False
+            # American positive odds: longer == more positive. Filter is
+            # only meaningful for + prices, so reject minus lines.
+            return price >= _min_price
+        pool = pool[pool["Hitter"].map(_meets_odds)]
+
     pool = pool.head(int(_pool_size)).reset_index(drop=True)
 
     if pool.empty or len(pool) < 2:
+        if _odds_filter_active:
+            st.info(
+                f"No qualifying bats meet the HR odds filter "
+                f"(≥ +{int(_min_hr_odds)}, {_book_pref}). "
+                f"Lower the minimum, switch to **Best book**, or turn the "
+                f"filter off."
+            )
+            st.stop()
         st.info(
             "Not enough qualifying bats to build a parlay with the current settings. "
             "Try the **Aggressive** profile, raise **Max lineup spot**, or grow the **Candidate pool**."
@@ -5043,6 +5275,23 @@ if _view == "🤖 AI HR Parlay":
                 sleeper_str = f"{float(leg.get('Sleeper Score', 0)):.1f}"
             except Exception:
                 sleeper_str = "—"
+            # HR odds chip — populated only when the odds feed returned
+            # a price for this hitter under the chosen book preference.
+            _odds_html = ""
+            _price, _book_lbl, _is_bm = _resolve_hr_odds(
+                str(leg.get("Hitter") or "")
+            )
+            if _price is not None and _book_lbl:
+                _sign = "+" if _price > 0 else ""
+                _chip_cls = "aip-odds-bm" if _is_bm else "aip-odds-best"
+                _odds_html = (
+                    f'<span class="aip-odds {_chip_cls}">'
+                    f'{_book_lbl} {_sign}{_price}</span>'
+                )
+            elif _odds_feed_ready:
+                _odds_html = (
+                    '<span class="aip-odds aip-odds-none">No HR odds</span>'
+                )
             leg_html.append(
                 f'<div class="aip-leg">'
                 f'  <div class="aip-leg-head">'
@@ -5055,7 +5304,9 @@ if _view == "🤖 AI HR Parlay":
                 f'      <span class="hrs-pill {t_cls}">{t_lbl}</span>'
                 f'    </div>'
                 f'  </div>'
-                f'  <div class="aip-ctx">{leg.get("Game","")} <span style="color:#94a3b8;">·</span> vs <b>{leg.get("Opp SP","")}</b></div>'
+                f'  <div class="aip-ctx">{leg.get("Game","")} <span style="color:#94a3b8;">·</span> vs <b>{leg.get("Opp SP","")}</b>'
+                f'    {(" <span style=\"color:#94a3b8;\">·</span> " + _odds_html) if _odds_html else ""}'
+                f'  </div>'
                 f'  <ul class="aip-reasons">{reason_html}</ul>'
                 f'</div>'
             )
@@ -5098,6 +5349,12 @@ if _view == "🤖 AI HR Parlay":
         ".aip-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
         "  font-variant-numeric: tabular-nums; }"
         ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 6px 0; }"
+        ".aip-odds { display:inline-block; padding:2px 7px; border-radius:6px; "
+        "  font-size:.78rem; font-weight:800; letter-spacing:.01em; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".aip-odds-bm   { background:#0f3a2e; color:#fcd34d; }"
+        ".aip-odds-best { background:#1e293b; color:#e2e8f0; }"
+        ".aip-odds-none { background:#f1f5f9; color:#64748b; font-weight:600; }"
         ".aip-reasons { margin: 4px 0 2px 18px; padding:0; color:#0f172a; "
         "  font-size:.88rem; }"
         ".aip-reasons li { margin: 1px 0; line-height:1.35; }"
@@ -5183,7 +5440,7 @@ if _view == "🤖 AI HR Parlay":
         render_source_chips([
             "savant:batters", "savant:pitchers",
             "statsapi:schedule", "statsapi:boxscore",
-            "openmeteo:weather",
+            "openmeteo:weather", "oddsapi:hr_props",
         ]),
         unsafe_allow_html=True,
     )

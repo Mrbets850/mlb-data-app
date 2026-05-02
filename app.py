@@ -4891,12 +4891,13 @@ if _view == "🔥 2+ RBI":
     st.stop()
 
 # ============== AI HR Parlay view ==============
-# Builds 2-leg and 3-leg HR parlays from the HR Sleepers candidate pool. The
-# selection is fully deterministic (no external LLM required) but reads as an
-# "AI recommendation engine": rank by Sleeper Score, apply a risk profile, and
-# then surface short data-driven reasons per leg from the underlying signals
-# (Barrel%, HardHit%, ISO, FB%, Pull%, Matchup, Ceiling, kHR, lineup spot,
-# season HR total, opposing pitcher).
+# Builds 2-leg and 3-leg HR parlays from the slate's full eligible-lineup pool.
+# Scoring layers an AI HR Score on top of the existing HR Sleeper Score: it
+# explicitly weights Ceiling (park + weather + raw power) and pitch-zone /
+# hitter-zone fit (zone_fit() + opposing pitcher arsenal vs hitter crush
+# pitches) so picks favor bats whose hot zones overlap the SP's offerings.
+# Selection is weighted-sample with sleeper diversity boost so under-owned
+# sleepers can win a slot when their profile holds up — no odds API.
 if _view == "🤖 AI HR Parlay":
     st.markdown(
         '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
@@ -4905,11 +4906,13 @@ if _view == "🤖 AI HR Parlay":
     )
     st.markdown(
         '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
-        'Two- and three-leg home run parlays built from the slate model. Picks '
-        'rank by <b>HR Sleeper Score</b> (Barrel%, HardHit%, ISO, FB%, Pull%, '
-        'matchup vs opposing SP, park, weather, lineup spot) and are filtered '
-        'by your risk profile. Each leg shows the data-driven reasons it was '
-        'selected.'
+        'Two- and three-leg home-run parlays built from the slate model. '
+        'The <b>AI HR Score</b> blends raw power (Barrel%, HardHit%, ISO, '
+        'xSLG, FB%, Pull%, Bat Speed, SweetSpot%) with <b>Ceiling</b> '
+        '(park + weather + opposing SP) and <b>pitch-zone fit</b> '
+        '(hitter hot zones × pitcher arsenal overlap). '
+        'Sleepers stay in the running via weighted sampling — not just '
+        'top-N stars. Each leg shows the data-driven reasons it was picked.'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -4995,25 +4998,26 @@ if _view == "🤖 AI HR Parlay":
         st.info("No lineups posted yet for the upcoming/live games. Check back closer to first pitch.")
         st.stop()
 
-    # ---- Controls ----
-    c_cols = st.columns([1.4, 1.0, 1.0, 1.0, 1.0])
+    # ---- Controls (clean, compact, odds-free) ----
+    c_cols = st.columns([1.6, 1.0, 1.0, 1.0])
     with c_cols[0]:
         _risk = st.radio(
             "Risk profile",
-            ["Safer", "Balanced", "Aggressive"],
+            ["Safer", "Balanced", "Sleeper Hunt", "Aggressive"],
             index=1,
             horizontal=True,
             key="ai_parlay_risk",
             help=(
-                "Safer: only Strong+ candidates, max season-HR total relaxed, "
-                "spots 1-6. Balanced: default sleeper view. "
-                "Aggressive: pulls deeper sleepers (lower spots, more upside, more variance)."
+                "Safer: heart-of-order, elite power, strict thresholds. "
+                "Balanced: default mix of stars and quality sleepers. "
+                "Sleeper Hunt: boosts under-owned bats with strong AI HR Score. "
+                "Aggressive: opens spots 1-9, deeper variance."
             ),
         )
     with c_cols[1]:
         _avoid_same_game = st.checkbox(
             "Avoid same game", value=True, key="ai_parlay_avoid_game",
-            help="Prevent two legs from the same game (correlation/blow-up risk).",
+            help="Prevent two legs from the same game (correlation risk).",
         )
     with c_cols[2]:
         _avoid_same_team = st.checkbox(
@@ -5021,258 +5025,203 @@ if _view == "🤖 AI HR Parlay":
             help="Prevent two legs from the same team.",
         )
     with c_cols[3]:
-        _pool_size = st.slider(
-            "Candidate pool", min_value=8, max_value=40, value=15, step=1,
-            key="ai_parlay_pool",
-            help="How many top-scored bats the AI considers before assembling the parlays.",
-        )
-    with c_cols[4]:
         _max_spot = st.slider(
             "Max lineup spot", min_value=4, max_value=9, value=8, step=1,
             key="ai_parlay_max_spot",
             help="Hide bats batting deeper than this in the order.",
         )
 
-    # ---- HR-odds filter row (BetMGM preferred when available) -------------
-    # Gated on the same ODDS_API_KEY secret that powers totals. If unset,
-    # the toggle still renders but is forced off with a clear note so the
-    # tab keeps working from model scores only.
-    hr_odds_map = get_hr_player_odds_map()
-    _odds_feed_ready = bool(hr_odds_map)
+    # ---- AI HR Score: Ceiling + zone-fit aware augmentation -------------
+    # We layer Ceiling and pitch-zone signals explicitly on top of the base
+    # HR Sleeper Score so the AI tab favors bats whose hot zones overlap
+    # the opposing SP arsenal — not just raw power leaderboard.
+    PITCH_NAME_FALLBACK = {
+        "FF":"4-Seam","FT":"2-Seam","SI":"Sinker","FC":"Cutter",
+        "SL":"Slider","ST":"Sweeper","SV":"Slurve","CU":"Curve",
+        "KC":"Knuckle Curve","CH":"Change","FS":"Splitter",
+        "SC":"Screwball","KN":"Knuckle","FO":"Forkball",
+    }
+    try:
+        _PITCH_LABELS = PITCH_NAME_MAP  # use app's canonical map if defined
+    except NameError:
+        _PITCH_LABELS = PITCH_NAME_FALLBACK
 
-    o_cols = st.columns([1.2, 1.0, 1.2, 1.6])
-    with o_cols[0]:
-        _odds_filter_on = st.checkbox(
-            "Only HR odds +X or longer",
-            value=False,
-            key="ai_parlay_odds_filter",
-            help=("Restrict the candidate pool to home-run players with "
-                  "American odds at or above the minimum below. Requires "
-                  "an odds feed (ODDS_API_KEY); uses BetMGM when available."),
-        )
-    with o_cols[1]:
-        _min_hr_odds = st.number_input(
-            "Min HR odds", min_value=100, max_value=2500, value=650, step=25,
-            key="ai_parlay_min_hr_odds",
-            help="Minimum American odds (positive). Default +650.",
-        )
-    with o_cols[2]:
-        _book_pref = st.radio(
-            "Book preference",
-            ["BetMGM (fallback best)", "BetMGM only", "Best book"],
-            index=0, horizontal=False,
-            key="ai_parlay_book_pref",
-            help=("BetMGM (fallback best): prefer BetMGM line; if missing, "
-                  "use best available book and label it. "
-                  "BetMGM only: exclude players without a BetMGM line. "
-                  "Best book: always use the highest American price."),
-        )
-    # Pull diagnostic snapshot once so the status note + expander stay in sync.
-    _diag = dict(HR_ODDS_DIAG)
-    _diag_status = str(_diag.get("status") or "uninitialized")
-    _diag_key_present = bool(_diag.get("key_present"))
+    def _pitch_label(code: str) -> str:
+        if not code:
+            return ""
+        c = str(code).strip().upper()
+        return _PITCH_LABELS.get(c, c)
 
-    with o_cols[3]:
-        if not _odds_feed_ready:
-            # Branch on *why* the feed isn't ready so the message points at the
-            # actual problem (missing key vs. market not posted vs. API error).
-            if not _diag_key_present:
-                msg = (
-                    '⚠️ <b>No Odds API key detected.</b><br>'
-                    'Add one of <code>ODDS_API_KEY</code>, '
-                    '<code>THE_ODDS_API_KEY</code>, <code>THE_ODDS_API</code>, '
-                    'or <code>ODDSAPI_KEY</code> to Streamlit secrets.'
-                )
-                border = "#b91c1c"; bg = "#fef2f2"; fg = "#7f1d1d"
-            elif _diag_status == "auth_error":
-                msg = (
-                    '⚠️ <b>Odds API rejected the key</b> '
-                    f'(HTTP {_diag.get("http_status")}). The key from '
-                    f'<code>{_diag.get("key_source")}</code> is invalid or revoked.'
-                )
-                border = "#b91c1c"; bg = "#fef2f2"; fg = "#7f1d1d"
-            elif _diag_status == "rate_limited":
-                msg = (
-                    '⚠️ <b>Odds API quota/rate limit reached</b> (HTTP 429). '
-                    'Try again later or upgrade your plan.'
-                )
-                border = "#b91c1c"; bg = "#fef2f2"; fg = "#7f1d1d"
-            elif _diag_status == "network_error":
-                msg = (
-                    '⚠️ <b>Network error contacting the-odds-api.</b><br>'
-                    f'<code>{(_diag.get("last_error") or "")[:160]}</code>'
-                )
-                border = "#b91c1c"; bg = "#fef2f2"; fg = "#7f1d1d"
-            elif _diag_status == "no_events":
-                msg = (
-                    'ℹ️ <b>Key works, but no MLB events in the feed window.</b><br>'
-                    'Likely no games scheduled right now.'
-                )
-                border = "#b45309"; bg = "#fffbeb"; fg = "#78350f"
-            elif _diag_status == "no_hr_market":
-                msg = (
-                    'ℹ️ <b>Key works, but the HR (batter_home_runs) market '
-                    'is not currently offered.</b><br>'
-                    'Player props are usually posted later in the day. '
-                    'Verify your Odds API plan includes player-prop markets.'
-                )
-                border = "#b45309"; bg = "#fffbeb"; fg = "#78350f"
-            else:
-                msg = (
-                    'ℹ️ HR odds filter requires a configured odds feed; '
-                    'generating from model scores only.'
-                )
-                border = "#b45309"; bg = "#fffbeb"; fg = "#78350f"
-            st.markdown(
-                f'<div style="padding:8px 10px;border-left:3px solid {border};'
-                f'background:{bg};border-radius:6px;color:{fg};'
-                f'font-size:.82rem;line-height:1.35;">{msg}</div>',
-                unsafe_allow_html=True,
-            )
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _opposing_sp_arsenal_cached(opp_pitcher_name: str):
+        """Return (pitcher_id, set(pitch_codes)) for an opposing SP."""
+        if not opp_pitcher_name or str(opp_pitcher_name).upper() == "TBD":
+            return (None, set())
+        prow = find_pitcher_row(pitchers_df, opp_pitcher_name)
+        if prow is None:
+            return (None, set())
+        pid = prow.get("player_id") if hasattr(prow, "get") else None
+        try:
+            pid = int(pid) if pid is not None and not pd.isna(pid) else None
+        except Exception:
+            pid = None
+        return (pid, _build_pitcher_arsenal_set(arsenal_pitcher_df, pid))
+
+    def _zone_fit_for_row(row) -> float:
+        """Resolve zone_fit() (0..0.20) for an AI pool row, falling back to
+        the proxy formula if direct lookup misses."""
+        b = find_player_row(batters_df, clean_name(str(row.get("Hitter",""))),
+                            row.get("Team",""))
+        opp_sp = str(row.get("Opp SP","") or "")
+        prow = find_pitcher_row(pitchers_df, opp_sp) if opp_sp else None
+        bat_side = row.get("Bat","") or ""
+        # Opposing pitcher hand: best-effort from pitcher row
+        opp_hand = ""
+        if prow is not None:
+            for k in ("p_throws","throw_hand","throws","hand"):
+                try:
+                    v = prow.get(k)
+                    if v and not pd.isna(v):
+                        opp_hand = str(v)
+                        break
+                except Exception:
+                    continue
+        try:
+            return float(zone_fit(b, prow, bat_side, opp_hand))
+        except Exception:
+            return 0.05
+
+    def _hitter_crush_overlap(row):
+        """Returns (overlap_codes:list[str], crush_codes:list[str]) — pitch
+        codes the hitter punishes most that overlap the opposing SP's used
+        arsenal. Empty lists if data is unavailable."""
+        pid = row.get("_player_id")
+        if pid is None or pd.isna(pid):
+            return ([], [])
+        try:
+            pid_i = int(pid)
+        except Exception:
+            return ([], [])
+        crush_df = hitter_pitch_crush(arsenal_batter_df, pid_i, top_n=3, min_pa=15)
+        if crush_df is None or crush_df.empty or "pitch_type" not in crush_df.columns:
+            return ([], [])
+        crush_codes = [str(x).strip().upper() for x in
+                       crush_df["pitch_type"].dropna().tolist() if str(x).strip()]
+        opp_sp = str(row.get("Opp SP","") or "")
+        _pid, opp_arsenal = _opposing_sp_arsenal_cached(opp_sp)
+        if not opp_arsenal:
+            return ([], crush_codes)
+        overlap = [c for c in crush_codes if c in opp_arsenal]
+        return (overlap, crush_codes)
+
+    def _ai_hr_score(row, zone_fit_v: float, has_overlap: bool) -> float:
+        """0-100 AI HR Score:
+            55%  HR Sleeper Score (already a strong base)
+            18%  Ceiling (park + weather + raw power, normalized 80-140)
+            10%  Zone Fit (zone_fit() 0..0.20, normalized)
+             7%  Pitch-zone overlap bonus (hitter crushes a pitch SP throws)
+             5%  Bat Speed lift (>= 73 mph is elite)
+             5%  SweetSpot% / xSLG composite
+        """
+        base   = float(row.get("Sleeper Score") or 0.0)
+        ceil   = float(row.get("Ceiling") or 0.0)
+        # Ceiling is already 0..100 in this codebase; normalize defensively.
+        n_ceil = max(0.0, min(100.0, ceil))
+        n_zf   = max(0.0, min(100.0, (float(zone_fit_v) / 0.20) * 100.0))
+        overlap_b = 100.0 if has_overlap else 35.0
+        bs = row.get("BatSpeed")
+        try: bs_f = float(bs) if bs is not None and not pd.isna(bs) else None
+        except Exception: bs_f = None
+        if bs_f is None:
+            n_bs = 50.0
         else:
-            _bm_count = sum(1 for v in hr_odds_map.values()
-                            if v.get("bet_mgm") is not None)
-            st.markdown(
-                f'<div style="padding:8px 10px;border-left:3px solid #0f3a2e;'
-                f'background:#ecfdf5;border-radius:6px;color:#065f46;'
-                f'font-size:.82rem;line-height:1.35;">'
-                f'📈 HR odds loaded for <b>{len(hr_odds_map)}</b> players · '
-                f'BetMGM lines on <b>{_bm_count}</b>.'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+            n_bs = max(0.0, min(100.0, (bs_f - 67.0) / (76.0 - 67.0) * 100.0))
+        ss = row.get("SweetSpot%")
+        try: ss_f = float(ss) if ss is not None and not pd.isna(ss) else None
+        except Exception: ss_f = None
+        if ss_f is None: n_ss = 50.0
+        else:           n_ss = max(0.0, min(100.0, (ss_f - 28.0) / (40.0 - 28.0) * 100.0))
+        xslg = row.get("xSLG")
+        try: xslg_f = float(xslg) if xslg is not None and not pd.isna(xslg) else None
+        except Exception: xslg_f = None
+        if xslg_f is None: n_xslg = 50.0
+        else:              n_xslg = max(0.0, min(100.0, (xslg_f - 0.350) / (0.560 - 0.350) * 100.0))
+        comp_pwr = 0.5 * n_ss + 0.5 * n_xslg
 
-    # ---- Diagnostics expander -------------------------------------------------
-    # Surfaced whenever the user has the odds filter checked OR the feed is
-    # unavailable, so they can self-diagnose without leaving the tab. Never
-    # prints the API key — only its source and last 4 characters.
-    if _odds_filter_on or not _odds_feed_ready:
-        with st.expander("🔎 HR odds diagnostics", expanded=not _odds_feed_ready):
-            _key_line = (
-                f"✅ Yes — from `{_diag.get('key_source')}` "
-                f"(ends ••••{_diag.get('key_tail')})"
-                if _diag_key_present else
-                "❌ No — checked `ODDS_API_KEY`, `THE_ODDS_API_KEY`, "
-                "`THE_ODDS_API`, `ODDSAPI_KEY` in `st.secrets` and environment."
-            )
-            _err = _diag.get("last_error") or ""
-            _http = _diag.get("http_status")
-            st.markdown(
-                f"- **API key detected:** {_key_line}\n"
-                f"- **Events checked:** {_diag.get('events_checked', 0)} "
-                f"(failed: {_diag.get('events_failed', 0)})\n"
-                f"- **Events with HR market:** {_diag.get('events_with_hr_market', 0)}\n"
-                f"- **Players with HR odds:** {_diag.get('players_found', 0)}\n"
-                f"- **BetMGM HR lines:** {_diag.get('betmgm_lines', 0)}\n"
-                f"- **Status:** `{_diag_status}`"
-                + (f" (events HTTP {_http})" if _http else "")
-                + (f"\n- **Last error/note:** {_err}" if _err else "")
-            )
-            st.caption(
-                "Supported secret/env names: "
-                + ", ".join(f"`{n}`" for n in ODDS_API_KEY_ALIASES)
-                + ". Prefer `ODDS_API_KEY`. The key value itself is never displayed."
-            )
-
-    def _resolve_hr_odds(hitter_name: str):
-        """Pick the price + book label for a hitter per book preference.
-        Returns (price:int|None, book_label:str|None, is_betmgm:bool)."""
-        if not hr_odds_map or not hitter_name:
-            return (None, None, False)
-        rec = hr_odds_map.get(clean_name(hitter_name))
-        if not rec:
-            return (None, None, False)
-        bm = rec.get("bet_mgm")
-        best_price = rec.get("best_price")
-        best_book = rec.get("best_book") or "Best"
-        if _book_pref == "BetMGM only":
-            if bm is None:
-                return (None, None, False)
-            return (int(bm), "BetMGM", True)
-        if _book_pref == "Best book":
-            if best_price is None:
-                return (None, None, False)
-            return (int(best_price), str(best_book), False)
-        # "BetMGM (fallback best)"
-        if bm is not None:
-            return (int(bm), "BetMGM", True)
-        if best_price is not None:
-            return (int(best_price), str(best_book), False)
-        return (None, None, False)
-
-    # Translate risk profile into thresholds.
-    if _risk == "Safer":
-        min_score   = 60.0
-        min_barrel  = 7.0
-        min_hh      = 36.0
-        max_spot    = min(_max_spot, 6)
-        max_hr_szn  = 60        # don't penalize sluggers — safer = stronger profile
-    elif _risk == "Aggressive":
-        min_score   = 40.0
-        min_barrel  = 5.0
-        min_hh      = 30.0
-        max_spot    = _max_spot
-        max_hr_szn  = 60
-    else:  # Balanced
-        min_score   = 50.0
-        min_barrel  = 6.0
-        min_hh      = 33.0
-        max_spot    = _max_spot
-        max_hr_szn  = 60
-
-    pool = ai_pool_df.copy()
-    pool = pool[pool["Sleeper Score"].fillna(0) >= float(min_score)]
-    pool = pool[pool["Barrel%"].fillna(0) >= float(min_barrel)]
-    pool = pool[pool["HardHit%"].fillna(0) >= float(min_hh)]
-    pool = pool[pool["Spot"].fillna(99).astype(int) <= int(max_spot)]
-    pool = pool[pool["HR (Season)"].fillna(0).astype(int) <= int(max_hr_szn)]
-
-    # If the user explicitly selected the HR-odds filter but no odds feed
-    # is configured, stop with a clear warning rather than silently
-    # ignoring the filter or fabricating odds.
-    if _odds_filter_on and not _odds_feed_ready:
-        st.warning(
-            "HR odds filter is selected but no odds feed is configured. "
-            "Add **ODDS_API_KEY** to Streamlit secrets to enable live "
-            "BetMGM/HR odds filtering, or uncheck **Only HR odds +X or "
-            "longer** to generate model-only tickets."
+        ai = (
+            0.55 * base
+          + 0.18 * n_ceil
+          + 0.10 * n_zf
+          + 0.07 * overlap_b
+          + 0.05 * n_bs
+          + 0.05 * comp_pwr
         )
-        st.stop()
+        return round(max(0.0, min(100.0, ai)), 1)
 
-    # Apply HR-odds filter BEFORE candidate-pool truncation so the top-N
-    # pool is filled with players who actually meet the odds threshold.
-    _odds_filter_active = bool(_odds_filter_on and _odds_feed_ready)
-    if _odds_filter_active:
-        _min_price = int(_min_hr_odds)
-        def _meets_odds(name):
-            price, _book, _is_bm = _resolve_hr_odds(str(name or ""))
-            if price is None:
-                return False
-            # American positive odds: longer == more positive. Filter is
-            # only meaningful for + prices, so reject minus lines.
-            return price >= _min_price
-        pool = pool[pool["Hitter"].map(_meets_odds)]
+    # ---- Build full eligible candidate pool (no top-N truncation) -------
+    # Bring in extra columns we'll need from batters_df for AI HR Score
+    # reasons (Bat Speed, SweetSpot%, xwOBA, K%, LA).
+    pool = ai_pool_df.copy()
+    extra_b = batters_df.copy() if not batters_df.empty else pd.DataFrame()
+    if not extra_b.empty:
+        keep_cols = [c for c in
+            ["name_key","BatSpeed","SweetSpot%","LA","xwOBA","K%","BB%"]
+            if c in extra_b.columns]
+        if "name_key" in extra_b.columns and len(keep_cols) > 1:
+            extra_b = extra_b[keep_cols].drop_duplicates("name_key")
+            pool["__nk"] = pool["Hitter"].astype(str).map(clean_name)
+            pool = pool.merge(extra_b, left_on="__nk", right_on="name_key",
+                              how="left", suffixes=("", "_b"))
+            pool = pool.drop(columns=[c for c in ["__nk","name_key"]
+                                      if c in pool.columns])
 
-    pool = pool.head(int(_pool_size)).reset_index(drop=True)
+    # Risk-profile thresholds. "Sleeper Hunt" = lower floor, big bonus on
+    # under-owned bats; we apply that bonus during sampling, not here.
+    if _risk == "Safer":
+        min_score, min_barrel, min_hh = 60.0, 7.5, 36.0
+        max_spot = min(_max_spot, 6)
+    elif _risk == "Sleeper Hunt":
+        min_score, min_barrel, min_hh = 48.0, 6.0, 32.0
+        max_spot = _max_spot
+    elif _risk == "Aggressive":
+        min_score, min_barrel, min_hh = 42.0, 5.0, 30.0
+        max_spot = _max_spot
+    else:  # Balanced
+        min_score, min_barrel, min_hh = 52.0, 6.5, 34.0
+        max_spot = _max_spot
+
+    pool = pool[pool["Sleeper Score"].fillna(0) >= float(min_score)]
+    pool = pool[pool["Barrel%"].fillna(0)        >= float(min_barrel)]
+    pool = pool[pool["HardHit%"].fillna(0)       >= float(min_hh)]
+    pool = pool[pool["Spot"].fillna(99).astype(int) <= int(max_spot)]
+    pool = pool.reset_index(drop=True)
 
     if pool.empty or len(pool) < 2:
-        if _odds_filter_active:
-            st.info(
-                f"No qualifying bats meet the HR odds filter "
-                f"(≥ +{int(_min_hr_odds)}, {_book_pref}). "
-                f"Lower the minimum, switch to **Best book**, or turn the "
-                f"filter off."
-            )
-            st.stop()
         st.info(
-            "Not enough qualifying bats to build a parlay with the current settings. "
-            "Try the **Aggressive** profile, raise **Max lineup spot**, or grow the **Candidate pool**."
+            f"Not enough qualifying bats for the **{_risk}** profile — "
+            f"only {len(pool)} hitter(s) cleared the thresholds. "
+            f"Try **Sleeper Hunt** or **Aggressive**, or raise **Max lineup spot**."
         )
         st.stop()
 
-    # ---- Reroll controls: seed + button so the user can generate different
-    # valid parlays from the same qualifying pool. Variety comes from
-    # score-weighted sampling, not random junk.
+    # ---- Score the entire eligible pool with AI HR Score ----------------
+    with st.spinner("Layering Ceiling + pitch-zone fit on every bat…"):
+        zf_vals, overlap_lists, crush_lists, ai_scores = [], [], [], []
+        for _, r in pool.iterrows():
+            zfv = _zone_fit_for_row(r)
+            ovl, crush_codes = _hitter_crush_overlap(r)
+            zf_vals.append(zfv)
+            overlap_lists.append(ovl)
+            crush_lists.append(crush_codes)
+            ai_scores.append(_ai_hr_score(r, zfv, bool(ovl)))
+        pool["Zone Fit"]      = zf_vals
+        pool["__overlap"]     = overlap_lists
+        pool["__crush"]       = crush_lists
+        pool["AI HR Score"]   = ai_scores
+
+    pool = pool.sort_values("AI HR Score", ascending=False).reset_index(drop=True)
+
+    # ---- Reroll controls ------------------------------------------------
     if "ai_parlay_seed" not in st.session_state:
         st.session_state["ai_parlay_seed"] = 1
     if "ai_parlay_generated_at" not in st.session_state:
@@ -5284,8 +5233,8 @@ if _view == "🤖 AI HR Parlay":
     with r_cols[0]:
         if st.button("🎲 Generate New Parlays", key="ai_parlay_reroll",
                      use_container_width=True,
-                     help="Reroll: rebuilds 2-leg & 3-leg tickets from the qualifying pool "
-                          "using weighted sampling. Filters & thresholds stay the same."):
+                     help="Reroll: rebuilds 2-leg & 3-leg tickets via weighted "
+                          "sampling on the same eligible pool. Filters stay the same."):
             st.session_state["ai_parlay_seed"] = int(
                 st.session_state.get("ai_parlay_seed", 1)
             ) + 1
@@ -5301,6 +5250,7 @@ if _view == "🤖 AI HR Parlay":
         st.markdown(
             f'<div style="padding-top:6px; color:#475569; font-size:0.86rem;">'
             f'🎟️ <b>Ticket #{int(st.session_state["ai_parlay_seed"])}</b> · '
+            f'{len(pool)} eligible hitters · '
             f'Generated {st.session_state["ai_parlay_generated_at"]}'
             f'</div>',
             unsafe_allow_html=True,
@@ -5308,31 +5258,43 @@ if _view == "🤖 AI HR Parlay":
 
     _seed = int(st.session_state["ai_parlay_seed"])
 
-    def _weighted_sample_legs(_pool: pd.DataFrame, n: int,
+    # Sleeper-hunt boost: under-owned bats (low season HR + lower spot)
+    # get extra weight so sleepers can win a slot. Aggressive gets a
+    # smaller version of the same boost; Safer doesn't.
+    if _risk == "Sleeper Hunt":
+        sleeper_bias = 0.55
+    elif _risk == "Aggressive":
+        sleeper_bias = 0.25
+    elif _risk == "Balanced":
+        sleeper_bias = 0.12
+    else:
+        sleeper_bias = 0.0
+
+    def _weighted_sample_legs(_pool, n: int,
                               avoid_same_game: bool, avoid_same_team: bool,
                               seed: int):
-        """Score-weighted sample without replacement.
-
-        Higher Sleeper Score -> higher pick probability, so picks remain
-        data-driven; reroll changes which top-ranked candidates land in
-        the ticket rather than dipping into low-quality bats.
-        """
+        """Weighted sample on AI HR Score with sleeper diversity boost.
+        Higher AI HR Score -> higher pick probability; sleeper bias raises
+        weight on bats with low season HR + lower lineup spot."""
         if _pool is None or _pool.empty:
             return []
         rng = np.random.default_rng(int(seed))
-        scores = _pool["Sleeper Score"].fillna(0).to_numpy(dtype=float)
-        # Soften extremes a bit so lower-but-still-qualifying bats can
-        # appear, while keeping top scores clearly favored.
-        weights = np.clip(scores, 1.0, None) ** 1.5
+        scores = _pool["AI HR Score"].fillna(0).to_numpy(dtype=float)
+        weights = np.clip(scores, 1.0, None) ** 1.4
+        if sleeper_bias > 0:
+            hr_szn = _pool["HR (Season)"].fillna(15).to_numpy(dtype=float)
+            spot   = _pool["Spot"].fillna(5).to_numpy(dtype=float)
+            sleeper_factor = (
+                np.clip((20.0 - hr_szn) / 20.0, 0.0, 1.0) * 0.6 +
+                np.clip((spot - 2.0)    /  7.0, 0.0, 1.0) * 0.4
+            )
+            weights = weights * (1.0 + sleeper_bias * sleeper_factor)
         if not np.isfinite(weights).any() or weights.sum() <= 0:
             weights = np.ones_like(scores)
 
         rows = list(_pool.to_dict("records"))
         idxs = list(range(len(rows)))
-        legs = []
-        used_games, used_teams = set(), set()
-
-        # Sample without replacement, honoring constraints.
+        legs, used_games, used_teams = [], set(), set()
         available = idxs.copy()
         avail_w = weights.copy()
         while available and len(legs) < n:
@@ -5354,8 +5316,6 @@ if _view == "🤖 AI HR Parlay":
             if g: used_games.add(g)
             if t: used_teams.add(t)
 
-        # Fall-through: constraints starved us — top up by score order so we
-        # always honor the requested leg count when the pool is large enough.
         if len(legs) < n:
             taken_names = {l.get("Hitter") for l in legs}
             for row in rows:
@@ -5364,13 +5324,13 @@ if _view == "🤖 AI HR Parlay":
                 legs.append(row)
         return legs[:n]
 
-    def _pick_legs(_pool: pd.DataFrame, n: int,
-                   avoid_same_game: bool, avoid_same_team: bool,
-                   seed: int = 0):
-        return _weighted_sample_legs(_pool, n, avoid_same_game, avoid_same_team, seed)
+    def _pick_legs(_pool, n, avoid_same_game, avoid_same_team, seed=0):
+        return _weighted_sample_legs(_pool, n, avoid_same_game,
+                                     avoid_same_team, seed)
 
     def _reasons_for(row) -> list:
-        """Up to 4 short, data-driven reasons. Pick the strongest signals."""
+        """Compact, data-driven reasons. Always tries to include Ceiling +
+        Zone Fit when notable, then the strongest power/matchup signals."""
         reasons = []
         def _f(v):
             try:
@@ -5381,81 +5341,100 @@ if _view == "🤖 AI HR Parlay":
             except Exception:
                 return None
 
+        ceil   = _f(row.get("Ceiling"))
+        zfv    = _f(row.get("Zone Fit"))
         barrel = _f(row.get("Barrel%"))
         hh     = _f(row.get("HardHit%"))
         iso    = _f(row.get("ISO"))
+        xslg   = _f(row.get("xSLG"))
         fb     = _f(row.get("FB%"))
         pull   = _f(row.get("Pull%"))
         match  = _f(row.get("Matchup"))
-        ceil   = _f(row.get("Ceiling"))
         khr    = _f(row.get("kHR"))
+        bs     = _f(row.get("BatSpeed"))
+        ss     = _f(row.get("SweetSpot%"))
         spot   = row.get("Spot")
         hr_szn = row.get("HR (Season)")
+        overlap = list(row.get("__overlap") or [])
+        crush_codes = list(row.get("__crush") or [])
 
-        candidates = []
+        # 1. Ceiling — always prioritize when notable
+        if ceil is not None:
+            if ceil >= 80:
+                reasons.append(f"🏟️ Ceiling <b>{ceil:.0f}</b> — elite park/weather/SP combo")
+            elif ceil >= 65:
+                reasons.append(f"🏟️ Ceiling <b>{ceil:.0f}</b>")
+
+        # 2. Zone fit / pitch overlap — always priority when strong
+        if overlap:
+            labs = ", ".join(_pitch_label(c) for c in overlap[:2] if c)
+            opp_sp = str(row.get("Opp SP") or "SP")
+            reasons.append(f"🎯 Crushes <b>{labs}</b> vs {opp_sp} arsenal")
+        elif zfv is not None and zfv >= 0.090:
+            reasons.append(f"🎯 Zone fit <b>+</b> ({zfv:.3f}) — hot zones align")
+        elif crush_codes and crush_codes[0]:
+            reasons.append(f"🎯 Punishes <b>{_pitch_label(crush_codes[0])}</b> profile")
+
+        # 3. Power — Barrel%, HardHit%, ISO, xSLG
+        cands = []
         if barrel is not None and barrel >= 9.0:
-            candidates.append((barrel, f"🎯 Barrel% <b>{barrel:.1f}</b> — elite contact quality"))
+            cands.append((barrel, f"💥 Barrel% <b>{barrel:.1f}</b> — elite contact"))
         elif barrel is not None and barrel >= 7.0:
-            candidates.append((barrel, f"🎯 Barrel% <b>{barrel:.1f}</b> above league avg"))
-
+            cands.append((barrel, f"💥 Barrel% <b>{barrel:.1f}</b>"))
         if hh is not None and hh >= 42.0:
-            candidates.append((hh, f"💥 HardHit% <b>{hh:.1f}</b> — consistently squares up"))
+            cands.append((hh, f"💪 HardHit% <b>{hh:.1f}</b> — squares up"))
         elif hh is not None and hh >= 38.0:
-            candidates.append((hh, f"💥 HardHit% <b>{hh:.1f}</b>"))
-
+            cands.append((hh, f"💪 HardHit% <b>{hh:.1f}</b>"))
         if iso is not None and iso >= 0.220:
-            candidates.append((iso * 100, f"⚡ ISO <b>{iso:.3f}</b> — top-tier raw power"))
+            cands.append((iso * 100, f"⚡ ISO <b>{iso:.3f}</b> — top-tier raw power"))
         elif iso is not None and iso >= 0.170:
-            candidates.append((iso * 100, f"⚡ ISO <b>{iso:.3f}</b>"))
-
+            cands.append((iso * 100, f"⚡ ISO <b>{iso:.3f}</b>"))
+        if xslg is not None and xslg >= 0.500:
+            cands.append((xslg * 100, f"📈 xSLG <b>{xslg:.3f}</b> — slugger tier"))
         if fb is not None and fb >= 38.0:
-            candidates.append((fb, f"🚀 FB% <b>{fb:.1f}</b> — gets the ball airborne"))
-
+            cands.append((fb, f"🚀 FB% <b>{fb:.1f}</b> — gets it airborne"))
         if pull is not None and pull >= 42.0:
-            candidates.append((pull, f"↗️ Pull% <b>{pull:.1f}</b> — pulls into HR alley"))
-
+            cands.append((pull, f"↗️ Pull% <b>{pull:.1f}</b> — into HR alley"))
+        if bs is not None and bs >= 73.0:
+            cands.append((bs, f"🏏 Bat Speed <b>{bs:.1f}</b> mph"))
+        if ss is not None and ss >= 35.0:
+            cands.append((ss, f"🎯 SweetSpot% <b>{ss:.1f}</b>"))
         if match is not None and match >= 110.0:
-            candidates.append((match, f"🎲 Matchup score <b>{match:.0f}</b> vs {row.get('Opp SP','SP')}"))
-        if ceil is not None and ceil >= 115.0:
-            candidates.append((ceil, f"🏟️ Ceiling <b>{ceil:.0f}</b> (park + weather + opp)"))
+            cands.append((match, f"🆚 Matchup <b>{match:.0f}</b> vs {row.get('Opp SP','SP')}"))
         if khr is not None and khr >= 1.10:
-            candidates.append((khr * 60, f"📈 kHR <b>{khr:.2f}</b> — projected HR rate boost"))
+            cands.append((khr * 60, f"📊 kHR <b>{khr:.2f}</b>"))
 
         try:
             sp = int(spot)
             if 3 <= sp <= 5:
-                candidates.append((90, f"📋 Bats <b>{sp}</b> — heart of the order"))
+                cands.append((90, f"📋 <b>{sp}-hole</b> — heart of the order"))
             elif sp <= 2:
-                candidates.append((85, f"📋 Bats <b>{sp}</b> — extra PA upside"))
+                cands.append((85, f"📋 Bats <b>{sp}</b> — extra PA upside"))
         except Exception:
             pass
-
         try:
             hrn = int(hr_szn)
             if hrn <= 5 and (barrel or 0) >= 7.0:
-                candidates.append((70, f"😴 Only <b>{hrn}</b> HR on season — under-owned sleeper"))
+                cands.append((70, f"😴 Only <b>{hrn}</b> HR on year — under-owned sleeper"))
         except Exception:
             pass
 
-        # Rank by signal strength; cap to 4 distinct reasons.
-        candidates.sort(key=lambda x: -x[0])
-        seen = set()
-        for _, txt in candidates:
+        cands.sort(key=lambda x: -x[0])
+        seen = {r.split("<b>")[0] for r in reasons}
+        for _, txt in cands:
             key = txt.split("<b>")[0]
             if key in seen: continue
             seen.add(key)
             reasons.append(txt)
-            if len(reasons) >= 4:
+            if len(reasons) >= 5:
                 break
 
         if not reasons:
-            reasons.append("🔢 Composite Sleeper Score above slate threshold")
-        return reasons
+            reasons.append("🔢 Composite AI HR Score above slate threshold")
+        return reasons[:5]
 
     legs_2 = _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team, seed=_seed)
     legs_3 = _pick_legs(pool, 3, _avoid_same_game, _avoid_same_team, seed=_seed * 1000 + 7)
-    # Alternate tickets — derived from the same pool with offset seeds so
-    # they differ from the primary ticket but remain data-driven.
     alt_2_a = _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team, seed=_seed + 101)
     alt_2_b = _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team, seed=_seed + 211)
     alt_3_a = _pick_legs(pool, 3, _avoid_same_game, _avoid_same_team, seed=_seed * 1000 + 313)
@@ -5469,61 +5448,90 @@ if _view == "🤖 AI HR Parlay":
         if s >= 55: return ("ok",     "Average")
         return ("soft", "Soft")
 
+    def _fmt_or_dash(v, fmt):
+        try:
+            if v is None: return "—"
+            f = float(v)
+            if pd.isna(f): return "—"
+            return fmt.format(f)
+        except Exception:
+            return "—"
+
+    def _compact_stats_line(leg) -> str:
+        """One-line compact stats: Ceiling · Barrel · HH · ISO · Zone fit · Spot."""
+        parts = []
+        ceil = leg.get("Ceiling")
+        try:
+            cf = float(ceil)
+            if not pd.isna(cf):
+                parts.append(f"Ceiling <b>{cf:.0f}</b>")
+        except Exception:
+            pass
+        b = _fmt_or_dash(leg.get("Barrel%"),  "{:.1f}%")
+        if b != "—": parts.append(f"Barrel <b>{b}</b>")
+        h = _fmt_or_dash(leg.get("HardHit%"), "{:.1f}%")
+        if h != "—": parts.append(f"HH <b>{h}</b>")
+        i = _fmt_or_dash(leg.get("ISO"),      "{:.3f}")
+        if i != "—": parts.append(f"ISO <b>{i}</b>")
+        # Zone fit symbol
+        try:
+            zfv = float(leg.get("Zone Fit"))
+            if not pd.isna(zfv):
+                if (leg.get("__overlap") or []) or zfv >= 0.090:
+                    parts.append("Zone fit <b>+</b>")
+                elif zfv <= 0.040:
+                    parts.append("Zone fit <b>−</b>")
+        except Exception:
+            pass
+        # Lineup spot
+        try:
+            sp = int(leg.get("Spot"))
+            if sp <= 9:
+                parts.append(f"<b>{sp}-hole</b>")
+        except Exception:
+            pass
+        return " · ".join(parts) if parts else "—"
+
     def _render_parlay_card(title: str, legs: list, badge: str) -> str:
         if not legs:
             return (
-                f'<div style="padding:14px;border-radius:14px;background:#fff;'
-                f'box-shadow:0 2px 10px rgba(15,23,42,.06);margin-bottom:16px;">'
-                f'<div style="font-weight:900;font-size:1.05rem;color:#0f3a2e;">{title}</div>'
-                f'<div style="color:#64748b;margin-top:6px;">'
-                f'Not enough qualifying legs for this parlay. Loosen the filters above.'
-                f'</div></div>'
+                f'<div class="aip-card aip-empty">'
+                f'<div class="aip-card-title">{title}</div>'
+                f'<div class="aip-card-sub">Not enough qualifying legs. '
+                f'Loosen the filters above.</div>'
+                f'</div>'
             )
-        avg_score = sum(float(l.get("Sleeper Score", 0) or 0) for l in legs) / max(1, len(legs))
+        avg_score = sum(float(l.get("AI HR Score", 0) or 0) for l in legs) / max(1, len(legs))
         tier_cls, _ = _tier(avg_score)
         leg_html = []
         for i, leg in enumerate(legs, 1):
-            t_cls, t_lbl = _tier(leg.get("Sleeper Score"))
+            t_cls, t_lbl = _tier(leg.get("AI HR Score"))
             reasons = _reasons_for(leg)
             reason_html = "".join(
                 f'<li style="margin:2px 0;">{r}</li>' for r in reasons
             )
             try:
-                sleeper_str = f"{float(leg.get('Sleeper Score', 0)):.1f}"
+                ai_str = f"{float(leg.get('AI HR Score', 0)):.1f}"
             except Exception:
-                sleeper_str = "—"
-            # HR odds chip — populated only when the odds feed returned
-            # a price for this hitter under the chosen book preference.
-            _odds_html = ""
-            _price, _book_lbl, _is_bm = _resolve_hr_odds(
-                str(leg.get("Hitter") or "")
-            )
-            if _price is not None and _book_lbl:
-                _sign = "+" if _price > 0 else ""
-                _chip_cls = "aip-odds-bm" if _is_bm else "aip-odds-best"
-                _odds_html = (
-                    f'<span class="aip-odds {_chip_cls}">'
-                    f'{_book_lbl} {_sign}{_price}</span>'
-                )
-            elif _odds_feed_ready:
-                _odds_html = (
-                    '<span class="aip-odds aip-odds-none">No HR odds</span>'
-                )
+                ai_str = "—"
+            stats_line = _compact_stats_line(leg)
             leg_html.append(
                 f'<div class="aip-leg">'
                 f'  <div class="aip-leg-head">'
                 f'    <div class="aip-leg-num">Leg {i}</div>'
                 f'    <div class="aip-leg-name">{leg.get("Hitter","")}'
-                f'      <span class="aip-meta">· {leg.get("Team","")} · Bat {leg.get("Bat","") or "—"} · Spot {leg.get("Spot","")}</span>'
+                f'      <span class="aip-meta">· {leg.get("Team","")} · '
+                f'Bat {leg.get("Bat","") or "—"} · Spot {leg.get("Spot","")}</span>'
                 f'    </div>'
                 f'    <div class="aip-leg-score">'
-                f'      <span class="aip-score">{sleeper_str}</span>'
+                f'      <span class="aip-score">{ai_str}</span>'
                 f'      <span class="hrs-pill {t_cls}">{t_lbl}</span>'
                 f'    </div>'
                 f'  </div>'
-                f'  <div class="aip-ctx">{leg.get("Game","")} <span style="color:#94a3b8;">·</span> vs <b>{leg.get("Opp SP","")}</b>'
-                f'    {(" <span style=\"color:#94a3b8;\">·</span> " + _odds_html) if _odds_html else ""}'
-                f'  </div>'
+                f'  <div class="aip-ctx">{leg.get("Game","")} '
+                f'<span style="color:#94a3b8;">·</span> vs '
+                f'<b>{leg.get("Opp SP","")}</b></div>'
+                f'  <div class="aip-stats">{stats_line}</div>'
                 f'  <ul class="aip-reasons">{reason_html}</ul>'
                 f'</div>'
             )
@@ -5533,8 +5541,8 @@ if _view == "🤖 AI HR Parlay":
             f'  <div class="aip-card-head">'
             f'    <div>'
             f'      <div class="aip-card-title">{title}</div>'
-            f'      <div class="aip-card-sub">{len(legs)} legs · avg Sleeper Score '
-            f'<b>{avg_score:.1f}</b></div>'
+            f'      <div class="aip-card-sub">{len(legs)} legs · '
+            f'avg AI HR Score <b>{avg_score:.1f}</b></div>'
             f'    </div>'
             f'    <span class="hrs-pill {tier_cls} aip-badge">{badge}</span>'
             f'  </div>'
@@ -5545,8 +5553,9 @@ if _view == "🤖 AI HR Parlay":
     css = (
         "<style>"
         ".aip-card { background:#fff; border-radius:14px; padding:14px 14px 8px 14px; "
-        "  box-shadow:0 2px 10px rgba(15,23,42,.06); margin: 8px 0 16px 0; "
+        "  box-shadow:0 2px 12px rgba(15,23,42,.07); margin: 8px 0 16px 0; "
         "  border-left:5px solid #0f3a2e; }"
+        ".aip-card.aip-empty { border-left-color:#cbd5e1; padding:14px; }"
         ".aip-card-head { display:flex; align-items:center; justify-content:space-between; "
         "  gap:10px; margin-bottom:6px; flex-wrap:wrap; }"
         ".aip-card-title { font-weight:900; font-size:1.08rem; color:#0f3a2e; "
@@ -5565,23 +5574,20 @@ if _view == "🤖 AI HR Parlay":
         ".aip-leg-score { display:flex; align-items:center; gap:6px; }"
         ".aip-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
         "  font-variant-numeric: tabular-nums; }"
-        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 6px 0; }"
-        ".aip-odds { display:inline-block; padding:2px 7px; border-radius:6px; "
-        "  font-size:.78rem; font-weight:800; letter-spacing:.01em; "
+        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 4px 0; }"
+        ".aip-stats { color:#0f172a; font-size:.84rem; margin: 0 0 4px 0; "
+        "  background:#f8fafc; border-radius:6px; padding:5px 8px; "
         "  font-variant-numeric: tabular-nums; }"
-        ".aip-odds-bm   { background:#0f3a2e; color:#fcd34d; }"
-        ".aip-odds-best { background:#1e293b; color:#e2e8f0; }"
-        ".aip-odds-none { background:#f1f5f9; color:#64748b; font-weight:600; }"
         ".aip-reasons { margin: 4px 0 2px 18px; padding:0; color:#0f172a; "
         "  font-size:.88rem; }"
         ".aip-reasons li { margin: 1px 0; line-height:1.35; }"
         ".aip-disclaimer { color:#64748b; font-size:.78rem; margin: 6px 2px 12px 2px; "
         "  font-style:italic; }"
         "@media (max-width:520px) { .aip-leg-name { font-size:.92rem; } "
-        "  .aip-card-title { font-size:1rem; } .aip-reasons { font-size:.84rem; } }"
+        "  .aip-card-title { font-size:1rem; } .aip-reasons { font-size:.84rem; } "
+        "  .aip-stats { font-size:.80rem; } }"
         "</style>"
     )
-
     st.markdown(css, unsafe_allow_html=True)
 
     badge_2 = f"{_risk} · 2-leg · #{_seed}"
@@ -5592,15 +5598,10 @@ if _view == "🤖 AI HR Parlay":
                 unsafe_allow_html=True)
 
     if _show_alts:
-        # De-duplicate alternates against the primary picks (and each other)
-        # by hitter-name signature so users actually see different tickets.
         def _sig(legs_):
             return tuple(sorted(str(l.get("Hitter", "")) for l in (legs_ or [])))
-
         seen_2 = {_sig(legs_2)}
         seen_3 = {_sig(legs_3)}
-        # Pull additional candidate alternates with more seed offsets if
-        # the first attempts collide with the primary ticket.
         extra_seeds = [331, 433, 547, 659, 773, 887]
         alt_2_pool = [alt_2_a, alt_2_b] + [
             _pick_legs(pool, 2, _avoid_same_game, _avoid_same_team, seed=_seed + s)
@@ -5610,27 +5611,17 @@ if _view == "🤖 AI HR Parlay":
             _pick_legs(pool, 3, _avoid_same_game, _avoid_same_team, seed=_seed * 1000 + s)
             for s in extra_seeds
         ]
-
-        chosen_2 = []
+        chosen_2, chosen_3 = [], []
         for cand in alt_2_pool:
             sig = _sig(cand)
-            if sig in seen_2 or not cand:
-                continue
-            seen_2.add(sig)
-            chosen_2.append(cand)
-            if len(chosen_2) >= 2:
-                break
-
-        chosen_3 = []
+            if sig in seen_2 or not cand: continue
+            seen_2.add(sig); chosen_2.append(cand)
+            if len(chosen_2) >= 2: break
         for cand in alt_3_pool:
             sig = _sig(cand)
-            if sig in seen_3 or not cand:
-                continue
-            seen_3.add(sig)
-            chosen_3.append(cand)
-            if len(chosen_3) >= 2:
-                break
-
+            if sig in seen_3 or not cand: continue
+            seen_3.add(sig); chosen_3.append(cand)
+            if len(chosen_3) >= 2: break
         if chosen_2 or chosen_3:
             st.markdown(
                 '<div class="section-title" style="font-size:1.08rem;margin-top:6px;">'
@@ -5652,45 +5643,47 @@ if _view == "🤖 AI HR Parlay":
                 unsafe_allow_html=True,
             )
 
-    # Source freshness row — same chips used elsewhere.
+    # Source freshness row — odds chip removed; AI tab is feed-independent.
     st.markdown(
         render_source_chips([
             "savant:batters", "savant:pitchers",
             "statsapi:schedule", "statsapi:boxscore",
-            "openmeteo:weather", "oddsapi:hr_props",
+            "openmeteo:weather",
         ]),
         unsafe_allow_html=True,
     )
 
-    # Disclaimer.
     st.markdown(
         '<div class="aip-disclaimer">'
         '⚠️ <b>Disclaimer:</b> Recommendations are model-driven analytics built '
         'from public Statcast / StatsAPI / weather data — <b>not guaranteed outcomes</b>. '
-        'Verify lineups and live odds with your sportsbook before placing any bet. '
-        'Bet responsibly.'
+        'Verify lineups with your sportsbook before placing any bet. Bet responsibly.'
         '</div>',
         unsafe_allow_html=True,
     )
 
-    with st.expander("How the AI picks legs"):
+    with st.expander("How the AI HR Score works"):
         st.markdown(
-            "- Pool: top batters by **HR Sleeper Score** (Barrel% 22 · HardHit% 14 · "
-            "ISO 10 · FB% 7 · Pull% 7 · Matchup 10 · Ceiling 8 · kHR 7 · "
-            "Sleeper bonus 15).\n"
-            "- **Risk profile** sets minimum Sleeper Score, Barrel%, HardHit%, and "
-            "max lineup spot.\n"
-            "- **Avoid same game / team** prevents correlated legs that tend to "
-            "blow up together.\n"
-            "- Reasons per leg surface the 3–4 strongest signals — power profile, "
-            "park/weather/opposing-SP matchup, lineup spot, and sleeper context.\n"
-            "- All inputs come from the same data feeding the **HR Sleepers** "
-            "tab — refresh the slate to update.\n"
-            "- **Generate New Parlays** rerolls the tickets via score-weighted "
-            "sampling on the same qualifying pool — you stay inside the model's "
-            "high-ranked candidates, you just see a different valid combination."
+            "**AI HR Score (0-100)** — augments HR Sleeper Score with explicit "
+            "Ceiling and pitch-zone fit weighting:\n"
+            "- **55%** HR Sleeper Score (Barrel%, HardHit%, ISO, FB%, Pull%, "
+            "Matchup, Ceiling, kHR, sleeper bonus)\n"
+            "- **18% Ceiling** — park × weather × raw power × opposing SP\n"
+            "- **10% Zone Fit** — hitter hot zones (pull/FB/LD profile + platoon) "
+            "vs pitcher tendencies\n"
+            "- **7% Pitch overlap** — hitter's top crushed pitches actually appear "
+            "in the opposing SP's arsenal\n"
+            "- **5% Bat Speed** (Savant bat-tracking)\n"
+            "- **5% Composite power** (xSLG + SweetSpot%)\n\n"
+            "**Pool:** every eligible lineup hitter on upcoming/live games — "
+            "not just the top-N stars. **Sleeper Hunt** profile boosts under-owned "
+            "bats (low season HR + lower lineup spot) so sleepers can win a slot.\n\n"
+            "**Selection:** weighted sampling by AI HR Score (no pure top-rank "
+            "sort), with Avoid-same-game/team constraints. **Generate New Parlays** "
+            "rerolls within the same eligible pool."
         )
     st.stop()
+
 
 # ----- Game selector: clickable HTML pill carousel driven by ?g=<idx> query param -----
 labels = schedule_df["label"].tolist()

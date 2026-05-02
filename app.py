@@ -4923,10 +4923,9 @@ if _view == "🤖 AI HR Parlay":
             "Only HR odds +X or longer",
             value=False,
             key="ai_parlay_odds_filter",
-            disabled=not _odds_feed_ready,
             help=("Restrict the candidate pool to home-run players with "
                   "American odds at or above the minimum below. Requires "
-                  "an odds feed; uses BetMGM when available."),
+                  "an odds feed (ODDS_API_KEY); uses BetMGM when available."),
         )
     with o_cols[1]:
         _min_hr_odds = st.number_input(
@@ -4947,15 +4946,28 @@ if _view == "🤖 AI HR Parlay":
         )
     with o_cols[3]:
         if not _odds_feed_ready:
-            st.markdown(
-                '<div style="padding:8px 10px;border-left:3px solid #b45309;'
-                'background:#fffbeb;border-radius:6px;color:#78350f;'
-                'font-size:.82rem;line-height:1.35;">'
-                'ℹ️ HR odds filter requires a configured odds feed '
-                '(<code>ODDS_API_KEY</code>); generating from model scores only.'
-                '</div>',
-                unsafe_allow_html=True,
-            )
+            if _odds_filter_on:
+                st.markdown(
+                    '<div style="padding:8px 10px;border-left:3px solid #b91c1c;'
+                    'background:#fef2f2;border-radius:6px;color:#7f1d1d;'
+                    'font-size:.82rem;line-height:1.35;">'
+                    '⚠️ <b>HR odds filter selected but no odds feed is configured.</b><br>'
+                    'Add <code>ODDS_API_KEY</code> to Streamlit secrets to enable '
+                    'live BetMGM/HR odds filtering. Generation is paused until '
+                    'the feed is available or the filter is unchecked.'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div style="padding:8px 10px;border-left:3px solid #b45309;'
+                    'background:#fffbeb;border-radius:6px;color:#78350f;'
+                    'font-size:.82rem;line-height:1.35;">'
+                    'ℹ️ HR odds filter requires a configured odds feed '
+                    '(<code>ODDS_API_KEY</code>); generating from model scores only.'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
         else:
             _bm_count = sum(1 for v in hr_odds_map.values()
                             if v.get("bet_mgm") is not None)
@@ -5021,6 +5033,18 @@ if _view == "🤖 AI HR Parlay":
     pool = pool[pool["HardHit%"].fillna(0) >= float(min_hh)]
     pool = pool[pool["Spot"].fillna(99).astype(int) <= int(max_spot)]
     pool = pool[pool["HR (Season)"].fillna(0).astype(int) <= int(max_hr_szn)]
+
+    # If the user explicitly selected the HR-odds filter but no odds feed
+    # is configured, stop with a clear warning rather than silently
+    # ignoring the filter or fabricating odds.
+    if _odds_filter_on and not _odds_feed_ready:
+        st.warning(
+            "HR odds filter is selected but no odds feed is configured. "
+            "Add **ODDS_API_KEY** to Streamlit secrets to enable live "
+            "BetMGM/HR odds filtering, or uncheck **Only HR odds +X or "
+            "longer** to generate model-only tickets."
+        )
+        st.stop()
 
     # Apply HR-odds filter BEFORE candidate-pool truncation so the top-N
     # pool is filled with players who actually meet the odds threshold.

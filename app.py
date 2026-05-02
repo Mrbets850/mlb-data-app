@@ -1167,8 +1167,67 @@ def summarize_park_ou(totals: list, line: float = None) -> dict:
     return out
 
 # ---------------------------------------------------------------------------
+# Odds API key resolution. Looks for the canonical ODDS_API_KEY first, then a
+# small set of common aliases people set up by mistake. Checks st.secrets and
+# environment variables. Returns (key:str|None, source_label:str|None). The
+# source label is safe to display ("secrets:ODDS_API_KEY", "env:THE_ODDS_API")
+# and never includes the value itself.
+# ---------------------------------------------------------------------------
+ODDS_API_KEY_ALIASES = (
+    "ODDS_API_KEY",
+    "THE_ODDS_API_KEY",
+    "THE_ODDS_API",
+    "ODDSAPI_KEY",
+)
+
+# Public diagnostic snapshot for the HR-props fetcher. Populated by
+# get_hr_player_odds_map(). Cleared/replaced on every fetch attempt. Kept
+# at module scope (not @st.cache_data) so the UI can read fresh status even
+# when the cached fetcher returns an empty dict from a prior call.
+HR_ODDS_DIAG: dict = {
+    "key_present":    False,
+    "key_source":     None,   # e.g. "secrets:ODDS_API_KEY" — never the key itself
+    "key_tail":       None,   # last 4 chars only, for confirmation
+    "events_checked": 0,
+    "events_with_hr_market": 0,
+    "events_failed":  0,
+    "players_found":  0,
+    "betmgm_lines":   0,
+    "status":         "uninitialized",
+    "last_error":     "",
+    "http_status":    None,
+}
+
+
+def _get_odds_api_key() -> "tuple[str | None, str | None, str | None]":
+    """Resolve the Odds API key from st.secrets first, then environment.
+
+    Returns (key, source_label, last4). Source label looks like
+    "secrets:ODDS_API_KEY" or "env:THE_ODDS_API"; last4 is only the trailing
+    four characters of the key, safe to surface in diagnostics.
+    """
+    # st.secrets behaves like a dict but can raise on missing / unconfigured.
+    for name in ODDS_API_KEY_ALIASES:
+        try:
+            val = st.secrets[name]  # type: ignore[index]
+        except Exception:
+            val = None
+        if val:
+            s = str(val).strip()
+            if s:
+                return s, f"secrets:{name}", s[-4:] if len(s) >= 4 else "****"
+    for name in ODDS_API_KEY_ALIASES:
+        val = os.environ.get(name)
+        if val:
+            s = str(val).strip()
+            if s:
+                return s, f"env:{name}", s[-4:] if len(s) >= 4 else "****"
+    return None, None, None
+
+
+# ---------------------------------------------------------------------------
 # Sportsbook O/U totals via the-odds-api.com (free 500/mo tier)
-# Looks for st.secrets["ODDS_API_KEY"]; if missing, returns empty dict.
+# Uses _get_odds_api_key() so common alias names also work.
 # Cached 30 min so we don't burn requests.
 # ---------------------------------------------------------------------------
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1177,16 +1236,12 @@ def get_odds_totals_map() -> dict:
     Returns {} if API key not configured or call fails."""
     SRC = "oddsapi:totals"
     LABEL = "the-odds-api · MLB totals (O/U lines)"
-    try:
-        key = st.secrets["ODDS_API_KEY"]
-    except Exception:
-        record_source(SRC, label=LABEL, status="unconfigured",
-                      detail="No ODDS_API_KEY secret. Park-history O/U falls back to no book line.",
-                      max_age_min=60)
-        return {}
+    key, key_src, _tail = _get_odds_api_key()
     if not key:
         record_source(SRC, label=LABEL, status="unconfigured",
-                      detail="ODDS_API_KEY is empty.",
+                      detail=("No Odds API key found. Add ODDS_API_KEY "
+                              "(or one of: " + ", ".join(ODDS_API_KEY_ALIASES[1:])
+                              + ") to Streamlit secrets."),
                       max_age_min=60)
         return {}
     url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
@@ -1229,8 +1284,9 @@ def get_odds_totals_map() -> dict:
 
 # ---------------------------------------------------------------------------
 # Player HR prop odds (To Hit a Home Run, "batter_home_runs" market) via
-# the-odds-api.com event endpoints. Looks for st.secrets["ODDS_API_KEY"];
-# missing/empty key returns {} so callers can no-op.
+# the-odds-api.com event endpoints. Resolves the API key via
+# _get_odds_api_key() (supports ODDS_API_KEY plus common aliases in both
+# st.secrets and env). Missing/empty key returns {} so callers can no-op.
 #
 # Returns: { clean_name(player) : {
 #     "best_book": str, "best_price": int,         # highest American price
@@ -1244,34 +1300,61 @@ def get_odds_totals_map() -> dict:
 def get_hr_player_odds_map() -> dict:
     SRC = "oddsapi:hr_props"
     LABEL = "the-odds-api · MLB batter_home_runs (To Hit a HR)"
-    try:
-        key = st.secrets["ODDS_API_KEY"]
-    except Exception:
-        record_source(SRC, label=LABEL, status="unconfigured",
-                      detail="No ODDS_API_KEY secret. HR-odds filter unavailable.",
-                      max_age_min=30)
-        return {}
+    # Reset shared diagnostic snapshot so the UI never shows stale numbers
+    # from a previous run when this attempt fails early.
+    HR_ODDS_DIAG.update({
+        "key_present": False, "key_source": None, "key_tail": None,
+        "events_checked": 0, "events_with_hr_market": 0, "events_failed": 0,
+        "players_found": 0, "betmgm_lines": 0,
+        "status": "uninitialized", "last_error": "", "http_status": None,
+    })
+    key, key_src, key_tail = _get_odds_api_key()
     if not key:
+        HR_ODDS_DIAG.update({
+            "status": "no_key",
+            "last_error": ("No Odds API key found. Tried: "
+                           + ", ".join(ODDS_API_KEY_ALIASES)
+                           + " in st.secrets and environment."),
+        })
         record_source(SRC, label=LABEL, status="unconfigured",
-                      detail="ODDS_API_KEY is empty. HR-odds filter unavailable.",
+                      detail=HR_ODDS_DIAG["last_error"],
                       max_age_min=30)
         return {}
+    HR_ODDS_DIAG.update({
+        "key_present": True, "key_source": key_src, "key_tail": key_tail,
+    })
 
     events_url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/events"
     try:
         r = requests.get(events_url, params={"apiKey": key, "dateFormat": "iso"},
                          timeout=15)
+        HR_ODDS_DIAG["http_status"] = r.status_code
+        if r.status_code == 401 or r.status_code == 403:
+            msg = (f"Events fetch unauthorized (HTTP {r.status_code}). "
+                   f"Key from {key_src} is invalid or revoked.")
+            HR_ODDS_DIAG.update({"status": "auth_error", "last_error": msg})
+            record_source(SRC, label=LABEL, url=events_url, status="error",
+                          detail=msg, max_age_min=30)
+            return {}
+        if r.status_code == 429:
+            msg = "Quota/rate limit reached on the-odds-api (HTTP 429)."
+            HR_ODDS_DIAG.update({"status": "rate_limited", "last_error": msg})
+            record_source(SRC, label=LABEL, url=events_url, status="error",
+                          detail=msg, max_age_min=30)
+            return {}
         r.raise_for_status()
         events = r.json() or []
     except Exception as exc:
+        msg = f"Events fetch failed: {exc}"
+        HR_ODDS_DIAG.update({"status": "network_error", "last_error": msg})
         record_source(SRC, label=LABEL, url=events_url, status="error",
-                      detail=f"Events fetch failed: {exc}",
-                      max_age_min=30)
+                      detail=msg, max_age_min=30)
         return {}
 
     out: dict = {}
     parsed_events = 0
     failed_events = 0
+    events_with_hr_market = 0
     for ev in events:
         ev_id = ev.get("id")
         if not ev_id:
@@ -1289,18 +1372,29 @@ def get_hr_player_odds_map() -> dict:
             er = requests.get(ev_url, params=params, timeout=15)
             if er.status_code != 200:
                 failed_events += 1
+                # Record the first non-200 status for diagnostics so the user
+                # can see e.g. 422 "market unavailable" rather than silence.
+                if not HR_ODDS_DIAG["last_error"]:
+                    body = (er.text or "")[:160].replace("\n", " ")
+                    HR_ODDS_DIAG["last_error"] = (
+                        f"Event {ev_id} returned HTTP {er.status_code}: {body}"
+                    )
                 continue
             edata = er.json() or {}
-        except Exception:
+        except Exception as exc:
             failed_events += 1
+            if not HR_ODDS_DIAG["last_error"]:
+                HR_ODDS_DIAG["last_error"] = f"Event fetch error: {exc}"
             continue
         parsed_events += 1
+        ev_had_hr_market = False
         for book in edata.get("bookmakers", []) or []:
             book_key = str(book.get("key") or "").lower()
             book_title = book.get("title") or book_key
             for market in book.get("markets", []) or []:
                 if market.get("key") != "batter_home_runs":
                     continue
+                ev_had_hr_market = True
                 for o in market.get("outcomes", []) or []:
                     # "Yes" side = "To Hit a HR". the-odds-api typically
                     # uses outcome name == player name with "description"
@@ -1335,20 +1429,49 @@ def get_hr_player_odds_map() -> dict:
                     if price > rec["best_price"]:
                         rec["best_price"] = price
                         rec["best_book"] = book_title
+        if ev_had_hr_market:
+            events_with_hr_market += 1
 
+    betmgm_lines = sum(1 for v in out.values() if v.get("bet_mgm") is not None)
+    HR_ODDS_DIAG.update({
+        "events_checked":         parsed_events + failed_events,
+        "events_with_hr_market":  events_with_hr_market,
+        "events_failed":          failed_events,
+        "players_found":          len(out),
+        "betmgm_lines":           betmgm_lines,
+    })
     if out:
+        HR_ODDS_DIAG["status"] = "live"
         record_source(SRC, label=LABEL, url=events_url, status="live",
                       detail=(f"{len(out)} players w/ HR odds across "
-                              f"{parsed_events} games"
+                              f"{events_with_hr_market} games"
                               + (f"; {failed_events} events skipped"
                                  if failed_events else "")),
                       max_age_min=30)
     else:
+        # Distinguish "no events" from "events but no HR market" from "all events failed".
+        if not events:
+            HR_ODDS_DIAG["status"] = "no_events"
+            detail = ("No upcoming MLB events returned by the-odds-api. "
+                      "There may be no games scheduled in the feed window.")
+        elif failed_events and not parsed_events:
+            HR_ODDS_DIAG["status"] = "all_events_failed"
+            detail = (f"All {failed_events} event odds requests failed. "
+                      f"Last error: {HR_ODDS_DIAG.get('last_error') or 'unknown'}")
+        elif events_with_hr_market == 0:
+            HR_ODDS_DIAG["status"] = "no_hr_market"
+            detail = ("Events found, but the batter_home_runs market is not "
+                      "currently offered. Player props are typically posted "
+                      "later in the day; try again closer to first pitch. "
+                      "Some Odds API plans also exclude player props — "
+                      "verify your subscription includes them.")
+        else:
+            HR_ODDS_DIAG["status"] = "no_outcomes"
+            detail = ("HR market present but no usable outcomes. "
+                      "This can happen if every outcome lacks a price.")
         record_source(SRC, label=LABEL, url=events_url,
                       status="error" if parsed_events else "unconfigured",
-                      detail=("No HR prop outcomes returned. Plan may not "
-                              "include player-prop markets."),
-                      max_age_min=30)
+                      detail=detail, max_age_min=30)
     return out
 
 @st.cache_data(ttl=1800)
@@ -4944,30 +5067,68 @@ if _view == "🤖 AI HR Parlay":
                   "BetMGM only: exclude players without a BetMGM line. "
                   "Best book: always use the highest American price."),
         )
+    # Pull diagnostic snapshot once so the status note + expander stay in sync.
+    _diag = dict(HR_ODDS_DIAG)
+    _diag_status = str(_diag.get("status") or "uninitialized")
+    _diag_key_present = bool(_diag.get("key_present"))
+
     with o_cols[3]:
         if not _odds_feed_ready:
-            if _odds_filter_on:
-                st.markdown(
-                    '<div style="padding:8px 10px;border-left:3px solid #b91c1c;'
-                    'background:#fef2f2;border-radius:6px;color:#7f1d1d;'
-                    'font-size:.82rem;line-height:1.35;">'
-                    '⚠️ <b>HR odds filter selected but no odds feed is configured.</b><br>'
-                    'Add <code>ODDS_API_KEY</code> to Streamlit secrets to enable '
-                    'live BetMGM/HR odds filtering. Generation is paused until '
-                    'the feed is available or the filter is unchecked.'
-                    '</div>',
-                    unsafe_allow_html=True,
+            # Branch on *why* the feed isn't ready so the message points at the
+            # actual problem (missing key vs. market not posted vs. API error).
+            if not _diag_key_present:
+                msg = (
+                    '⚠️ <b>No Odds API key detected.</b><br>'
+                    'Add one of <code>ODDS_API_KEY</code>, '
+                    '<code>THE_ODDS_API_KEY</code>, <code>THE_ODDS_API</code>, '
+                    'or <code>ODDSAPI_KEY</code> to Streamlit secrets.'
                 )
+                border = "#b91c1c"; bg = "#fef2f2"; fg = "#7f1d1d"
+            elif _diag_status == "auth_error":
+                msg = (
+                    '⚠️ <b>Odds API rejected the key</b> '
+                    f'(HTTP {_diag.get("http_status")}). The key from '
+                    f'<code>{_diag.get("key_source")}</code> is invalid or revoked.'
+                )
+                border = "#b91c1c"; bg = "#fef2f2"; fg = "#7f1d1d"
+            elif _diag_status == "rate_limited":
+                msg = (
+                    '⚠️ <b>Odds API quota/rate limit reached</b> (HTTP 429). '
+                    'Try again later or upgrade your plan.'
+                )
+                border = "#b91c1c"; bg = "#fef2f2"; fg = "#7f1d1d"
+            elif _diag_status == "network_error":
+                msg = (
+                    '⚠️ <b>Network error contacting the-odds-api.</b><br>'
+                    f'<code>{(_diag.get("last_error") or "")[:160]}</code>'
+                )
+                border = "#b91c1c"; bg = "#fef2f2"; fg = "#7f1d1d"
+            elif _diag_status == "no_events":
+                msg = (
+                    'ℹ️ <b>Key works, but no MLB events in the feed window.</b><br>'
+                    'Likely no games scheduled right now.'
+                )
+                border = "#b45309"; bg = "#fffbeb"; fg = "#78350f"
+            elif _diag_status == "no_hr_market":
+                msg = (
+                    'ℹ️ <b>Key works, but the HR (batter_home_runs) market '
+                    'is not currently offered.</b><br>'
+                    'Player props are usually posted later in the day. '
+                    'Verify your Odds API plan includes player-prop markets.'
+                )
+                border = "#b45309"; bg = "#fffbeb"; fg = "#78350f"
             else:
-                st.markdown(
-                    '<div style="padding:8px 10px;border-left:3px solid #b45309;'
-                    'background:#fffbeb;border-radius:6px;color:#78350f;'
-                    'font-size:.82rem;line-height:1.35;">'
-                    'ℹ️ HR odds filter requires a configured odds feed '
-                    '(<code>ODDS_API_KEY</code>); generating from model scores only.'
-                    '</div>',
-                    unsafe_allow_html=True,
+                msg = (
+                    'ℹ️ HR odds filter requires a configured odds feed; '
+                    'generating from model scores only.'
                 )
+                border = "#b45309"; bg = "#fffbeb"; fg = "#78350f"
+            st.markdown(
+                f'<div style="padding:8px 10px;border-left:3px solid {border};'
+                f'background:{bg};border-radius:6px;color:{fg};'
+                f'font-size:.82rem;line-height:1.35;">{msg}</div>',
+                unsafe_allow_html=True,
+            )
         else:
             _bm_count = sum(1 for v in hr_odds_map.values()
                             if v.get("bet_mgm") is not None)
@@ -4979,6 +5140,38 @@ if _view == "🤖 AI HR Parlay":
                 f'BetMGM lines on <b>{_bm_count}</b>.'
                 f'</div>',
                 unsafe_allow_html=True,
+            )
+
+    # ---- Diagnostics expander -------------------------------------------------
+    # Surfaced whenever the user has the odds filter checked OR the feed is
+    # unavailable, so they can self-diagnose without leaving the tab. Never
+    # prints the API key — only its source and last 4 characters.
+    if _odds_filter_on or not _odds_feed_ready:
+        with st.expander("🔎 HR odds diagnostics", expanded=not _odds_feed_ready):
+            _key_line = (
+                f"✅ Yes — from `{_diag.get('key_source')}` "
+                f"(ends ••••{_diag.get('key_tail')})"
+                if _diag_key_present else
+                "❌ No — checked `ODDS_API_KEY`, `THE_ODDS_API_KEY`, "
+                "`THE_ODDS_API`, `ODDSAPI_KEY` in `st.secrets` and environment."
+            )
+            _err = _diag.get("last_error") or ""
+            _http = _diag.get("http_status")
+            st.markdown(
+                f"- **API key detected:** {_key_line}\n"
+                f"- **Events checked:** {_diag.get('events_checked', 0)} "
+                f"(failed: {_diag.get('events_failed', 0)})\n"
+                f"- **Events with HR market:** {_diag.get('events_with_hr_market', 0)}\n"
+                f"- **Players with HR odds:** {_diag.get('players_found', 0)}\n"
+                f"- **BetMGM HR lines:** {_diag.get('betmgm_lines', 0)}\n"
+                f"- **Status:** `{_diag_status}`"
+                + (f" (events HTTP {_http})" if _http else "")
+                + (f"\n- **Last error/note:** {_err}" if _err else "")
+            )
+            st.caption(
+                "Supported secret/env names: "
+                + ", ".join(f"`{n}`" for n in ODDS_API_KEY_ALIASES)
+                + ". Prefer `ODDS_API_KEY`. The key value itself is never displayed."
             )
 
     def _resolve_hr_odds(hitter_name: str):

@@ -6080,27 +6080,124 @@ if _view == "👑 HR Round Robin":
 
     rr_pool["RR Score"] = rr_pool.apply(_rr_composite_score, axis=1)
 
-    # Stable tie-break: by RR Score desc, then Hitter name asc → fully
-    # deterministic top-5 for the day. No randomness, no rerolls.
+    # Stable tie-break: by RR Score desc, then Hitter name asc.
     rr_pool = rr_pool.sort_values(
         ["RR Score", "Hitter"],
         ascending=[False, True],
     ).reset_index(drop=True)
 
+    # ----- Reroll controls --------------------------------------------------
+    # Lineups are "fully locked" only when every hitter in the eligible pool
+    # is officially Confirmed. Until then, allow clients to reroll a fresh
+    # slate of 5 from the qualifying candidate pool.
+    rr_lineup_states = (
+        rr_pool["LineupStatus"].astype(str).tolist()
+        if "LineupStatus" in rr_pool.columns else []
+    )
+    rr_all_confirmed = bool(rr_lineup_states) and all(
+        s == "Confirmed" for s in rr_lineup_states
+    )
+
+    if "rr_reroll_seed" not in st.session_state:
+        st.session_state["rr_reroll_seed"] = 0  # 0 = deterministic baseline
+
+    rr_ctrl_l, rr_ctrl_r = st.columns([3, 1])
+    with rr_ctrl_l:
+        if rr_all_confirmed:
+            st.markdown(
+                '<div style="margin:0 0 8px 0; padding:8px 12px; '
+                'border-left:3px solid #16a34a; background:#ecfdf5; '
+                'border-radius:6px; color:#065f46; font-size:0.88rem;">'
+                '✅ <b>All lineups confirmed</b> — ticket is locked. '
+                'Reroll disabled.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            n_conf = sum(1 for s in rr_lineup_states if s == "Confirmed")
+            n_total = len(rr_lineup_states)
+            st.markdown(
+                f'<div style="margin:0 0 8px 0; padding:8px 12px; '
+                f'border-left:3px solid #2563eb; background:#eff6ff; '
+                f'border-radius:6px; color:#1e3a8a; font-size:0.88rem;">'
+                f'🔁 <b>Lineups still updating</b> — {n_conf}/{n_total} '
+                f'confirmed. Reroll to see different player options until '
+                f'lineups lock.</div>',
+                unsafe_allow_html=True,
+            )
+    with rr_ctrl_r:
+        if st.button(
+            "🎲 Reroll",
+            key="rr_reroll_btn",
+            disabled=rr_all_confirmed,
+            help=("Generates a fresh top-5 from the qualifying HR candidate "
+                  "pool. Disabled once all lineups are confirmed."),
+            use_container_width=True,
+        ):
+            # Bump seed each click so st.session_state drives a new slate.
+            st.session_state["rr_reroll_seed"] = int(
+                st.session_state.get("rr_reroll_seed", 0)
+            ) + 1
+
+    rr_seed = int(st.session_state.get("rr_reroll_seed", 0))
+    if rr_all_confirmed:
+        rr_seed = 0  # Lock the ticket once lineups are confirmed.
+
+    # ----- Top-5 selection (deterministic baseline OR reroll) --------------
     # Diversity guard: don't allow more than 2 from the same game/team in
-    # the top 5 (otherwise stacked games crowd out true variety). We pick
-    # greedily down the sorted list.
-    top5 = []
-    used_games, used_teams = {}, {}
-    for _, r in rr_pool.iterrows():
-        g = str(r.get("Game", "") or "")
-        t = str(r.get("Team", "") or "")
-        if used_games.get(g, 0) >= 2: continue
-        if used_teams.get(t, 0) >= 2: continue
-        top5.append(r)
-        used_games[g] = used_games.get(g, 0) + 1
-        used_teams[t] = used_teams.get(t, 0) + 1
-        if len(top5) == 5: break
+    # the top 5 (otherwise stacked games crowd out true variety).
+    def _pick_top5(pool_df, seed: int):
+        if seed <= 0:
+            # Deterministic: greedy down the sorted list.
+            picks = []
+            used_g, used_t = {}, {}
+            for _, r in pool_df.iterrows():
+                g = str(r.get("Game", "") or "")
+                t = str(r.get("Team", "") or "")
+                if used_g.get(g, 0) >= 2: continue
+                if used_t.get(t, 0) >= 2: continue
+                picks.append(r)
+                used_g[g] = used_g.get(g, 0) + 1
+                used_t[t] = used_t.get(t, 0) + 1
+                if len(picks) == 5: break
+            return picks
+
+        # Reroll: weighted random sample from the top candidates so each
+        # click produces a meaningfully different slate while keeping
+        # candidate quality high. We weight by RR Score so stronger plays
+        # still surface more often.
+        import random
+        rng = random.Random(seed)
+        # Pool size scales with available candidates: up to 15, min 6.
+        pool_size = max(6, min(15, len(pool_df)))
+        candidates = pool_df.head(pool_size).reset_index(drop=True)
+        # Weights: RR Score with a small floor so even the lowest-ranked
+        # candidate in the top-N has a non-zero shot.
+        try:
+            weights = [max(1.0, float(s)) for s in candidates["RR Score"].tolist()]
+        except Exception:
+            weights = [1.0] * len(candidates)
+
+        picks = []
+        used_g, used_t = {}, {}
+        remaining_idx = list(range(len(candidates)))
+        # Weighted sampling without replacement, respecting diversity guard.
+        attempts = 0
+        while remaining_idx and len(picks) < 5 and attempts < 200:
+            attempts += 1
+            sub_w = [weights[i] for i in remaining_idx]
+            chosen = rng.choices(remaining_idx, weights=sub_w, k=1)[0]
+            remaining_idx.remove(chosen)
+            r = candidates.iloc[chosen]
+            g = str(r.get("Game", "") or "")
+            t = str(r.get("Team", "") or "")
+            if used_g.get(g, 0) >= 2: continue
+            if used_t.get(t, 0) >= 2: continue
+            picks.append(r)
+            used_g[g] = used_g.get(g, 0) + 1
+            used_t[t] = used_t.get(t, 0) + 1
+        return picks
+
+    top5 = _pick_top5(rr_pool, rr_seed)
     # Backfill if diversity guard left us short (small slates)
     if len(top5) < 5:
         taken = {row["Hitter"] for row in top5}
@@ -6115,6 +6212,9 @@ if _view == "👑 HR Round Robin":
             "Round Robin needs at least 5 — check back when more lineups post."
         )
         st.stop()
+
+    if rr_seed > 0:
+        st.caption(f"🎲 Reroll #{rr_seed} · fresh slate from the qualifying pool")
 
     # ----- Why-top-5 reason builder ---------------------------------------
     def _rr_why(row) -> list:
@@ -6271,10 +6371,13 @@ if _view == "👑 HR Round Robin":
             "- **4%** xwOBA, **4%** FB%, **3%** Pull%, **3%** SweetSpot%, **3%** Launch Angle\n"
             "- **5%** Bat Speed, **3%** kHR, **5%** Matchup vs SP\n"
             "- **5%** Lineup spot (heart of order weighted), **3%** Season HR (capped)\n\n"
-            "The top-5 is **deterministic** for the slate — sorted by RR Score "
-            "with a stable name tie-break and a diversity guard (max 2 hitters per "
-            "team / per game). It does not reroll. If lineups change, the data "
-            "feeding the score updates and the card refreshes accordingly."
+            "The baseline top-5 is **deterministic** — sorted by RR Score with "
+            "a stable name tie-break and a diversity guard (max 2 hitters per "
+            "team / per game). While lineups are still being posted you can "
+            "**🎲 Reroll** to pull a fresh top-5 from the qualifying candidate "
+            "pool — weighted by RR Score so quality stays high while giving "
+            "clients alternative options. Once **every eligible hitter's "
+            "lineup is Confirmed**, reroll disables and the ticket locks."
         )
     st.stop()
 

@@ -5862,11 +5862,11 @@ if _view == "🤖 AI HR Parlay":
 
 
 # ============== HR Round Robin view (MRBETS850) ==============
-# Stable, deterministic top-5 HR parlay generator for the slate. Picks the
-# 5 best overall HR plays using every available metric — not just the biggest
-# names. Same eligibility rules as AI HR Parlay (no completed games). Output
-# is presented as a polished round-robin ticket with player cards and the
-# standard round-robin combo summary.
+# Re-rollable top-5 HR parlay generator for the slate. Picks 5 strong HR plays
+# from a quality-gated candidate pool. Until every game's lineup is officially
+# confirmed by MLB, clients can hit the "🔄 Reroll" button to generate a fresh
+# set of player options. Once the entire slate is confirmed, the ticket locks
+# to the deterministic top-5 so a final selection can be placed.
 if _view == "👑 HR Round Robin":
     # ----- Headline + logo -------------------------------------------------
     st.markdown(
@@ -6080,34 +6080,136 @@ if _view == "👑 HR Round Robin":
 
     rr_pool["RR Score"] = rr_pool.apply(_rr_composite_score, axis=1)
 
-    # Stable tie-break: by RR Score desc, then Hitter name asc → fully
-    # deterministic top-5 for the day. No randomness, no rerolls.
+    # Sort once by score (descending), name asc as deterministic tie-break.
     rr_pool = rr_pool.sort_values(
         ["RR Score", "Hitter"],
         ascending=[False, True],
     ).reset_index(drop=True)
 
-    # Diversity guard: don't allow more than 2 from the same game/team in
-    # the top 5 (otherwise stacked games crowd out true variety). We pick
-    # greedily down the sorted list.
-    top5 = []
-    used_games, used_teams = {}, {}
-    for _, r in rr_pool.iterrows():
-        g = str(r.get("Game", "") or "")
-        t = str(r.get("Team", "") or "")
-        if used_games.get(g, 0) >= 2: continue
-        if used_teams.get(t, 0) >= 2: continue
-        top5.append(r)
-        used_games[g] = used_games.get(g, 0) + 1
-        used_teams[t] = used_teams.get(t, 0) + 1
-        if len(top5) == 5: break
-    # Backfill if diversity guard left us short (small slates)
-    if len(top5) < 5:
-        taken = {row["Hitter"] for row in top5}
-        for _, r in rr_pool.iterrows():
-            if r["Hitter"] in taken: continue
-            top5.append(r)
-            if len(top5) == 5: break
+    # ----- Slate lineup-confirmation status -------------------------------
+    # Once every eligible game has its official lineup posted by MLB, the
+    # ticket locks to the deterministic top-5. Until then, clients can
+    # reroll to surface alternative player options.
+    _slate_conf = {"Confirmed": 0, "Projected": 0, "Not Posted": 0}
+    for _, _g in rr_schedule.iterrows():
+        try:
+            _gctx = build_game_context(_g)
+        except Exception:
+            continue
+        for _side_status in (_gctx.get("away_status"), _gctx.get("home_status")):
+            _key = _side_status if _side_status in _slate_conf else "Not Posted"
+            _slate_conf[_key] += 1
+    _total_sides = sum(_slate_conf.values()) or 1
+    _all_confirmed = (_slate_conf["Projected"] == 0
+                      and _slate_conf["Not Posted"] == 0
+                      and _slate_conf["Confirmed"] > 0)
+
+    # ----- Reroll controls ------------------------------------------------
+    # Per-slate session_state key so switching dates resets the reroll counter.
+    _rr_state_key   = f"rr_reroll_seed::{selected_date}"
+    _rr_count_key   = f"rr_reroll_count::{selected_date}"
+    if _rr_state_key not in st.session_state:
+        st.session_state[_rr_state_key] = 0  # 0 = deterministic top-5 / no reroll yet
+    if _rr_count_key not in st.session_state:
+        st.session_state[_rr_count_key] = 0
+
+    _ctrl_l, _ctrl_r = st.columns([3, 2])
+    with _ctrl_l:
+        if _all_confirmed:
+            st.markdown(
+                '<div style="margin:0 0 6px 0; padding:8px 12px; '
+                'border-left:3px solid #16a34a; background:#ecfdf5; '
+                'border-radius:6px; color:#065f46; font-size:0.88rem;">'
+                '🔒 <b>Lineups confirmed across the slate.</b> Ticket is '
+                'locked to the deterministic top-5 — rerolls disabled.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            _pending = _slate_conf["Projected"] + _slate_conf["Not Posted"]
+            st.markdown(
+                f'<div style="margin:0 0 6px 0; padding:8px 12px; '
+                f'border-left:3px solid #f59e0b; background:#fff7ed; '
+                f'border-radius:6px; color:#7c2d12; font-size:0.88rem;">'
+                f'🔄 <b>Lineups not fully confirmed</b> · '
+                f'{_slate_conf["Confirmed"]}/{_total_sides} sides confirmed, '
+                f'{_pending} still projected/TBD. Reroll for alternative '
+                f'player options until MLB posts the rest.'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    with _ctrl_r:
+        _rr_clicks = st.session_state[_rr_count_key]
+        _label = (
+            f"🔄 Reroll ticket"
+            + (f" · #{_rr_clicks}" if _rr_clicks else "")
+        )
+        if st.button(_label, key=f"rr_reroll_btn::{selected_date}",
+                     disabled=_all_confirmed, use_container_width=True,
+                     help=("Disabled — lineups confirmed, ticket locked"
+                           if _all_confirmed
+                           else "Generate a fresh set of 5 HR options")):
+            st.session_state[_rr_count_key] = _rr_clicks + 1
+            # New seed each click so combinations actually vary.
+            st.session_state[_rr_state_key] = (
+                int(pd.Timestamp.utcnow().value) ^ (_rr_clicks + 1)
+            )
+        if _rr_clicks and not _all_confirmed:
+            if st.button("↺ Reset to top-5",
+                         key=f"rr_reset_btn::{selected_date}",
+                         use_container_width=True,
+                         help="Show the deterministic top-5 again"):
+                st.session_state[_rr_count_key] = 0
+                st.session_state[_rr_state_key] = 0
+
+    _seed = int(st.session_state[_rr_state_key])
+
+    # ----- Build candidate pool & pick 5 ---------------------------------
+    # Diversity guard: max 2 per game / per team in the chosen 5.
+    def _pick_with_diversity(ordered_rows):
+        picks, ug, ut = [], {}, {}
+        for r in ordered_rows:
+            g = str(r.get("Game", "") or "")
+            t = str(r.get("Team", "") or "")
+            if ug.get(g, 0) >= 2: continue
+            if ut.get(t, 0) >= 2: continue
+            picks.append(r)
+            ug[g] = ug.get(g, 0) + 1
+            ut[t] = ut.get(t, 0) + 1
+            if len(picks) == 5:
+                return picks
+        # Backfill (small slates): drop the diversity guard if it left us short
+        if len(picks) < 5:
+            taken = {p["Hitter"] for p in picks}
+            for r in ordered_rows:
+                if r["Hitter"] in taken: continue
+                picks.append(r)
+                if len(picks) == 5: break
+        return picks
+
+    if _seed == 0 or _all_confirmed:
+        # Deterministic top-5: walk the sorted pool greedily.
+        top5 = _pick_with_diversity([r for _, r in rr_pool.iterrows()])
+    else:
+        # Rerolled pick: weighted-random sample from the top of the pool so
+        # quality stays high but combinations actually vary across clicks.
+        # Pool size scales with available hitters (15..min(40, n)).
+        _n = len(rr_pool)
+        _pool_size = max(15, min(40, _n))
+        _candidates = rr_pool.head(_pool_size).copy().reset_index(drop=True)
+        # Score-based weights: top scorers picked more often, but everyone
+        # in the pool has a real shot. Use rank-decay rather than raw score
+        # so the distribution is stable even when scores cluster tightly.
+        _rng = np.random.default_rng(_seed)
+        _ranks = np.arange(1, len(_candidates) + 1, dtype=float)
+        _weights = 1.0 / np.power(_ranks, 0.65)
+        _weights = _weights / _weights.sum()
+        # Sample a generous slice (15) without replacement, then apply the
+        # diversity guard in sampled order to land at 5.
+        _take = min(len(_candidates), 15)
+        _idx = _rng.choice(len(_candidates), size=_take, replace=False, p=_weights)
+        _ordered = [_candidates.iloc[int(i)] for i in _idx]
+        top5 = _pick_with_diversity(_ordered)
 
     if len(top5) < 5:
         st.info(
@@ -6271,10 +6373,16 @@ if _view == "👑 HR Round Robin":
             "- **4%** xwOBA, **4%** FB%, **3%** Pull%, **3%** SweetSpot%, **3%** Launch Angle\n"
             "- **5%** Bat Speed, **3%** kHR, **5%** Matchup vs SP\n"
             "- **5%** Lineup spot (heart of order weighted), **3%** Season HR (capped)\n\n"
-            "The top-5 is **deterministic** for the slate — sorted by RR Score "
-            "with a stable name tie-break and a diversity guard (max 2 hitters per "
-            "team / per game). It does not reroll. If lineups change, the data "
-            "feeding the score updates and the card refreshes accordingly."
+            "The default top-5 is **deterministic** — sorted by RR Score with "
+            "a stable name tie-break and a diversity guard (max 2 hitters per "
+            "team / per game).\n\n"
+            "**Reroll:** until every game on the slate has its official lineup "
+            "confirmed by MLB, you can hit **🔄 Reroll** to generate a fresh "
+            "5 from the top of the qualifying pool. Each reroll uses a "
+            "weighted-random sample of the top 15-40 candidates (rank-decayed "
+            "so high-RR hitters appear most often, but real alternatives still "
+            "surface). Once every lineup is confirmed, the ticket locks back "
+            "to the deterministic top-5 and rerolls are disabled."
         )
     st.stop()
 

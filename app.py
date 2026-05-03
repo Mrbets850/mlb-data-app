@@ -2464,29 +2464,6 @@ def build_rolling_table(lineup_df, batters_df, window):
     if not df.empty: df = df.sort_values("Spot").reset_index(drop=True)
     return df
 
-def build_pitcher_zones_table(pitcher_name, pitchers_df):
-    """Pitcher arsenal table — uses the FF/SL/CH/CU/SI/FC pitch-mix columns."""
-    p = find_pitcher_row(pitchers_df, pitcher_name)
-    if p is None: return pd.DataFrame(columns=["Pitch", "Velo", "Spin", "H Break", "V Break"])
-    pitches = [
-        ("4-Seam",  "ff"), ("Sinker",  "si"),
-        ("Cutter",  "fc"), ("Slider",  "sl"),
-        ("Curve",   "cu"), ("Change",  "ch"),
-    ]
-    rows = []
-    for label, prefix in pitches:
-        n = safe_float(p.get(f"n_{prefix}_formatted"), 0)
-        if n <= 0: continue
-        rows.append({
-            "Pitch": label,
-            "Usage%": round(n, 1),
-            "Velo": round(safe_float(p.get(f"{prefix}_avg_speed")), 1),
-            "Spin": int(safe_float(p.get(f"{prefix}_avg_spin"))),
-            "H Break": round(safe_float(p.get(f"{prefix}_avg_break_x")), 1),
-            "V Break": round(safe_float(p.get(f"{prefix}_avg_break_z")), 1),
-        })
-    return pd.DataFrame(rows)
-
 def build_hitter_zones_table(lineup_df, batters_df):
     """Hitter batted-ball / swing profile — shows where each hitter does damage."""
     cols = ["Spot", "Hitter", "Team", "Pull%", "Oppo%", "FB%", "LD%", "GB%", "Bat Speed", "Whiff%"]
@@ -3116,21 +3093,7 @@ def render_slate_pitcher_html(df, schedule_df=None):
                 )
                 continue
             if c == "Pitcher":
-                game_label = str(r.get("Game", ""))
-                pid = r.get("_player_id")
-                idx = label_to_idx.get(game_label)
-                if idx is not None and pid:
-                    # Deep-link: switch to Games view, select this game, jump
-                    # to the Pitcher Zones anchor. The page's load handler
-                    # below reads ?view=games&g=<idx>&section=pitcher_zones.
-                    href = f"?view=games&g={idx}&section=pitcher_zones&p={pid}"
-                    cells.append(
-                        f'<td class="sp-pitcher"><a class="sp-pitcher-link" '
-                        f'href="{href}" target="_self" '
-                        f'title="Open {v} in Pitcher Zones">{v} →</a></td>'
-                    )
-                else:
-                    cells.append(f'<td class="sp-pitcher">{v}</td>')
+                cells.append(f'<td class="sp-pitcher">{v}</td>')
                 continue
             if c in ("Throws", "Game", "Time", "Opp"):
                 cells.append(f"<td>{v if v not in (None, '') else '<span class=\"sp-na\">—</span>'}</td>")
@@ -3248,14 +3211,7 @@ def render_slate_pitcher_minicards(away_row: dict, home_row: dict):
             )
         tier_cls, tier_label = _tier_for(row.get("Pitch Score"))
         name = row.get("Pitcher", "")
-        # Mini-card name links to the Pitcher Zones section for this game
-        pid = row.get("_player_id")
-        # The mini-card is rendered inside a single-game view, so we don't need
-        # to switch games — a hash anchor scrolls to the Pitcher Zones tab.
-        name_html = (
-            f'<a href="#pitcher-zones-anchor" data-pid="{pid}">{name}</a>'
-            if pid else name
-        )
+        name_html = name
         logo = row.get("_logo", "")
         logo_html = f'<img class="spc-logo" src="{logo}" alt=""/>' if logo else ""
         throws = row.get("Throws") or "?"
@@ -4636,17 +4592,13 @@ st.markdown(
     "</style>",
     unsafe_allow_html=True,
 )
-# ---- Deep-link handler: ?view=games&g=<idx>&section=pitcher_zones&p=<pid> ----
+# ---- Deep-link handler: ?view=games&g=<idx> ----
 # Read query params BEFORE the view radio is instantiated, since Streamlit
 # forbids writing to st.session_state[<widget_key>] after the widget exists.
-# This lets the Slate Pitchers table deep-link a clicked pitcher into that
-# game's Pitcher Zones tab.
 try:
     _qp_view = st.query_params.get("view", None)
-    _qp_section = st.query_params.get("section", None)
 except Exception:
     _qp_view = None
-    _qp_section = None
 if _qp_view == "games" and "top_view_tab" not in st.session_state:
     # Only set if the user hasn't already interacted with the radio this run.
     st.session_state["top_view_tab"] = "⚾ Games"
@@ -6372,8 +6324,8 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
-tab_matchup, tab_rolling, tab_p_zones, tab_h_zones, tab_hot, tab_cold, tab_injuries = st.tabs(
-    ["📊 Matchup", "📈 Rolling", "🎯 Pitcher Zones", "🌡️ Hitter Zones", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
+tab_matchup, tab_rolling, tab_h_zones, tab_hot, tab_cold, tab_injuries = st.tabs(
+    ["📊 Matchup", "📈 Rolling", "🌡️ Hitter Zones", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
 )
 
 # ============== Matchup tab ==============
@@ -6552,37 +6504,6 @@ with tab_rolling:
     if home_roll.empty: st.info(f"{game_row['home_abbr']} lineup not posted yet.")
     else: st.dataframe(style_rolling_table(home_roll), use_container_width=True, hide_index=True)
     st.caption("Rolling form is derived from full-season Baseball Savant aggregates with the selected window weighting recency emphasis.")
-
-# ============== Pitcher Zones tab ==============
-with tab_p_zones:
-    # Anchor target for slate-pitcher deep-links and mini-card pitcher names.
-    st.markdown('<div id="pitcher-zones-anchor"></div>', unsafe_allow_html=True)
-    # If the user arrived here via a Slate-Pitchers deep-link, scroll the
-    # anchor into view. The streamlit tab content rerenders the anchor each
-    # run, so injecting JS here is fine. Tabs are still client-side though,
-    # so we only nudge when ?section=pitcher_zones is present.
-    if _qp_section == "pitcher_zones":
-        st.markdown(
-            "<script>"
-            "setTimeout(function(){"
-            "  var a=document.getElementById('pitcher-zones-anchor');"
-            "  if(a){a.scrollIntoView({behavior:'smooth',block:'start'});}"
-            "}, 300);"
-            "</script>",
-            unsafe_allow_html=True,
-        )
-    pz1, pz2 = st.columns(2)
-    with pz1:
-        st.markdown(f'<div class="section-title">🎯 Away SP — {game_row["away_probable"]}</div>', unsafe_allow_html=True)
-        ar = build_pitcher_zones_table(game_row["away_probable"], pitchers_df)
-        if ar.empty: st.info("No arsenal data found for this pitcher.")
-        else: st.dataframe(style_zones_table(ar, "pitcher"), use_container_width=True, hide_index=True)
-    with pz2:
-        st.markdown(f'<div class="section-title">🎯 Home SP — {game_row["home_probable"]}</div>', unsafe_allow_html=True)
-        hr = build_pitcher_zones_table(game_row["home_probable"], pitchers_df)
-        if hr.empty: st.info("No arsenal data found for this pitcher.")
-        else: st.dataframe(style_zones_table(hr, "pitcher"), use_container_width=True, hide_index=True)
-    st.caption("Velo / Spin / Break for each pitch type the pitcher uses regularly. Heatmap green = elite for that metric.")
 
 # ============== Hitter Zones tab ==============
 with tab_h_zones:

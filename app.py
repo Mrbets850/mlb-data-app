@@ -4439,7 +4439,7 @@ if _qp_view is None:
 st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
 _view = st.radio(
     "View",
-    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI", "🤖 AI HR Parlay"],
+    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI", "🤖 AI HR Parlay", "👑 HR Round Robin"],
     horizontal=True,
     label_visibility="collapsed",
     key="top_view_tab",
@@ -5681,6 +5681,424 @@ if _view == "🤖 AI HR Parlay":
             "**Selection:** weighted sampling by AI HR Score (no pure top-rank "
             "sort), with Avoid-same-game/team constraints. **Generate New Parlays** "
             "rerolls within the same eligible pool."
+        )
+    st.stop()
+
+
+# ============== HR Round Robin view (MRBETS850) ==============
+# Stable, deterministic top-5 HR parlay generator for the slate. Picks the
+# 5 best overall HR plays using every available metric — not just the biggest
+# names. Same eligibility rules as AI HR Parlay (no completed games). Output
+# is presented as a polished round-robin ticket with player cards and the
+# standard round-robin combo summary.
+if _view == "👑 HR Round Robin":
+    # ----- Headline + logo -------------------------------------------------
+    st.markdown(
+        "<style>"
+        ".rr-hero { display:flex; align-items:center; gap:18px; "
+        "  background: linear-gradient(110deg, #04130b 0%, #0f3a2e 55%, #1d5a3f 100%); "
+        "  border: 2px solid #facc15; border-radius:18px; "
+        "  padding:14px 18px; margin: 6px 0 14px 0; "
+        "  box-shadow: 0 0 0 3px rgba(250,204,21,.18), 0 8px 22px rgba(5,20,12,.35); }"
+        ".rr-hero img { width:84px; height:84px; object-fit:cover; "
+        "  border-radius:14px; border:2px solid #facc15; "
+        "  box-shadow: 0 4px 10px rgba(0,0,0,.35); flex: 0 0 84px; }"
+        ".rr-hero .rr-title { font-weight:900; color:#facc15; "
+        "  letter-spacing:.04em; font-size:1.45rem; line-height:1.05; "
+        "  text-transform:uppercase; }"
+        ".rr-hero .rr-sub   { color:#fde68a; font-weight:600; font-size:.92rem; "
+        "  margin-top:4px; opacity:.95; }"
+        "@media (max-width:520px) { "
+        "  .rr-hero { padding:12px; gap:12px; } "
+        "  .rr-hero img { width:64px; height:64px; flex-basis:64px; } "
+        "  .rr-hero .rr-title { font-size:1.15rem; } "
+        "  .rr-hero .rr-sub   { font-size:.84rem; } }"
+        # Player cards
+        ".rr-card { background:#fff; border-radius:14px; padding:12px 14px; "
+        "  box-shadow:0 2px 12px rgba(15,23,42,.08); margin: 8px 0; "
+        "  border-left:6px solid #facc15; }"
+        ".rr-card .rr-rank { display:inline-block; min-width:28px; "
+        "  text-align:center; font-weight:900; color:#facc15; "
+        "  background:#0f3a2e; border-radius:6px; padding:3px 8px; "
+        "  font-size:.78rem; letter-spacing:.06em; }"
+        ".rr-card .rr-name { font-weight:900; color:#0f172a; font-size:1.04rem; "
+        "  margin-left:8px; }"
+        ".rr-card .rr-meta { color:#475569; font-size:.84rem; margin-top:2px; }"
+        ".rr-card .rr-score { float:right; font-weight:900; color:#0f3a2e; "
+        "  font-size:1.06rem; font-variant-numeric: tabular-nums; }"
+        ".rr-card .rr-stats { color:#0f172a; font-size:.84rem; "
+        "  background:#f8fafc; border-radius:6px; padding:6px 9px; margin-top:6px; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".rr-card .rr-why { margin: 6px 0 2px 18px; padding:0; color:#0f172a; "
+        "  font-size:.86rem; }"
+        ".rr-card .rr-why li { margin: 1px 0; line-height:1.35; }"
+        # Combos panel
+        ".rr-combos { background:#0f3a2e; color:#fde68a; border-radius:14px; "
+        "  padding:14px 16px; margin: 12px 0 8px 0; "
+        "  border:2px solid #facc15; "
+        "  box-shadow: 0 0 0 3px rgba(250,204,21,.15), 0 6px 18px rgba(5,20,12,.30); }"
+        ".rr-combos h4 { color:#facc15; margin: 0 0 8px 0; "
+        "  letter-spacing:.04em; font-size:1.02rem; font-weight:900; "
+        "  text-transform:uppercase; }"
+        ".rr-combos table { width:100%; border-collapse:collapse; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".rr-combos td { padding:6px 4px; border-bottom:1px dashed rgba(250,204,21,.25); "
+        "  font-size:.92rem; }"
+        ".rr-combos td:last-child { text-align:right; font-weight:800; color:#fff; }"
+        ".rr-combos tr:last-child td { border-bottom:none; }"
+        ".rr-disclaimer { color:#64748b; font-size:.78rem; "
+        "  margin: 8px 2px 12px 2px; font-style:italic; }"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    _logo_img = (
+        f'<img src="{LOGO_URI}" alt="MRBETS850" />'
+        if LOGO_URI else ''
+    )
+    st.markdown(
+        f'<div class="rr-hero">'
+        f'  {_logo_img}'
+        f'  <div>'
+        f'    <div class="rr-title">MRBETS850 Homerun Round Robin</div>'
+        f'    <div class="rr-sub">Top 5 HR plays of the slate · '
+        f'data-locked daily ticket · powered by every available metric</div>'
+        f'  </div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    if batters_df.empty:
+        st.warning("Batter CSV (`Data:savant_batters.csv.csv`) hasn’t loaded yet.")
+        st.stop()
+
+    # ----- Eligibility filter (same logic as AI HR Parlay) -----------------
+    _RR_COMPLETED = (
+        "final", "completed", "game over", "postponed", "cancelled",
+        "canceled", "suspended", "forfeit", "if necessary",
+    )
+    _RR_LIVE = (
+        "in progress", "live", "manager challenge", "review",
+        "delayed", "warmup", "warm-up", "warm up",
+    )
+    _RR_PRE = ("scheduled", "pre-game", "pregame", "pre game")
+
+    def _rr_eligible(row) -> bool:
+        status = str(row.get("status") or "").strip().lower()
+        if any(t in status for t in _RR_COMPLETED): return False
+        if any(t in status for t in _RR_LIVE):       return True
+        gt = row.get("game_time_utc")
+        try:    start_utc = pd.to_datetime(gt, utc=True)
+        except Exception: start_utc = pd.NaT
+        _now = pd.Timestamp.utcnow()
+        now_utc = _now if _now.tzinfo is not None else _now.tz_localize("UTC")
+        if any(t in status for t in _RR_PRE):
+            if pd.isna(start_utc): return True
+            return start_utc >= now_utc
+        if pd.isna(start_utc): return True
+        return start_utc >= now_utc
+
+    if schedule_df is None or schedule_df.empty:
+        st.warning("No games on the slate. Pick a different date or check back later.")
+        st.stop()
+
+    rr_elig_mask  = schedule_df.apply(_rr_eligible, axis=1)
+    rr_schedule   = schedule_df[rr_elig_mask].reset_index(drop=True)
+    if rr_schedule.empty:
+        st.warning("All games on this slate have finished. Round Robin can't lock a ticket.")
+        st.stop()
+
+    st.markdown(
+        f'<div style="margin:0 0 10px 0; padding:8px 12px; '
+        f'border-left:3px solid #facc15; background:#fffbeb; '
+        f'border-radius:6px; color:#713f12; font-size:0.88rem;">'
+        f'🔒 Locked ticket for <b>{selected_date}</b> · '
+        f'using <b>{len(rr_schedule)}</b> upcoming/live game'
+        f'{"s" if len(rr_schedule) != 1 else ""}.'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner("Scoring HR candidates across every available metric…"):
+        rr_pool_df = build_hr_sleepers_table(rr_schedule, batters_df, pitchers_df)
+
+    if rr_pool_df is None or rr_pool_df.empty:
+        st.info("No lineups posted yet. Check back closer to first pitch.")
+        st.stop()
+
+    # Merge in extra batter columns we'll use for the composite score.
+    rr_pool = rr_pool_df.copy()
+    if not batters_df.empty:
+        keep = [c for c in
+            ["name_key","BatSpeed","SweetSpot%","LA","xwOBA","K%","BB%"]
+            if c in batters_df.columns]
+        if "name_key" in batters_df.columns and len(keep) > 1:
+            extra = batters_df[keep].drop_duplicates("name_key")
+            rr_pool["__nk"] = rr_pool["Hitter"].astype(str).map(clean_name)
+            rr_pool = rr_pool.merge(extra, left_on="__nk", right_on="name_key",
+                                    how="left", suffixes=("", "_b"))
+            rr_pool = rr_pool.drop(columns=[c for c in ["__nk","name_key"]
+                                            if c in rr_pool.columns])
+
+    # ----- Composite HR Round Robin Score ---------------------------------
+    # Uses every available HR signal in the pool. Each metric is normalized
+    # to 0..100 then weighted. Missing values get a neutral 50 so a hitter
+    # isn't punished for a blank column they don't have data for.
+    def _norm(v, lo, hi, default=50.0):
+        try:
+            f = float(v)
+            if pd.isna(f): return default
+            return max(0.0, min(100.0, (f - lo) / (hi - lo) * 100.0))
+        except Exception:
+            return default
+
+    def _rr_composite_score(row) -> float:
+        # Base sleeper / AI components (already 0..100 in the codebase)
+        sleeper = float(row.get("Sleeper Score") or 0.0)
+        ceiling = float(row.get("Ceiling") or 0.0)
+        match   = float(row.get("Matchup") or 100.0)  # 100 = neutral
+        # Power / quality of contact metrics
+        n_barrel = _norm(row.get("Barrel%"),    5.0,  18.0)
+        n_hh     = _norm(row.get("HardHit%"),  30.0,  55.0)
+        n_iso    = _norm(row.get("ISO"),        0.130, 0.300)
+        n_xslg   = _norm(row.get("xSLG"),       0.350, 0.580)
+        n_xwoba  = _norm(row.get("xwOBA"),      0.300, 0.430)
+        n_fb     = _norm(row.get("FB%"),       25.0,  48.0)
+        n_pull   = _norm(row.get("Pull%"),     30.0,  50.0)
+        n_ss     = _norm(row.get("SweetSpot%"),28.0,  42.0)
+        n_la     = _norm(row.get("LA"),        10.0,  20.0)
+        n_bs     = _norm(row.get("BatSpeed"),  68.0,  76.0)
+        n_khr    = _norm(row.get("kHR"),        0.85,  1.30)
+        n_match  = _norm(match,                85.0, 125.0)
+        # Lineup spot — heart of order best, late spots discounted
+        try:
+            sp = int(row.get("Spot") or 9)
+        except Exception:
+            sp = 9
+        spot_bonus = {1:80, 2:88, 3:100, 4:100, 5:92, 6:78, 7:60, 8:45, 9:35}.get(sp, 35)
+        # Season HR: real raw power signal but capped so it doesn't dominate
+        try:
+            hr_szn = float(row.get("HR (Season)") or 0)
+        except Exception:
+            hr_szn = 0.0
+        n_hr_szn = max(0.0, min(100.0, (hr_szn / 25.0) * 100.0))
+        # Composite — broad coverage, no single metric dominates
+        composite = (
+            0.22 * sleeper      # base HR Sleeper Score (already broad)
+          + 0.16 * ceiling      # park × weather × SP
+          + 0.08 * n_barrel
+          + 0.06 * n_hh
+          + 0.05 * n_iso
+          + 0.05 * n_xslg
+          + 0.04 * n_xwoba
+          + 0.04 * n_fb
+          + 0.03 * n_pull
+          + 0.03 * n_ss
+          + 0.03 * n_la
+          + 0.05 * n_bs
+          + 0.03 * n_khr
+          + 0.05 * n_match
+          + 0.05 * spot_bonus
+          + 0.03 * n_hr_szn
+        )
+        return round(max(0.0, min(100.0, composite)), 2)
+
+    rr_pool["RR Score"] = rr_pool.apply(_rr_composite_score, axis=1)
+
+    # Stable tie-break: by RR Score desc, then Hitter name asc → fully
+    # deterministic top-5 for the day. No randomness, no rerolls.
+    rr_pool = rr_pool.sort_values(
+        ["RR Score", "Hitter"],
+        ascending=[False, True],
+    ).reset_index(drop=True)
+
+    # Diversity guard: don't allow more than 2 from the same game/team in
+    # the top 5 (otherwise stacked games crowd out true variety). We pick
+    # greedily down the sorted list.
+    top5 = []
+    used_games, used_teams = {}, {}
+    for _, r in rr_pool.iterrows():
+        g = str(r.get("Game", "") or "")
+        t = str(r.get("Team", "") or "")
+        if used_games.get(g, 0) >= 2: continue
+        if used_teams.get(t, 0) >= 2: continue
+        top5.append(r)
+        used_games[g] = used_games.get(g, 0) + 1
+        used_teams[t] = used_teams.get(t, 0) + 1
+        if len(top5) == 5: break
+    # Backfill if diversity guard left us short (small slates)
+    if len(top5) < 5:
+        taken = {row["Hitter"] for row in top5}
+        for _, r in rr_pool.iterrows():
+            if r["Hitter"] in taken: continue
+            top5.append(r)
+            if len(top5) == 5: break
+
+    if len(top5) < 5:
+        st.info(
+            f"Only {len(top5)} qualifying hitters available for this slate. "
+            "Round Robin needs at least 5 — check back when more lineups post."
+        )
+        st.stop()
+
+    # ----- Why-top-5 reason builder ---------------------------------------
+    def _rr_why(row) -> list:
+        why = []
+        def _f(v):
+            try:
+                if v is None: return None
+                f = float(v)
+                if pd.isna(f): return None
+                return f
+            except Exception:
+                return None
+        ceil   = _f(row.get("Ceiling"))
+        barrel = _f(row.get("Barrel%"))
+        hh     = _f(row.get("HardHit%"))
+        iso    = _f(row.get("ISO"))
+        xslg   = _f(row.get("xSLG"))
+        xwoba  = _f(row.get("xwOBA"))
+        fb     = _f(row.get("FB%"))
+        pull   = _f(row.get("Pull%"))
+        bs     = _f(row.get("BatSpeed"))
+        ss     = _f(row.get("SweetSpot%"))
+        khr    = _f(row.get("kHR"))
+        match  = _f(row.get("Matchup"))
+        if ceil is not None and ceil >= 70:
+            why.append(f"🏟️ Ceiling <b>{ceil:.0f}</b> — park/weather/SP combo lights up")
+        if barrel is not None and barrel >= 8.0:
+            why.append(f"💥 Barrel% <b>{barrel:.1f}</b>")
+        if hh is not None and hh >= 40.0:
+            why.append(f"💪 HardHit% <b>{hh:.1f}</b>")
+        if iso is not None and iso >= 0.200:
+            why.append(f"⚡ ISO <b>{iso:.3f}</b>")
+        if xslg is not None and xslg >= 0.480:
+            why.append(f"📈 xSLG <b>{xslg:.3f}</b>")
+        if xwoba is not None and xwoba >= 0.360:
+            why.append(f"🎯 xwOBA <b>{xwoba:.3f}</b>")
+        if fb is not None and fb >= 38.0:
+            why.append(f"🚀 FB% <b>{fb:.1f}</b> — gets it airborne")
+        if pull is not None and pull >= 42.0:
+            why.append(f"↗️ Pull% <b>{pull:.1f}</b>")
+        if bs is not None and bs >= 73.0:
+            why.append(f"🏏 Bat Speed <b>{bs:.1f}</b> mph")
+        if ss is not None and ss >= 35.0:
+            why.append(f"🍯 SweetSpot% <b>{ss:.1f}</b>")
+        if khr is not None and khr >= 1.10:
+            why.append(f"📊 kHR <b>{khr:.2f}</b>")
+        if match is not None and match >= 110:
+            why.append(f"🆚 Matchup <b>{match:.0f}</b> vs {row.get('Opp SP','SP')}")
+        try:
+            sp = int(row.get("Spot"))
+            if 3 <= sp <= 5:
+                why.append(f"📋 <b>{sp}-hole</b> — heart of the order")
+        except Exception:
+            pass
+        try:
+            hrn = int(row.get("HR (Season)"))
+            if hrn <= 6 and (barrel or 0) >= 7.0:
+                why.append(f"😴 Only <b>{hrn}</b> HR on year — under-owned sleeper upside")
+        except Exception:
+            pass
+        if not why:
+            why.append("🔢 Composite HR score above the slate's qualifying bar")
+        return why[:4]
+
+    # ----- Render the 5 player cards --------------------------------------
+    for i, row in enumerate(top5, 1):
+        try:
+            score_str = f"{float(row.get('RR Score', 0)):.1f}"
+        except Exception:
+            score_str = "—"
+        why = _rr_why(row)
+        why_html = "".join(f'<li>{w}</li>' for w in why)
+        # Compact stats line
+        def _fd(v, fmt):
+            try:
+                f = float(v)
+                if pd.isna(f): return None
+                return fmt.format(f)
+            except Exception:
+                return None
+        bits = []
+        c = _fd(row.get("Ceiling"), "{:.0f}");        bits += [f"Ceiling <b>{c}</b>"] if c else []
+        b = _fd(row.get("Barrel%"), "{:.1f}%");        bits += [f"Barrel <b>{b}</b>"] if b else []
+        h = _fd(row.get("HardHit%"), "{:.1f}%");       bits += [f"HH <b>{h}</b>"] if h else []
+        iv = _fd(row.get("ISO"), "{:.3f}");            bits += [f"ISO <b>{iv}</b>"] if iv else []
+        xs = _fd(row.get("xSLG"), "{:.3f}");           bits += [f"xSLG <b>{xs}</b>"] if xs else []
+        try:
+            sp = int(row.get("Spot"))
+            bits.append(f"<b>{sp}-hole</b>")
+        except Exception:
+            pass
+        stats_line = " · ".join(bits) if bits else "—"
+        st.markdown(
+            f'<div class="rr-card">'
+            f'  <div>'
+            f'    <span class="rr-rank">#{i}</span>'
+            f'    <span class="rr-name">{row.get("Hitter","")}</span>'
+            f'    <span class="rr-score">{score_str}</span>'
+            f'  </div>'
+            f'  <div class="rr-meta">{row.get("Team","")} · '
+            f'Bat {row.get("Bat","") or "—"} · '
+            f'{row.get("Game","")} <span style="color:#94a3b8;">·</span> '
+            f'vs <b>{row.get("Opp SP","")}</b></div>'
+            f'  <div class="rr-stats">{stats_line}</div>'
+            f'  <ul class="rr-why">{why_html}</ul>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ----- Round Robin combo summary --------------------------------------
+    # Standard round-robin combo counts on 5 legs: by-2 = C(5,2)=10,
+    # by-3 = C(5,3)=10, by-4 = C(5,4)=5, by-5 = 1; total = 26 tickets.
+    st.markdown(
+        '<div class="rr-combos">'
+        '  <h4>👑 Round Robin Combos · 5 Legs</h4>'
+        '  <table>'
+        '    <tr><td>By-2 (pairs)</td><td>10 tickets</td></tr>'
+        '    <tr><td>By-3 (triples)</td><td>10 tickets</td></tr>'
+        '    <tr><td>By-4 (quads)</td><td>5 tickets</td></tr>'
+        '    <tr><td>By-5 (full parlay)</td><td>1 ticket</td></tr>'
+        '    <tr><td><b>Total round-robin tickets</b></td><td><b>26</b></td></tr>'
+        '  </table>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ----- Source freshness + disclaimer ----------------------------------
+    st.markdown(
+        render_source_chips([
+            "savant:batters", "savant:pitchers",
+            "statsapi:schedule", "statsapi:boxscore",
+            "openmeteo:weather",
+        ]),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="rr-disclaimer">'
+        '⚠️ <b>Disclaimer:</b> The MRBETS850 Homerun Round Robin is a '
+        'model-driven analytics ticket built from public Statcast / StatsAPI / '
+        'weather data — <b>not a guaranteed outcome</b>. Always verify lineups '
+        'and scratches with your sportsbook before placing any bet. '
+        'No outcomes are promised. Bet responsibly.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("How the Round Robin score works"):
+        st.markdown(
+            "**RR Score (0-100)** is a composite that blends every HR signal "
+            "we have on every eligible hitter — not name recognition:\n"
+            "- **22%** HR Sleeper Score (Barrel%, HH%, ISO, FB%, Pull%, Matchup, kHR, sleeper bonus)\n"
+            "- **16%** Ceiling (park × weather × opposing SP)\n"
+            "- **8%** Barrel%, **6%** HardHit%, **5%** ISO, **5%** xSLG\n"
+            "- **4%** xwOBA, **4%** FB%, **3%** Pull%, **3%** SweetSpot%, **3%** Launch Angle\n"
+            "- **5%** Bat Speed, **3%** kHR, **5%** Matchup vs SP\n"
+            "- **5%** Lineup spot (heart of order weighted), **3%** Season HR (capped)\n\n"
+            "The top-5 is **deterministic** for the slate — sorted by RR Score "
+            "with a stable name tie-break and a diversity guard (max 2 hitters per "
+            "team / per game). It does not reroll. If lineups change, the data "
+            "feeding the score updates and the card refreshes accordingly."
         )
     st.stop()
 

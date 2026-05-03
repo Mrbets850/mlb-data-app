@@ -933,6 +933,172 @@ def get_schedule(selected_date):
     )
     return pd.DataFrame(rows)
 
+# ---------------------------------------------------------------------------
+# RotoGrinders MLB weather (preferred, free, no credentials)
+# ---------------------------------------------------------------------------
+# Public page: https://rotogrinders.com/weather/mlb
+# Server-rendered HTML — no API key, no JSON endpoint.
+# We parse each game module:
+#   <div class="module">
+#     <div class="team-nameplate"><span data-abbr="TOR">...</span></div>  (away)
+#     <div class="team-nameplate"><span data-abbr="MIN">...</span></div>  (home)
+#     <span class="weather-gametime-value">65°</span> (temp)
+#     <span class="weather-gametime-value">0%</span>  (precip)
+#     <span class="weather-gametime-value">NW</span>  (wind dir compass)
+#     <span class="weather-gametime-value">12</span>  (wind mph)
+#   Domes render <div class="weather-column-empty"><p>This game is played in a dome.</p></div>
+#
+# RG uses a few abbreviations that diverge from MLB StatsAPI (TBR/TB,
+# SFG/SF, KCR/KC, WSH/WAS, CHW/CWS, ...). We normalize both sides to a
+# canonical key before matching.
+RG_WEATHER_URL = "https://rotogrinders.com/weather/mlb"
+
+# Compass label -> degrees that the wind is BLOWING FROM (matches Open-Meteo
+# convention used by _wind_component_out).
+_RG_COMPASS_DEG = {
+    "N": 0, "NNE": 22.5, "NE": 45, "ENE": 67.5,
+    "E": 90, "ESE": 112.5, "SE": 135, "SSE": 157.5,
+    "S": 180, "SSW": 202.5, "SW": 225, "WSW": 247.5,
+    "W": 270, "WNW": 292.5, "NW": 315, "NNW": 337.5,
+}
+
+def _rg_norm_abbr(abbr: str) -> str:
+    """Canonicalize team abbreviations so RG's `TBR` matches StatsAPI's `TB`."""
+    if not abbr:
+        return ""
+    a = abbr.strip().upper()
+    return {
+        "TBR": "TB", "TBA": "TB",
+        "SFG": "SF", "SFO": "SF",
+        "KCR": "KC", "KCA": "KC",
+        "WSH": "WAS", "WSN": "WAS",
+        "CHW": "CWS", "CWX": "CWS",
+        "SDP": "SD",
+        "AZ":  "ARI",
+    }.get(a, a)
+
+@st.cache_data(ttl=1800)
+def get_rotogrinders_weather():
+    """Fetch and parse RotoGrinders' free public MLB weather page.
+    Returns a dict keyed by (away_abbr, home_abbr) of normalized weather
+    payloads compatible with the Open-Meteo schema used downstream:
+      {temp_f, wind_mph, wind_dir_deg, rain_pct, dew_f, cloud_pct,
+       sky, dome, source, source_label, source_url, away_abbr, home_abbr}
+    Empty dict if the page can't be fetched or parsed — callers must treat
+    a missing key as "RG had no data for this game" and fall back to
+    Open-Meteo. We never raise out of this function."""
+    games: dict = {}
+    try:
+        from bs4 import BeautifulSoup
+        r = requests.get(RG_WEATHER_URL, headers=HEADERS, timeout=20)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+    except Exception as exc:
+        record_source("rotogrinders:weather",
+                      label="RotoGrinders · MLB weather",
+                      url=RG_WEATHER_URL, status="error",
+                      detail=f"Fetch failed: {exc}",
+                      max_age_min=180)
+        return games
+
+    parsed = 0
+    for module in soup.select("div.module"):
+        nameplates = module.select("div.team-nameplate span.team-nameplate-title")
+        if len(nameplates) < 2:
+            continue
+        away_abbr = _rg_norm_abbr(nameplates[0].get("data-abbr", ""))
+        home_abbr = _rg_norm_abbr(nameplates[1].get("data-abbr", ""))
+        if not away_abbr or not home_abbr:
+            continue
+
+        body = module.select_one("div.module-body")
+        if body is None:
+            continue
+
+        # Dome / roof closed: no temp/wind data in markup
+        empty = body.select_one("div.weather-column-empty")
+        dome = empty is not None and "dome" in empty.get_text(" ", strip=True).lower()
+        venue_label = ""
+        ven = module.select_one(".game-weather-stadium")
+        if ven:
+            venue_label = ven.get_text(" ", strip=True).replace("AT ", "").title()
+
+        payload = {
+            "temp_f": None, "wind_mph": None, "wind_dir_deg": None,
+            "rain_pct": None, "dew_f": None, "cloud_pct": None,
+            "sky": None, "dome": dome,
+            "away_abbr": away_abbr, "home_abbr": home_abbr,
+            "venue": venue_label,
+            "source": "rotogrinders",
+            "source_label": "RotoGrinders",
+            "source_url": RG_WEATHER_URL,
+        }
+
+        if dome:
+            # Roof / dome — no outdoor weather affects play. Mark as roofed
+            # but leave numeric fields None so compute_weather_impact treats
+            # the park as domed via DOMED_PARKS or via temp=None defaults.
+            payload["sky"] = "Roof / Dome"
+            games[(away_abbr, home_abbr)] = payload
+            parsed += 1
+            continue
+
+        # Game-time summary chips: temp, precip%, wind dir compass, wind mph
+        sets = body.select("div.weather-gametime-set")
+        if len(sets) >= 1:
+            vals = sets[0].select("span.weather-gametime-value")
+            # vals[0] = "65°", vals[1] = "0%"
+            if len(vals) >= 1:
+                m = re.search(r"(-?\d+(?:\.\d+)?)", vals[0].get_text())
+                if m:
+                    try: payload["temp_f"] = float(m.group(1))
+                    except Exception: pass
+            if len(vals) >= 2:
+                m = re.search(r"(\d+(?:\.\d+)?)", vals[1].get_text())
+                if m:
+                    try: payload["rain_pct"] = float(m.group(1))
+                    except Exception: pass
+        if len(sets) >= 2:
+            vals = sets[1].select("span.weather-gametime-value")
+            # vals[0] = "NW" (compass), vals[1] = "12" (mph)
+            if len(vals) >= 1:
+                compass = vals[0].get_text(strip=True).upper()
+                payload["wind_dir_deg"] = _RG_COMPASS_DEG.get(compass)
+                payload["wind_compass"] = compass
+            if len(vals) >= 2:
+                m = re.search(r"(\d+(?:\.\d+)?)", vals[1].get_text())
+                if m:
+                    try: payload["wind_mph"] = float(m.group(1))
+                    except Exception: pass
+
+        # Sky from the icon on the first set (sunny/cloudy/rainy class)
+        icon = body.select_one("span.weather-gametime-icon i")
+        if icon is not None:
+            cls = " ".join(icon.get("class", [])).lower()
+            if   "rain"  in cls: payload["sky"] = "Rain risk"
+            elif "snow"  in cls: payload["sky"] = "Snow risk"
+            elif "cloud" in cls or "overcast" in cls: payload["sky"] = "Overcast"
+            elif "partly"in cls: payload["sky"] = "Partly cloudy"
+            elif "sunny" in cls or "clear" in cls: payload["sky"] = "Clear"
+
+        games[(away_abbr, home_abbr)] = payload
+        parsed += 1
+
+    if parsed == 0:
+        record_source("rotogrinders:weather",
+                      label="RotoGrinders · MLB weather",
+                      url=RG_WEATHER_URL, status="error",
+                      detail="No game blocks parsed from RotoGrinders page.",
+                      max_age_min=180)
+    else:
+        record_source("rotogrinders:weather",
+                      label="RotoGrinders · MLB weather",
+                      url=RG_WEATHER_URL, status="live",
+                      detail=f"{parsed} games parsed (preferred source)",
+                      max_age_min=180)
+    return games
+
+
 @st.cache_data(ttl=3600)
 def get_weather(lat, lon, game_time_utc):
     """Pull the hour of weather closest to first pitch from Open-Meteo.
@@ -1801,8 +1967,65 @@ def lookup_pitch_hand(roster_df, pitcher_name):
     if not exact.empty: return exact.iloc[0]["pitch_hand"]
     return ""
 
+def _merge_weather_rg_first(rg: dict, fallback: dict) -> dict:
+    """Prefer RotoGrinders fields per-key; fall back to Open-Meteo when RG
+    didn't supply a number (domed games, parse gaps). Annotates the resulting
+    dict with `source` / `source_label` so the UI can show where the live
+    fields came from. Open-Meteo always supplies dew_f / cloud_pct since RG
+    doesn't expose those at game time."""
+    out = dict(fallback or {})
+    if rg:
+        for k in ("temp_f", "wind_mph", "wind_dir_deg", "rain_pct"):
+            v = rg.get(k)
+            if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                out[k] = v
+        # Pass through useful RG-only annotations.
+        for k in ("sky", "dome", "wind_compass", "venue"):
+            if rg.get(k) is not None:
+                out[k] = rg[k]
+        # Source attribution: RG primary, Open-Meteo backfill for fields
+        # RG can't provide.
+        rg_used = any(rg.get(k) is not None for k in
+                      ("temp_f", "wind_mph", "wind_dir_deg", "rain_pct")) or rg.get("dome")
+        if rg_used:
+            out["source"] = "rotogrinders"
+            out["source_label"] = "RotoGrinders"
+            out["source_url"] = RG_WEATHER_URL
+            return out
+    out["source"] = "openmeteo"
+    out["source_label"] = "Open-Meteo"
+    out["source_url"] = "https://open-meteo.com/"
+    return out
+
+
+def get_combined_weather(game_row):
+    """Weather pipeline used by the matchup/weather/overcast display.
+    Preference order: RotoGrinders (free, accurate, user-requested) →
+    Open-Meteo fallback. Returns the same schema as get_weather() plus
+    source attribution fields used by the UI."""
+    fallback = get_weather(game_row["lat"], game_row["lon"], game_row["game_time_utc"])
+    try:
+        rg_map = get_rotogrinders_weather()
+    except Exception:
+        rg_map = {}
+    away = game_row.get("away_abbr", "")
+    home = game_row.get("home_abbr", "")
+    away_n = _rg_norm_abbr(away); home_n = _rg_norm_abbr(home)
+    rg = None
+    if rg_map:
+        # Exact (away, home) match first; then any orientation; then by home only.
+        for key in ((away_n, home_n), (home_n, away_n)):
+            if key in rg_map:
+                rg = rg_map[key]; break
+        if rg is None:
+            for (a, h), payload in rg_map.items():
+                if h == home_n or a == away_n:
+                    rg = payload; break
+    return _merge_weather_rg_first(rg or {}, fallback)
+
+
 def build_game_context(game_row):
-    weather = get_weather(game_row["lat"], game_row["lon"], game_row["game_time_utc"])
+    weather = get_combined_weather(game_row)
     try:
         box = get_boxscore(game_row["game_pk"])
         away_roster = roster_df_from_box(box.get("teams", {}).get("away", {}), game_row["away_abbr"])
@@ -3916,7 +4139,8 @@ def render_weather_impact_card(weather: dict, park_factor, home_abbr: str,
         + '<div style="font-size:0.68rem; color:#94a3b8; font-weight:700; '
         'margin-top:8px; padding-top:6px; border-top:1px dashed #e2e8f0;">'
         'Model blends park factor, temp, wind to/from CF, and dew point. Tunable in code — '
-        'transparent, free data (Open-Meteo · MLB Statsapi · The Odds API).</div>'
+        f'weather: <b>{weather.get("source_label", "Open-Meteo")}</b> '
+        '(RotoGrinders preferred · Open-Meteo fallback) · MLB StatsAPI · The Odds API.</div>'
         '</div></div>'
     )
 
@@ -4685,7 +4909,7 @@ if _view == "📊 Total Bases 1.5+":
             render_source_chips([
                 "savant:batters", "savant:pitchers",
                 "statsapi:schedule", "statsapi:boxscore",
-                "openmeteo:weather",
+                "rotogrinders:weather", "openmeteo:weather",
             ]),
             unsafe_allow_html=True,
         )
@@ -4776,7 +5000,7 @@ if _view == "🎯 HRR 1.5+":
             render_source_chips([
                 "savant:batters", "savant:pitchers",
                 "statsapi:schedule", "statsapi:boxscore",
-                "openmeteo:weather",
+                "rotogrinders:weather", "openmeteo:weather",
             ]),
             unsafe_allow_html=True,
         )
@@ -4866,7 +5090,7 @@ if _view == "🔥 2+ RBI":
             render_source_chips([
                 "savant:batters", "savant:pitchers",
                 "statsapi:schedule", "statsapi:boxscore",
-                "openmeteo:weather",
+                "rotogrinders:weather", "openmeteo:weather",
             ]),
             unsafe_allow_html=True,
         )
@@ -5648,7 +5872,7 @@ if _view == "🤖 AI HR Parlay":
         render_source_chips([
             "savant:batters", "savant:pitchers",
             "statsapi:schedule", "statsapi:boxscore",
-            "openmeteo:weather",
+            "rotogrinders:weather", "openmeteo:weather",
         ]),
         unsafe_allow_html=True,
     )
@@ -6070,7 +6294,7 @@ if _view == "👑 HR Round Robin":
         render_source_chips([
             "savant:batters", "savant:pitchers",
             "statsapi:schedule", "statsapi:boxscore",
-            "openmeteo:weather",
+            "rotogrinders:weather", "openmeteo:weather",
         ]),
         unsafe_allow_html=True,
     )

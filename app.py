@@ -30,6 +30,11 @@ GITHUB_BRANCH = "main"
 
 CSV_FILES = {
     "batters":         "Data:savant_batters.csv.csv",
+    # Low-PA batter leaderboard (min=10 PA). Used as a *backfill* source for
+    # rookies, call-ups, and bench bats whose appearance in a daily lineup
+    # would otherwise leave the Matchup heat-map board empty. Merged into
+    # batters_df only for player_ids not present in the qualified leaderboard.
+    "batters_all":     "Data:savant_batters_all.csv.csv",
     "pitchers":        "Data:savant_pitchers.csv.csv",
     # Pitcher results (xwOBA, Whiff%, Barrel%-against, HH%, FB%, K%, BB%, etc.)
     # used by the Slate Pitchers tab. Joined to the slate by player_id.
@@ -785,6 +790,7 @@ def load_all_csvs():
     out = {}
     SOURCE_LABEL = {
         "batters":       "Baseball Savant · Batter Statcast leaderboard",
+        "batters_all":   "Baseball Savant · Batter Statcast leaderboard (low-PA backfill)",
         "pitchers":      "Baseball Savant · Pitcher Statcast leaderboard",
         "pitcher_stats": "Baseball Savant · Pitcher results leaderboard",
         "bat_tracking":  "Baseball Savant · Bat-tracking leaderboard",
@@ -4534,6 +4540,46 @@ batters_df = standardize_columns(csvs.get("batters", pd.DataFrame()))
 pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
 pitcher_stats_df = standardize_columns(csvs.get("pitcher_stats", pd.DataFrame()))
 
+# Backfill: append non-qualified hitters (rookies, call-ups, bench bats) from
+# the min=10-PA leaderboard so daily lineups don't render with empty Statcast
+# cells. We only add player_ids that are NOT already in the qualified table —
+# this guarantees the qualified Statcast values for established hitters are
+# never overwritten by a low-PA proxy. Joined by player_id (ID-first), with
+# row-count assertions so a bad backfill cannot accidentally explode the table.
+_batters_all_raw = csvs.get("batters_all", pd.DataFrame())
+if (
+    not batters_df.empty
+    and _batters_all_raw is not None
+    and not _batters_all_raw.empty
+):
+    try:
+        _batters_all = standardize_columns(_batters_all_raw)
+        if (
+            "player_id" in batters_df.columns
+            and "player_id" in _batters_all.columns
+        ):
+            _q_ids = pd.to_numeric(batters_df["player_id"], errors="coerce").dropna().astype("Int64")
+            _q_idset = set(int(x) for x in _q_ids.tolist())
+            _all_pid = pd.to_numeric(_batters_all["player_id"], errors="coerce").astype("Int64")
+            _batters_all = _batters_all.assign(player_id=_all_pid)
+            _missing = _batters_all[
+                _all_pid.notna() & ~_all_pid.isin(_q_idset)
+            ].drop_duplicates("player_id")
+            _before = len(batters_df)
+            if not _missing.empty:
+                # Align columns so concat doesn't introduce duplicates / drops.
+                _missing = _missing.reindex(columns=batters_df.columns, fill_value=pd.NA)
+                batters_df = pd.concat([batters_df, _missing], ignore_index=True)
+            _after = len(batters_df)
+            # Sanity: never let a backfill more than double the table.
+            if _after > _before * 2 + 50:
+                # Pathological — revert to the qualified-only frame.
+                batters_df = batters_df.iloc[:_before].reset_index(drop=True)
+    except Exception:
+        # Backfill must never break startup. The qualified leaderboard alone
+        # is still a fully usable batters_df.
+        pass
+
 # Merge real per-batter bat-tracking data (avg_bat_speed in mph) into
 # batters_df, keyed on player_id. The custom batter leaderboard does NOT
 # expose bat speed, so without this merge the lineup tables fall back to a
@@ -8216,7 +8262,23 @@ def _build_slate_dataframe(_schedule_df, _batters_df, _pitchers_df, cache_key):
         return slate
     return slate.drop(columns=[c for c in slate.columns if c.startswith("_")], errors="ignore")
 
-_slate_cache_key = f"{selected_date}_{len(schedule_df)}"
+# Cache key includes the lineup-confirmation state of every game on the
+# slate so that the moment MLB posts a confirmed lineup (replacing a
+# projected one), the slate dataframe is rebuilt with the real names.
+# We hash the per-game (game_pk, away_status, home_status) tuple set so
+# the key flips deterministically when any single lineup confirms.
+def _slate_lineup_signature(_schedule_df) -> str:
+    parts = []
+    for _, g in _schedule_df.iterrows():
+        try:
+            cc = build_game_context(g)
+            parts.append(f"{g.get('game_pk','?')}:{cc.get('away_status','')}:{cc.get('home_status','')}")
+        except Exception:
+            parts.append(f"{g.get('game_pk','?')}:err")
+    return "|".join(parts)
+
+_slate_lineup_sig = _slate_lineup_signature(schedule_df)
+_slate_cache_key = f"{selected_date}_{len(schedule_df)}_{_slate_lineup_sig}"
 _slate_df = _build_slate_dataframe(schedule_df, batters_df, pitchers_df, _slate_cache_key)
 
 def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):

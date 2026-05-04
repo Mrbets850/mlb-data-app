@@ -1,19 +1,37 @@
 name: Refresh Baseball Savant data
 
-# Runs daily at 11:00 UTC = 6:00 AM CT (5:00 AM during daylight saving),
-# which is well before any MLB game starts and gives Streamlit Cloud plenty
-# of time to pick up the new commit before slate-time.
+# Runs across the 24-hour MLB slate cycle so the app always has fresh
+# Statcast leaderboards regardless of when the slate-day user opens it.
 #
-# Also exposed via "Run workflow" so you can trigger a manual refresh
-# from the Actions tab any time.
+# Times are UTC. CT (America/Chicago) is UTC-5 (CDT) / UTC-6 (CST).
+#  - 11:00 UTC =  6 AM CT  : pre-dawn refresh, ahead of any slate
+#  - 15:00 UTC = 10 AM CT  : late-morning, lineups are starting to drop
+#  - 19:00 UTC =  2 PM CT  : early-afternoon, most lineups confirmed
+#  - 23:00 UTC =  6 PM CT  : evening slate refresh
+#  - 03:00 UTC = 10 PM CT  : late-night cleanup after most games end
+#
+# Each run only commits if a CSV actually changed, so duplicate runs at
+# quiet times are cheap no-ops.
+#
+# Also exposed via "Run workflow" so manual refresh works from the
+# Actions tab any time.
 on:
   schedule:
     - cron: "0 11 * * *"
+    - cron: "0 15 * * *"
+    - cron: "0 19 * * *"
+    - cron: "0 23 * * *"
+    - cron: "0 3 * * *"
   workflow_dispatch: {}
 
 # Need write access so the action can commit refreshed CSVs back to main.
 permissions:
   contents: write
+
+# Avoid two runs racing each other to push the same CSVs.
+concurrency:
+  group: refresh-savant-data
+  cancel-in-progress: false
 
 jobs:
   refresh:
@@ -48,12 +66,16 @@ jobs:
         run: |
           # Stage only the CSVs we manage; ignore any other accidental changes.
           git add -- 'Data:savant_batters.csv.csv' \
+                     'Data:savant_batters_all.csv.csv' \
                      'Data:savant_pitchers.csv.csv' \
-                     'Data:savant_pitcher_stats.csv'
+                     'Data:savant_pitcher_stats.csv' \
+                     'Data:savant_bat_tracking.csv'
           if git diff --cached --quiet; then
             echo "No data changes — nothing to commit."
             exit 0
           fi
-          STAMP=$(date -u +"%Y-%m-%d")
+          STAMP=$(date -u +"%Y-%m-%d %H:%MZ")
           git commit -m "Auto-refresh Savant data ${STAMP}"
+          # Pull --rebase first so concurrent runs don't fail to push.
+          git pull --rebase --autostash origin main || true
           git push origin HEAD:main

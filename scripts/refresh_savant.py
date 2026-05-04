@@ -2,13 +2,20 @@
 """
 Refresh Baseball Savant CSVs for the MrBets850 MLB Edge app.
 
-Downloads three leaderboards from baseballsavant.mlb.com and writes them
+Downloads four leaderboards from baseballsavant.mlb.com and writes them
 to the repo root with the exact filenames the app expects:
 
-  Data:savant_batters.csv.csv     - batter season Statcast leaderboard
-  Data:savant_pitchers.csv.csv    - pitcher arsenal / pitch-mix leaderboard
-  Data:savant_pitcher_stats.csv   - pitcher results leaderboard
-  Data:savant_bat_tracking.csv    - per-batter Statcast bat-tracking (avg_bat_speed, swing_length)
+  Data:savant_batters.csv.csv      - batter season Statcast leaderboard (qualified)
+  Data:savant_batters_all.csv.csv  - batter Statcast leaderboard with min=10 PA
+                                     so non-qualified players (rookies, call-ups,
+                                     low-PA bench bats) appear in lineups instead
+                                     of rendering as empty cells in the Matchup
+                                     heat-map board. Used as a backfill source
+                                     merged in only for player_ids missing from
+                                     the qualified leaderboard.
+  Data:savant_pitchers.csv.csv     - pitcher arsenal / pitch-mix leaderboard
+  Data:savant_pitcher_stats.csv    - pitcher results leaderboard
+  Data:savant_bat_tracking.csv     - per-batter Statcast bat-tracking (avg_bat_speed, swing_length)
 
 Run nightly via GitHub Actions (.github/workflows/refresh-data.yml).
 
@@ -51,6 +58,23 @@ TARGETS = [
         "Data:savant_batters.csv.csv",
         "https://baseballsavant.mlb.com/leaderboard/custom?"
         "year={year}&type=batter&filter=&sort=4&sortDir=desc&min=q"
+        "&selections=ab,pa,hit,single,double,triple,home_run,strikeout,walk,"
+        "k_percent,bb_percent,batting_avg,slg_percent,on_base_percent,"
+        "on_base_plus_slg,isolated_power,xba,xslg,woba,xwoba,xobp,xiso,"
+        "exit_velocity_avg,launch_angle_avg,sweet_spot_percent,"
+        "barrel_batted_rate,hard_hit_percent,avg_best_speed,whiff_percent,"
+        "swing_percent,pull_percent,opposite_percent,groundballs_percent,"
+        "flyballs_percent,linedrives_percent"
+        "&chart=false&x=ab&y=ab&r=no&chartType=beeswarm&csv=true",
+    ),
+    (
+        # Low-PA backfill: same selections, but min=10 instead of min=q so
+        # rookies, call-ups, and low-PA bench bats appear. Merged in app.py
+        # only for player_ids absent from the qualified leaderboard, so it
+        # doesn't dilute or replace qualified-batter Statcast values.
+        "Data:savant_batters_all.csv.csv",
+        "https://baseballsavant.mlb.com/leaderboard/custom?"
+        "year={year}&type=batter&filter=&sort=4&sortDir=desc&min=10"
         "&selections=ab,pa,hit,single,double,triple,home_run,strikeout,walk,"
         "k_percent,bb_percent,batting_avg,slg_percent,on_base_percent,"
         "on_base_plus_slg,isolated_power,xba,xslg,woba,xwoba,xobp,xiso,"

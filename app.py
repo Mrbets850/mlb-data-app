@@ -4615,7 +4615,7 @@ if _qp_view is None:
 st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
 _view = st.radio(
     "View",
-    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI", "🤖 AI HR Parlay", "👑 HR Round Robin"],
+    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI", "🤖 AI HR Parlay", "👑 HR Round Robin", "🎯 AI K Generator"],
     horizontal=True,
     label_visibility="collapsed",
     key="top_view_tab",
@@ -6378,6 +6378,949 @@ if _view == "👑 HR Round Robin":
             "pool — weighted by RR Score so quality stays high while giving "
             "clients alternative options. Once **every eligible hitter's "
             "lineup is Confirmed**, reroll disables and the ticket locks."
+        )
+    st.stop()
+
+
+# ============== AI Pitcher Strikeouts Generator view ==============
+# Builds a slate-wide ranked board and 1-/2-/3-leg pitcher-K parlay tickets
+# using only data already loaded in the app (Savant pitcher leaderboard +
+# StatsAPI season totals + boxscore lineups + per-batter K%). Modeled after
+# the 🤖 AI HR Parlay view: weighted-sample selection, transparent reasons,
+# reroll, and risk profiles. No external odds API is required — this tab is
+# feed-independent and falls back gracefully when columns are missing.
+if _view == "🎯 AI K Generator":
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '🎯 AI Pitcher Strikeouts Generator</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Slate-wide AI generator for <b>pitcher strikeout</b> props. The '
+        '<b>AI K Score</b> blends starter strikeout skill (Savant K%, Whiff%, '
+        'SwStr%, Strikeout Score) with <b>workload runway</b> (IP/Start, BF), '
+        'opponent <b>lineup whiff profile</b> (lineup-weighted batter K%) and '
+        '<b>environment</b> (park × weather K modifier). Each pick shows the '
+        'data-driven reasons it landed in the ticket — and a suggested '
+        'recorded-K line based on the pitcher\'s K-rate × projected batters '
+        'faced when no book line is loaded.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if pitcher_stats_df is None or pitcher_stats_df.empty:
+        st.warning(
+            "Pitcher CSV (`Data:savant_pitcher_stats.csv`) hasn't loaded yet — "
+            "the K generator joins by `player_id`."
+        )
+        st.stop()
+    if schedule_df is None or schedule_df.empty:
+        st.warning("No games on the slate. Pick a different date or check back later.")
+        st.stop()
+
+    # ---- Eligibility filter (mirrors AI HR Parlay) ----------------------
+    _K_COMPLETED = (
+        "final", "completed", "game over", "postponed", "cancelled",
+        "canceled", "suspended", "forfeit", "if necessary",
+    )
+    _K_LIVE = (
+        "in progress", "live", "manager challenge", "review",
+        "delayed", "warmup", "warm-up", "warm up",
+    )
+    _K_PRE = ("scheduled", "pre-game", "pregame", "pre game")
+
+    def _k_game_eligible(row) -> bool:
+        status = str(row.get("status") or "").strip().lower()
+        if any(t in status for t in _K_COMPLETED): return False
+        if any(t in status for t in _K_LIVE):       return True
+        gt = row.get("game_time_utc")
+        try:    start_utc = pd.to_datetime(gt, utc=True)
+        except Exception: start_utc = pd.NaT
+        _now = pd.Timestamp.utcnow()
+        now_utc = _now if _now.tzinfo is not None else _now.tz_localize("UTC")
+        if any(t in status for t in _K_PRE):
+            if pd.isna(start_utc): return True
+            return start_utc >= now_utc
+        if pd.isna(start_utc): return True
+        return start_utc >= now_utc
+
+    _k_elig_mask  = schedule_df.apply(_k_game_eligible, axis=1)
+    k_schedule_df = schedule_df[_k_elig_mask].reset_index(drop=True)
+    _k_total = int(len(schedule_df))
+    _k_elig  = int(len(k_schedule_df))
+    _k_excl  = _k_total - _k_elig
+
+    if k_schedule_df.empty:
+        st.warning(
+            f"All {_k_total} games on this slate have already finished or are no "
+            f"longer available. No upcoming/live games to build K parlays from."
+        )
+        st.stop()
+
+    st.markdown(
+        f'<div style="margin:0 0 10px 0; padding:8px 12px; '
+        f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+        f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
+        f'🕒 Using <b>{_k_elig}</b> upcoming/live game'
+        f'{"s" if _k_elig != 1 else ""}; '
+        f'completed games excluded'
+        f'{f" ({_k_excl} hidden)" if _k_excl > 0 else ""}.'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ---- Build the slate pitcher board (re-uses Slate Pitchers builder) -
+    with st.spinner("Scoring starting pitchers across the slate…"):
+        sp_df = build_slate_pitcher_table(k_schedule_df, pitcher_stats_df)
+
+    if sp_df is None or sp_df.empty:
+        st.info(
+            "No probable starters posted yet for the upcoming/live games. "
+            "Check back closer to first pitch."
+        )
+        st.stop()
+
+    # Drop TBD rows defensively (Slate Pitchers builder already skips, but
+    # be safe).
+    sp_df = sp_df[sp_df["Pitcher"].astype(str).str.upper() != "TBD"].copy()
+    if sp_df.empty:
+        st.info("All probable starters are still TBD. Check back closer to first pitch.")
+        st.stop()
+
+    # ---- Helpers: opponent lineup K% (mean) using existing lineup logic --
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _opp_lineup_k_pct(_game_pk: int, side: str) -> dict:
+        """For a probable pitcher on `side`, return opponent lineup K% summary.
+        Returns {"mean_k": float|None, "n": int, "status": str, "spots": list}.
+        Uses build_game_context which already merges confirmed/projected lineups
+        and falls back gracefully when no lineup is posted."""
+        try:
+            gr = schedule_df[schedule_df["game_pk"] == _game_pk]
+            if gr.empty:
+                return {"mean_k": None, "n": 0, "status": "Unknown", "spots": []}
+            g = gr.iloc[0]
+            ctx_local = build_game_context(g)
+        except Exception:
+            return {"mean_k": None, "n": 0, "status": "Unknown", "spots": []}
+        if side == "away":
+            opp_lineup = ctx_local.get("home_lineup")
+            opp_status = ctx_local.get("home_status", "Not Posted")
+        else:
+            opp_lineup = ctx_local.get("away_lineup")
+            opp_status = ctx_local.get("away_status", "Not Posted")
+        if opp_lineup is None or len(opp_lineup) == 0:
+            return {"mean_k": None, "n": 0, "status": opp_status, "spots": []}
+        # Look up each batter's K% from batters_df by player_id when present;
+        # fall back to clean_name() match. K% in batters_df is already a
+        # 0..100 number after standardize_columns.
+        ks = []
+        spots = []
+        for _, brow in opp_lineup.iterrows():
+            pid = brow.get("player_id")
+            kp = None
+            try:
+                if pid is not None and not pd.isna(pid) and "player_id" in batters_df.columns:
+                    m = batters_df[batters_df["player_id"].astype("Int64") == int(pid)]
+                    if not m.empty and "K%" in m.columns:
+                        v = m.iloc[0].get("K%")
+                        if v is not None and not pd.isna(v):
+                            kp = float(v)
+            except Exception:
+                kp = None
+            if kp is None:
+                # Fallback: name lookup (less reliable but covers projected).
+                try:
+                    nm = brow.get("name") or brow.get("Name") or ""
+                    nk = clean_name(str(nm))
+                    if nk and "name_key" in batters_df.columns and "K%" in batters_df.columns:
+                        m2 = batters_df[batters_df["name_key"] == nk]
+                        if not m2.empty:
+                            v = m2.iloc[0].get("K%")
+                            if v is not None and not pd.isna(v):
+                                kp = float(v)
+                except Exception:
+                    pass
+            if kp is not None:
+                ks.append(kp)
+            try:
+                sp_n = int(brow.get("lineup_spot")) if brow.get("lineup_spot") is not None else None
+            except Exception:
+                sp_n = None
+            spots.append(sp_n)
+        if not ks:
+            return {"mean_k": None, "n": 0, "status": opp_status, "spots": spots}
+        # Top-of-order weighting: spots 1-5 contribute slightly more (~1.2x)
+        # because they get more PAs against the SP. Falls back to flat mean
+        # if we couldn't read lineup spots.
+        try:
+            weights = []
+            for sp_n in spots:
+                if sp_n is None: weights.append(1.0)
+                elif 1 <= sp_n <= 5: weights.append(1.20)
+                elif 6 <= sp_n <= 7: weights.append(1.00)
+                else: weights.append(0.85)
+            if len(weights) == len(ks):
+                num = sum(w * k for w, k in zip(weights, ks))
+                den = sum(weights) or 1.0
+                mean_k = num / den
+            else:
+                mean_k = sum(ks) / len(ks)
+        except Exception:
+            mean_k = sum(ks) / len(ks)
+        return {"mean_k": float(mean_k), "n": int(len(ks)), "status": opp_status, "spots": spots}
+
+    # ---- Helper: park × weather K modifier --------------------------------
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _env_k_modifier(_game_pk: int) -> dict:
+        """Returns {"k_mod": float|None, "label": str} where k_mod is the
+        compute_weather_impact() K%-modifier (e.g. -3 means strikeouts ~3%
+        below MLB avg). None if weather/park context is unavailable."""
+        try:
+            gr = schedule_df[schedule_df["game_pk"] == _game_pk]
+            if gr.empty: return {"k_mod": None, "label": ""}
+            g = gr.iloc[0]
+            wx = get_combined_weather(g)
+            imp = compute_weather_impact(wx, g.get("park_factor"), g.get("home_abbr"))
+            kp = imp.get("k_pct")
+            if kp is None or pd.isna(kp): return {"k_mod": None, "label": ""}
+            return {"k_mod": float(kp),
+                    "label": f"{int(kp):+d}% K env" if kp != 0 else "Neutral K env"}
+        except Exception:
+            return {"k_mod": None, "label": ""}
+
+    # ---- Map each slate-pitcher row back to its game_pk + side ----------
+    pmap = []  # [(idx, game_pk, side)]
+    for sp_idx, sp_row in sp_df.iterrows():
+        team_abbr = str(sp_row.get("Team", "") or "")
+        opp_abbr  = str(sp_row.get("Opp", "")  or "")
+        gpk, side_match = None, None
+        for _, g in k_schedule_df.iterrows():
+            if str(g.get("away_abbr", "")) == team_abbr and str(g.get("home_abbr", "")) == opp_abbr:
+                gpk = g.get("game_pk"); side_match = "away"; break
+            if str(g.get("home_abbr", "")) == team_abbr and str(g.get("away_abbr", "")) == opp_abbr:
+                gpk = g.get("game_pk"); side_match = "home"; break
+        pmap.append((sp_idx, gpk, side_match))
+
+    # ---- Enrich pitcher rows with opponent-K + environment + composite --
+    with st.spinner("Layering opponent lineup K% + environment on every starter…"):
+        opp_means, opp_ns, opp_statuses, env_mods, env_labels = [], [], [], [], []
+        for sp_idx, gpk, side_match in pmap:
+            if gpk is None or side_match is None:
+                opp_means.append(None); opp_ns.append(0)
+                opp_statuses.append("Unknown"); env_mods.append(None); env_labels.append("")
+                continue
+            try:
+                opp = _opp_lineup_k_pct(int(gpk), side_match)
+            except Exception:
+                opp = {"mean_k": None, "n": 0, "status": "Unknown", "spots": []}
+            try:
+                env = _env_k_modifier(int(gpk))
+            except Exception:
+                env = {"k_mod": None, "label": ""}
+            opp_means.append(opp.get("mean_k"))
+            opp_ns.append(int(opp.get("n") or 0))
+            opp_statuses.append(opp.get("status") or "Unknown")
+            env_mods.append(env.get("k_mod"))
+            env_labels.append(env.get("label") or "")
+
+        sp_df = sp_df.reset_index(drop=True)
+        sp_df["Opp Lineup K%"] = opp_means
+        sp_df["Opp Lineup N"]   = opp_ns
+        sp_df["Opp Lineup Status"] = opp_statuses
+        sp_df["Env K Mod"]      = env_mods
+        sp_df["Env K Label"]    = env_labels
+
+    # ---- AI K Score: composite over all available signals ---------------
+    def _k_norm(v, lo, hi, default=50.0, reverse=False):
+        try:
+            f = float(v)
+            if pd.isna(f): return default
+            x = max(lo, min(hi, f))
+            pct = (x - lo) / (hi - lo) * 100.0
+            return 100.0 - pct if reverse else pct
+        except Exception:
+            return default
+
+    def _ai_k_score(row) -> float:
+        # Pitcher K skill (Savant + StatsAPI)
+        n_kpct  = _k_norm(row.get("K%"),     18.0, 33.0)
+        n_whiff = _k_norm(row.get("Whiff%"), 18.0, 33.0)
+        n_swstr = _k_norm(row.get("SwStr%"),  9.0, 16.0)
+        # Strikeout Score is already 0..100 in the codebase
+        try:
+            ss_v = float(row.get("Strikeout Score"))
+            if pd.isna(ss_v): ss_v = 50.0
+        except Exception:
+            ss_v = 50.0
+        # Workload runway: more IP/Start ⇒ more chances at Ks
+        ip = row.get("IP"); pa = row.get("PA")
+        try:
+            ip_f = float(ip) if ip is not None and not pd.isna(ip) else None
+            pa_f = float(pa) if pa is not None and not pd.isna(pa) else None
+            if ip_f and pa_f and pa_f > 0:
+                # crude IP/PA ratio normalized vs typical starter (~5.5 IP/start),
+                # but we mostly care about absolute IP volume for sample stability.
+                pass
+        except Exception:
+            ip_f, pa_f = None, None
+        n_ip = _k_norm(ip_f, 20.0, 80.0)  # ~1 month -> ~half season
+        # Opponent lineup whiff profile (higher K% = better target)
+        n_opp = _k_norm(row.get("Opp Lineup K%"), 18.0, 28.0)
+        # Environment K modifier (-10..+10 typical, sometimes wider)
+        env = row.get("Env K Mod")
+        try:
+            env_f = float(env) if env is not None and not pd.isna(env) else 0.0
+        except Exception:
+            env_f = 0.0
+        n_env = _k_norm(env_f, -10.0, 10.0, default=50.0)
+        # Penalize obvious blowup risk: high WHIP -> short outings -> fewer Ks
+        whip = row.get("WHIP")
+        try:
+            whip_f = float(whip) if whip is not None and not pd.isna(whip) else None
+        except Exception:
+            whip_f = None
+        n_whip_inv = _k_norm(whip_f, 1.05, 1.65, default=50.0, reverse=True)
+
+        composite = (
+            0.20 * ss_v
+          + 0.16 * n_kpct
+          + 0.14 * n_whiff
+          + 0.10 * n_swstr
+          + 0.10 * n_opp
+          + 0.10 * n_ip
+          + 0.10 * n_env
+          + 0.10 * n_whip_inv
+        )
+        return round(max(0.0, min(100.0, composite)), 1)
+
+    sp_df["AI K Score"] = sp_df.apply(_ai_k_score, axis=1)
+
+    # ---- Projected Ks: K% × estimated batters faced ----------------------
+    # Light, transparent fallback projection when no book line is loaded.
+    # If IP is available and BF is known, use BF/start. Otherwise default to
+    # 22 BF (typical 5-6 IP outing).
+    def _proj_ks(row):
+        try:
+            kp = float(row.get("K%"))
+            if pd.isna(kp): return None
+        except Exception:
+            return None
+        # Assume ~22 BF as a baseline starter outing; adjust slightly by the
+        # opponent lineup's K-tendency (higher opp K% ⇒ ~+0.5 BF added depth).
+        bf_est = 22.0
+        try:
+            opp_k = float(row.get("Opp Lineup K%"))
+            if not pd.isna(opp_k):
+                bf_est += (opp_k - 22.0) * 0.05  # +0.5 BF per +10% Opp K
+        except Exception:
+            pass
+        try:
+            env = float(row.get("Env K Mod"))
+            if not pd.isna(env):
+                # +10% env -> ~+0.5 BF (better K env, slightly deeper Ks)
+                bf_est *= (1.0 + env / 200.0)
+        except Exception:
+            pass
+        return round((kp / 100.0) * bf_est, 1)
+
+    sp_df["Proj Ks"] = sp_df.apply(_proj_ks, axis=1)
+
+    # ---- Suggested K-prop line: round Proj Ks to nearest 0.5 -------------
+    def _suggested_line(v):
+        try:
+            f = float(v)
+            if pd.isna(f): return None
+            # Round to nearest 0.5 then nudge to "Over" by -0.5 (typical book
+            # lines sit near projection; suggesting Over the line just under
+            # projection is the intuitive prop angle).
+            base = round(f * 2.0) / 2.0
+            return max(2.5, base - 0.5)
+        except Exception:
+            return None
+
+    sp_df["Suggested Line"] = sp_df["Proj Ks"].apply(_suggested_line)
+
+    sp_df = sp_df.sort_values("AI K Score", ascending=False).reset_index(drop=True)
+
+    # ---- Controls (mirrors HR Parlay) -----------------------------------
+    c_cols = st.columns([1.6, 1.0, 1.0, 1.0])
+    with c_cols[0]:
+        _k_risk = st.radio(
+            "Risk profile",
+            ["Safer", "Balanced", "Sleeper Hunt", "Aggressive"],
+            index=1,
+            horizontal=True,
+            key="ai_k_risk",
+            help=(
+                "Safer: established K artists, strict IP/whiff thresholds. "
+                "Balanced: default mix of aces + quality matchup picks. "
+                "Sleeper Hunt: boosts under-the-radar starters with "
+                "elite Whiff%/Opp K%. Aggressive: opens the pool wider."
+            ),
+        )
+    with c_cols[1]:
+        _k_avoid_same_game = st.checkbox(
+            "Avoid same game", value=True, key="ai_k_avoid_game",
+            help="Prevent two K legs from the same game (correlation risk).",
+        )
+    with c_cols[2]:
+        _k_min_ip = st.slider(
+            "Min IP (season)", min_value=0, max_value=80, value=15, step=5,
+            key="ai_k_min_ip",
+            help="Hide starters with very small workload samples.",
+        )
+    with c_cols[3]:
+        _k_show_alts = st.checkbox(
+            "Show alternate tickets", value=True, key="ai_k_show_alts",
+            help="Also surface alternate 2-leg and 3-leg tickets.",
+        )
+
+    # Risk-profile thresholds
+    if _k_risk == "Safer":
+        min_score, min_kpct, min_whiff = 62.0, 22.0, 24.0
+    elif _k_risk == "Sleeper Hunt":
+        min_score, min_kpct, min_whiff = 50.0, 19.0, 21.0
+    elif _k_risk == "Aggressive":
+        min_score, min_kpct, min_whiff = 44.0, 17.0, 19.0
+    else:  # Balanced
+        min_score, min_kpct, min_whiff = 55.0, 20.0, 22.0
+
+    pool_k = sp_df.copy()
+    # Score gate
+    pool_k = pool_k[pool_k["AI K Score"].fillna(0) >= float(min_score)]
+    # K% gate (allow missing → keep, sleeper hunt only)
+    if _k_risk in ("Safer", "Balanced"):
+        pool_k = pool_k[pool_k["K%"].fillna(0) >= float(min_kpct)]
+        pool_k = pool_k[pool_k["Whiff%"].fillna(0) >= float(min_whiff)]
+    else:
+        # Sleeper / Aggressive: keep rows with missing K% (often new call-ups)
+        m = (pool_k["K%"].fillna(min_kpct) >= float(min_kpct))
+        pool_k = pool_k[m]
+    # Workload gate
+    if "IP" in pool_k.columns:
+        pool_k = pool_k[pool_k["IP"].fillna(0) >= float(_k_min_ip)]
+    pool_k = pool_k.reset_index(drop=True)
+
+    if pool_k.empty or len(pool_k) < 1:
+        st.info(
+            f"Not enough qualifying starters for the **{_k_risk}** profile — "
+            f"only {len(pool_k)} pitcher(s) cleared the thresholds. "
+            f"Try **Sleeper Hunt** or **Aggressive**, or lower **Min IP**."
+        )
+        st.stop()
+
+    # ---- Reroll controls -------------------------------------------------
+    if "ai_k_seed" not in st.session_state:
+        st.session_state["ai_k_seed"] = 1
+    if "ai_k_generated_at" not in st.session_state:
+        st.session_state["ai_k_generated_at"] = datetime.now(
+            ZoneInfo("America/New_York")
+        ).strftime("%Y-%m-%d %I:%M:%S %p ET")
+
+    r_cols = st.columns([1.0, 2.0])
+    with r_cols[0]:
+        if st.button("🎲 Generate New K Tickets", key="ai_k_reroll",
+                     use_container_width=True,
+                     help="Reroll: rebuilds the K board's 1-/2-/3-leg tickets via "
+                          "weighted sampling on the same eligible pool."):
+            st.session_state["ai_k_seed"] = int(
+                st.session_state.get("ai_k_seed", 1)
+            ) + 1
+            st.session_state["ai_k_generated_at"] = datetime.now(
+                ZoneInfo("America/New_York")
+            ).strftime("%Y-%m-%d %I:%M:%S %p ET")
+    with r_cols[1]:
+        st.markdown(
+            f'<div style="padding-top:6px; color:#475569; font-size:0.86rem;">'
+            f'🎟️ <b>Ticket #{int(st.session_state["ai_k_seed"])}</b> · '
+            f'{len(pool_k)} eligible starter'
+            f'{"s" if len(pool_k) != 1 else ""} · '
+            f'Generated {st.session_state["ai_k_generated_at"]}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    _k_seed = int(st.session_state["ai_k_seed"])
+
+    # Sleeper boost: under-radar starters with elite Whiff% + favorable Opp K%
+    if _k_risk == "Sleeper Hunt":
+        k_sleeper_bias = 0.45
+    elif _k_risk == "Aggressive":
+        k_sleeper_bias = 0.20
+    elif _k_risk == "Balanced":
+        k_sleeper_bias = 0.10
+    else:
+        k_sleeper_bias = 0.0
+
+    def _k_weighted_sample(_pool, n: int, avoid_same_game: bool, seed: int):
+        if _pool is None or _pool.empty:
+            return []
+        rng = np.random.default_rng(int(seed))
+        scores = _pool["AI K Score"].fillna(0).to_numpy(dtype=float)
+        weights = np.clip(scores, 1.0, None) ** 1.4
+        if k_sleeper_bias > 0:
+            ip_a   = _pool["IP"].fillna(50.0).to_numpy(dtype=float) if "IP" in _pool.columns else np.full_like(scores, 50.0)
+            whiff  = _pool["Whiff%"].fillna(20.0).to_numpy(dtype=float) if "Whiff%" in _pool.columns else np.full_like(scores, 20.0)
+            opp_k  = _pool["Opp Lineup K%"].fillna(22.0).to_numpy(dtype=float)
+            sleeper_factor = (
+                np.clip((50.0 - ip_a)  / 50.0, 0.0, 1.0) * 0.40 +  # smaller-sample SP
+                np.clip((whiff - 22.0) / 10.0, 0.0, 1.0) * 0.30 +  # elite whiff
+                np.clip((opp_k - 22.0) / 8.0,  0.0, 1.0) * 0.30    # whiffy opponent
+            )
+            weights = weights * (1.0 + k_sleeper_bias * sleeper_factor)
+        if not np.isfinite(weights).any() or weights.sum() <= 0:
+            weights = np.ones_like(scores)
+
+        rows = list(_pool.to_dict("records"))
+        idxs = list(range(len(rows)))
+        legs, used_games = [], set()
+        available = idxs.copy()
+        avail_w = weights.copy()
+        while available and len(legs) < n:
+            w = avail_w[available]
+            if w.sum() <= 0:
+                pick_local = int(rng.integers(0, len(available)))
+            else:
+                p = w / w.sum()
+                pick_local = int(rng.choice(len(available), p=p))
+            pick = available.pop(pick_local)
+            row = rows[pick]
+            g = str(row.get("Game", "") or "")
+            if avoid_same_game and g and g in used_games:
+                continue
+            legs.append(row)
+            if g: used_games.add(g)
+
+        if len(legs) < n:
+            taken = {l.get("Pitcher") for l in legs}
+            for row in rows:
+                if len(legs) >= n: break
+                if row.get("Pitcher") in taken: continue
+                legs.append(row)
+        return legs[:n]
+
+    # ---- Per-pick reasons -----------------------------------------------
+    def _k_reasons_for(row) -> list:
+        reasons = []
+        def _f(v):
+            try:
+                if v is None: return None
+                f = float(v)
+                if pd.isna(f): return None
+                return f
+            except Exception:
+                return None
+
+        kpct  = _f(row.get("K%"))
+        whiff = _f(row.get("Whiff%"))
+        swstr = _f(row.get("SwStr%"))
+        ss    = _f(row.get("Strikeout Score"))
+        ip    = _f(row.get("IP"))
+        whip  = _f(row.get("WHIP"))
+        opp_k = _f(row.get("Opp Lineup K%"))
+        opp_n = row.get("Opp Lineup N")
+        env_m = _f(row.get("Env K Mod"))
+        env_l = str(row.get("Env K Label") or "")
+        opp_status = str(row.get("Opp Lineup Status") or "")
+
+        # K skill
+        if kpct is not None:
+            if kpct >= 28.0:
+                reasons.append(f"💨 K% <b>{kpct:.1f}</b> — elite strikeout rate")
+            elif kpct >= 24.0:
+                reasons.append(f"💨 K% <b>{kpct:.1f}</b>")
+        if whiff is not None:
+            if whiff >= 30.0:
+                reasons.append(f"🌀 Whiff% <b>{whiff:.1f}</b> — swing-and-miss artist")
+            elif whiff >= 25.0:
+                reasons.append(f"🌀 Whiff% <b>{whiff:.1f}</b>")
+        if swstr is not None and swstr >= 13.0:
+            reasons.append(f"⚡ SwStr% <b>{swstr:.1f}</b> — generates Ks in zone")
+        if ss is not None and ss >= 65.0:
+            reasons.append(f"📊 Strikeout Score <b>{ss:.0f}</b>")
+
+        # Workload runway
+        if ip is not None and ip >= 60.0:
+            reasons.append(f"🛢️ IP <b>{ip:.1f}</b> — stable starter sample")
+        elif ip is not None and ip >= 30.0:
+            reasons.append(f"🛢️ IP <b>{ip:.1f}</b>")
+        if whip is not None and whip <= 1.15:
+            reasons.append(f"🎯 WHIP <b>{whip:.2f}</b> — pitches deep into outings")
+
+        # Opponent lineup
+        if opp_k is not None:
+            n_text = ""
+            try:
+                if opp_n is not None and int(opp_n) > 0:
+                    n_text = f" ({int(opp_n)} bats)"
+            except Exception:
+                pass
+            opp_team = str(row.get("Opp", "") or "")
+            stat_chip = f" · {opp_status}" if opp_status and opp_status not in ("Unknown",) else ""
+            if opp_k >= 25.0:
+                reasons.append(
+                    f"🍯 vs <b>{opp_team}</b> lineup K% <b>{opp_k:.1f}</b>{n_text}{stat_chip} — strikeout-prone matchup"
+                )
+            elif opp_k >= 22.5:
+                reasons.append(
+                    f"🍯 vs <b>{opp_team}</b> lineup K% <b>{opp_k:.1f}</b>{n_text}{stat_chip}"
+                )
+            elif opp_k <= 19.0:
+                reasons.append(
+                    f"⚠️ vs <b>{opp_team}</b> lineup K% <b>{opp_k:.1f}</b>{n_text} — contact-oriented opponent"
+                )
+
+        # Environment
+        if env_m is not None and abs(env_m) >= 3.0:
+            if env_m >= 3.0:
+                reasons.append(f"🌬️ {env_l} — park/weather lifts Ks")
+            elif env_m <= -3.0:
+                reasons.append(f"🌬️ {env_l} — env tamps down Ks")
+
+        if not reasons:
+            reasons.append("🔢 Composite AI K Score above slate threshold")
+        return reasons[:6]
+
+    # ---- Sample tickets --------------------------------------------------
+    legs_1 = _k_weighted_sample(pool_k, 1, _k_avoid_same_game, seed=_k_seed)
+    legs_2 = _k_weighted_sample(pool_k, 2, _k_avoid_same_game, seed=_k_seed * 31 + 7)
+    legs_3 = _k_weighted_sample(pool_k, 3, _k_avoid_same_game, seed=_k_seed * 1009 + 13)
+    alt_2_a = _k_weighted_sample(pool_k, 2, _k_avoid_same_game, seed=_k_seed + 211)
+    alt_2_b = _k_weighted_sample(pool_k, 2, _k_avoid_same_game, seed=_k_seed + 331)
+    alt_3_a = _k_weighted_sample(pool_k, 3, _k_avoid_same_game, seed=_k_seed * 1009 + 313)
+    alt_3_b = _k_weighted_sample(pool_k, 3, _k_avoid_same_game, seed=_k_seed * 1009 + 521)
+
+    def _k_tier(score):
+        try: s = float(score)
+        except Exception: return ("ok", "Average")
+        if s >= 75: return ("elite",  "Elite")
+        if s >= 65: return ("strong", "Strong")
+        if s >= 55: return ("ok",     "Average")
+        return ("soft", "Soft")
+
+    def _k_fmt_or_dash(v, fmt):
+        try:
+            if v is None: return "—"
+            f = float(v)
+            if pd.isna(f): return "—"
+            return fmt.format(f)
+        except Exception:
+            return "—"
+
+    def _k_compact_stats(leg) -> str:
+        parts = []
+        kp  = _k_fmt_or_dash(leg.get("K%"),     "{:.1f}%")
+        if kp != "—": parts.append(f"K% <b>{kp}</b>")
+        wh  = _k_fmt_or_dash(leg.get("Whiff%"), "{:.1f}%")
+        if wh != "—": parts.append(f"Whiff <b>{wh}</b>")
+        ip  = _k_fmt_or_dash(leg.get("IP"),     "{:.1f}")
+        if ip != "—": parts.append(f"IP <b>{ip}</b>")
+        op  = _k_fmt_or_dash(leg.get("Opp Lineup K%"), "{:.1f}%")
+        if op != "—": parts.append(f"Opp K <b>{op}</b>")
+        env = leg.get("Env K Label") or ""
+        if env: parts.append(env)
+        return " · ".join(parts) if parts else "—"
+
+    def _render_k_card(title: str, legs: list, badge: str) -> str:
+        if not legs:
+            return (
+                f'<div class="kgen-card kgen-empty">'
+                f'<div class="kgen-card-title">{title}</div>'
+                f'<div class="kgen-card-sub">Not enough qualifying starters. '
+                f'Loosen the filters above.</div>'
+                f'</div>'
+            )
+        avg_score = sum(float(l.get("AI K Score", 0) or 0) for l in legs) / max(1, len(legs))
+        tier_cls, _ = _k_tier(avg_score)
+        leg_html = []
+        for i, leg in enumerate(legs, 1):
+            t_cls, t_lbl = _k_tier(leg.get("AI K Score"))
+            reasons = _k_reasons_for(leg)
+            reason_html = "".join(
+                f'<li style="margin:2px 0;">{r}</li>' for r in reasons
+            )
+            try:
+                ai_str = f"{float(leg.get('AI K Score', 0)):.1f}"
+            except Exception:
+                ai_str = "—"
+            stats_line = _k_compact_stats(leg)
+            try:
+                proj = float(leg.get("Proj Ks"))
+                proj_str = f"{proj:.1f}"
+            except Exception:
+                proj_str = "—"
+            try:
+                line = float(leg.get("Suggested Line"))
+                line_str = f"{line:.1f}"
+            except Exception:
+                line_str = "—"
+            throws = leg.get("Throws") or ""
+            throws_chip = f" · {throws}HP" if throws else ""
+            leg_html.append(
+                f'<div class="kgen-leg">'
+                f'  <div class="kgen-leg-head">'
+                f'    <div class="kgen-leg-num">Leg {i}</div>'
+                f'    <div class="kgen-leg-name">{leg.get("Pitcher","")}'
+                f'      <span class="kgen-meta">· {leg.get("Team","")}{throws_chip} '
+                f'· {leg.get("Loc","")} {leg.get("Opp","")}</span>'
+                f'    </div>'
+                f'    <div class="kgen-leg-score">'
+                f'      <span class="kgen-score">{ai_str}</span>'
+                f'      <span class="hrs-pill {t_cls}">{t_lbl}</span>'
+                f'    </div>'
+                f'  </div>'
+                f'  <div class="kgen-ctx">'
+                f'    {leg.get("Game","")} '
+                f'<span style="color:#94a3b8;">·</span> '
+                f'<b>Proj Ks {proj_str}</b> · suggested <b>Over {line_str}</b>'
+                f'  </div>'
+                f'  <div class="kgen-stats">{stats_line}</div>'
+                f'  <ul class="kgen-reasons">{reason_html}</ul>'
+                f'</div>'
+            )
+        return (
+            f'<div class="kgen-card">'
+            f'  <div class="kgen-card-head">'
+            f'    <div>'
+            f'      <div class="kgen-card-title">{title}</div>'
+            f'      <div class="kgen-card-sub">{len(legs)} leg'
+            f'{"s" if len(legs) != 1 else ""} · '
+            f'avg AI K Score <b>{avg_score:.1f}</b></div>'
+            f'    </div>'
+            f'    <span class="hrs-pill {tier_cls} kgen-badge">{badge}</span>'
+            f'  </div>'
+            + "".join(leg_html) +
+            f'</div>'
+        )
+
+    css = (
+        "<style>"
+        ".kgen-card { background:#fff; border-radius:14px; padding:14px 14px 8px 14px; "
+        "  box-shadow:0 2px 12px rgba(15,23,42,.07); margin: 8px 0 16px 0; "
+        "  border-left:5px solid #1d4ed8; }"
+        ".kgen-card.kgen-empty { border-left-color:#cbd5e1; padding:14px; }"
+        ".kgen-card-head { display:flex; align-items:center; justify-content:space-between; "
+        "  gap:10px; margin-bottom:6px; flex-wrap:wrap; }"
+        ".kgen-card-title { font-weight:900; font-size:1.08rem; color:#1e3a8a; "
+        "  letter-spacing:.01em; }"
+        ".kgen-card-sub { color:#64748b; font-size:.82rem; margin-top:2px; }"
+        ".kgen-badge { font-size:.74rem; }"
+        ".kgen-leg { padding:10px 0; border-top:1px dashed #e2e8f0; }"
+        ".kgen-leg:first-of-type { border-top:none; }"
+        ".kgen-leg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }"
+        ".kgen-leg-num { font-size:.72rem; font-weight:800; letter-spacing:.06em; "
+        "  text-transform:uppercase; color:#fde68a; background:#1e3a8a; "
+        "  padding:3px 8px; border-radius:6px; }"
+        ".kgen-leg-name { font-weight:800; color:#0f172a; flex:1 1 200px; "
+        "  font-size:.98rem; }"
+        ".kgen-meta { color:#64748b; font-weight:500; font-size:.82rem; }"
+        ".kgen-leg-score { display:flex; align-items:center; gap:6px; }"
+        ".kgen-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".kgen-ctx { color:#1e3a8a; font-size:.86rem; margin: 4px 0 4px 0; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".kgen-stats { color:#0f172a; font-size:.84rem; margin: 0 0 4px 0; "
+        "  background:#f8fafc; border-radius:6px; padding:5px 8px; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".kgen-reasons { margin: 4px 0 2px 18px; padding:0; color:#0f172a; "
+        "  font-size:.88rem; }"
+        ".kgen-reasons li { margin: 1px 0; line-height:1.35; }"
+        ".kgen-disclaimer { color:#64748b; font-size:.78rem; margin: 6px 2px 12px 2px; "
+        "  font-style:italic; }"
+        ".kgen-board { background:#0f172a; color:#cbd5e1; border-radius:14px; "
+        "  padding:12px 14px; margin: 8px 0 14px 0; }"
+        ".kgen-board h4 { color:#fde68a; margin: 0 0 6px 0; "
+        "  letter-spacing:.04em; font-size:.95rem; font-weight:900; "
+        "  text-transform:uppercase; }"
+        ".kgen-board table { width:100%; border-collapse:collapse; "
+        "  font-variant-numeric: tabular-nums; font-size:.86rem; }"
+        ".kgen-board th { text-align:left; color:#94a3b8; font-weight:700; "
+        "  padding:4px 6px; border-bottom:1px solid #1e293b; "
+        "  font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; }"
+        ".kgen-board td { padding:5px 6px; border-bottom:1px dashed #1e293b; "
+        "  color:#e2e8f0; }"
+        ".kgen-board td.num { text-align:right; }"
+        ".kgen-board tr:last-child td { border-bottom:none; }"
+        "@media (max-width:520px) { .kgen-leg-name { font-size:.92rem; } "
+        "  .kgen-card-title { font-size:1rem; } .kgen-reasons { font-size:.84rem; } "
+        "  .kgen-stats { font-size:.80rem; } "
+        "  .kgen-board table { font-size:.80rem; } "
+        "  .kgen-board th, .kgen-board td { padding:3px 4px; } }"
+        "</style>"
+    )
+    st.markdown(css, unsafe_allow_html=True)
+
+    # ---- Top-of-board: ranked starters table ----------------------------
+    top_n = min(10, len(pool_k))
+    board_rows = []
+    for _, r in pool_k.head(top_n).iterrows():
+        try:
+            ai = f"{float(r.get('AI K Score')):.1f}"
+        except Exception:
+            ai = "—"
+        try:
+            kp = f"{float(r.get('K%')):.1f}"
+        except Exception:
+            kp = "—"
+        try:
+            wh = f"{float(r.get('Whiff%')):.1f}"
+        except Exception:
+            wh = "—"
+        try:
+            opk = f"{float(r.get('Opp Lineup K%')):.1f}"
+        except Exception:
+            opk = "—"
+        try:
+            pk = f"{float(r.get('Proj Ks')):.1f}"
+        except Exception:
+            pk = "—"
+        try:
+            sl = f"{float(r.get('Suggested Line')):.1f}"
+        except Exception:
+            sl = "—"
+        board_rows.append(
+            f"<tr><td><b>{r.get('Pitcher','')}</b> "
+            f"<span style='color:#94a3b8;'>{r.get('Team','')} {r.get('Loc','')} "
+            f"{r.get('Opp','')}</span></td>"
+            f"<td class='num'>{ai}</td>"
+            f"<td class='num'>{kp}</td>"
+            f"<td class='num'>{wh}</td>"
+            f"<td class='num'>{opk}</td>"
+            f"<td class='num'>{pk}</td>"
+            f"<td class='num'>O {sl}</td></tr>"
+        )
+    st.markdown(
+        "<div class='kgen-board'>"
+        f"<h4>🏆 Top {top_n} Strikeout Targets — slate board</h4>"
+        "<table><thead><tr>"
+        "<th>Pitcher</th><th class='num'>AI&nbsp;K</th>"
+        "<th class='num'>K%</th><th class='num'>Whiff</th>"
+        "<th class='num'>Opp&nbsp;K%</th>"
+        "<th class='num'>Proj&nbsp;Ks</th>"
+        "<th class='num'>Sugg&nbsp;Line</th>"
+        "</tr></thead><tbody>"
+        + "".join(board_rows) +
+        "</tbody></table>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ---- Recommended tickets --------------------------------------------
+    st.markdown(
+        _render_k_card(
+            "🎯 Top Single — Best K Pick",
+            legs_1, f"{_k_risk} · single · #{_k_seed}",
+        ),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        _render_k_card(
+            "🚀 Recommended 2-Leg K Parlay",
+            legs_2, f"{_k_risk} · 2-leg · #{_k_seed}",
+        ),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        _render_k_card(
+            "🔥 Recommended 3-Leg K Parlay",
+            legs_3, f"{_k_risk} · 3-leg · #{_k_seed}",
+        ),
+        unsafe_allow_html=True,
+    )
+
+    if _k_show_alts:
+        def _sig_k(legs_):
+            return tuple(sorted(str(l.get("Pitcher", "")) for l in (legs_ or [])))
+        seen_2 = {_sig_k(legs_2)}
+        seen_3 = {_sig_k(legs_3)}
+        extra_seeds = [331, 433, 547, 659, 773, 887]
+        alt_2_pool = [alt_2_a, alt_2_b] + [
+            _k_weighted_sample(pool_k, 2, _k_avoid_same_game, seed=_k_seed + s)
+            for s in extra_seeds
+        ]
+        alt_3_pool = [alt_3_a, alt_3_b] + [
+            _k_weighted_sample(pool_k, 3, _k_avoid_same_game, seed=_k_seed * 1009 + s)
+            for s in extra_seeds
+        ]
+        chosen_2, chosen_3 = [], []
+        for cand in alt_2_pool:
+            sig = _sig_k(cand)
+            if sig in seen_2 or not cand: continue
+            seen_2.add(sig); chosen_2.append(cand)
+            if len(chosen_2) >= 2: break
+        for cand in alt_3_pool:
+            sig = _sig_k(cand)
+            if sig in seen_3 or not cand: continue
+            seen_3.add(sig); chosen_3.append(cand)
+            if len(chosen_3) >= 2: break
+        if chosen_2 or chosen_3:
+            st.markdown(
+                '<div class="section-title" style="font-size:1.08rem;margin-top:6px;">'
+                '🔁 Alternate K Tickets</div>',
+                unsafe_allow_html=True,
+            )
+        for i, cand in enumerate(chosen_2, 1):
+            st.markdown(
+                _render_k_card(
+                    f"🚀 Alt 2-Leg K Parlay #{i}", cand, f"{_k_risk} · 2-leg · alt {i}"
+                ),
+                unsafe_allow_html=True,
+            )
+        for i, cand in enumerate(chosen_3, 1):
+            st.markdown(
+                _render_k_card(
+                    f"🔥 Alt 3-Leg K Parlay #{i}", cand, f"{_k_risk} · 3-leg · alt {i}"
+                ),
+                unsafe_allow_html=True,
+            )
+
+    # Source freshness row.
+    try:
+        st.markdown(
+            render_source_chips([
+                "savant:pitchers", "savant:batters",
+                "statsapi:schedule", "statsapi:boxscore",
+                "rotogrinders:weather", "openmeteo:weather",
+            ]),
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
+    st.markdown(
+        '<div class="kgen-disclaimer">'
+        '⚠️ <b>Disclaimer:</b> Recommendations are model-driven analytics built '
+        'from public Statcast / StatsAPI / weather data — <b>not guaranteed outcomes</b>. '
+        'Suggested lines are projections, not book lines; verify with your '
+        'sportsbook before placing any bet. Bet responsibly.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("How the AI K Score works"):
+        st.markdown(
+            "**AI K Score (0-100)** — composite over every available "
+            "strikeout-relevant signal:\n"
+            "- **20%** Strikeout Score (existing K%/Whiff% composite)\n"
+            "- **16%** K% (Savant; StatsAPI fallback)\n"
+            "- **14%** Whiff%\n"
+            "- **10%** SwStr% (Swing% × Whiff%)\n"
+            "- **10% Opp Lineup K%** — lineup-weighted batter K% for the "
+            "opposing team (top-of-order spots get a 1.2× weight)\n"
+            "- **10%** Workload runway (IP volume normalized)\n"
+            "- **10%** Park × weather K modifier\n"
+            "- **10%** Inverted WHIP (deeper outings ⇒ more K opportunities)\n\n"
+            "**Pool:** every probable starter on upcoming/live games. "
+            "**Sleeper Hunt** boosts under-the-radar arms with elite Whiff% "
+            "and a strikeout-prone matchup so they can win a slot.\n\n"
+            "**Selection:** weighted sampling by AI K Score, with "
+            "Avoid-same-game constraint. **Generate New K Tickets** rerolls "
+            "within the same eligible pool.\n\n"
+            "**Proj Ks:** K% × estimated batters faced (~22 BF baseline, "
+            "tweaked by Opp Lineup K% and environment). **Suggested Line** "
+            "is Proj Ks rounded to nearest 0.5 then nudged down 0.5 — it is "
+            "a model projection, not a book line."
         )
     st.stop()
 

@@ -48,6 +48,8 @@ jobs:
         run: |
           # Stage only the CSVs we manage; ignore any other accidental changes.
           git add -- 'Data:savant_batters.csv.csv' \
+                     'Data:savant_batters_min1.csv' \
+                     'Data:savant_bat_tracking.csv' \
                      'Data:savant_pitchers.csv.csv' \
                      'Data:savant_pitcher_stats.csv'
           if git diff --cached --quiet; then

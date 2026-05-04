@@ -68,13 +68,36 @@ TARGETS = [
         "&chart=false&x=ab&y=ab&r=no&chartType=beeswarm&csv=true",
     ),
     (
-        # Low-PA backfill: same selections, but min=10 instead of min=q so
-        # rookies, call-ups, and low-PA bench bats appear. Merged in app.py
-        # only for player_ids absent from the qualified leaderboard, so it
-        # doesn't dilute or replace qualified-batter Statcast values.
+        # Low-PA backfill: same selections, but min=1 instead of min=q so
+        # rookies, call-ups, and low-PA bench bats appear with whatever real
+        # Statcast data they have, even after only a handful of PAs. Merged
+        # in app.py only for player_ids absent from the qualified leaderboard,
+        # so it doesn't dilute or replace qualified-batter Statcast values.
+        # min=1 (>=1 PA) ensures every active hitter on a daily lineup is
+        # represented — eliminates blank rows for main-team batters who hadn't
+        # crossed the old min=10 threshold.
         "Data:savant_batters_all.csv.csv",
         "https://baseballsavant.mlb.com/leaderboard/custom?"
-        "year={year}&type=batter&filter=&sort=4&sortDir=desc&min=10"
+        "year={year}&type=batter&filter=&sort=4&sortDir=desc&min=1"
+        "&selections=ab,pa,hit,single,double,triple,home_run,strikeout,walk,"
+        "k_percent,bb_percent,batting_avg,slg_percent,on_base_percent,"
+        "on_base_plus_slg,isolated_power,xba,xslg,woba,xwoba,xobp,xiso,"
+        "exit_velocity_avg,launch_angle_avg,sweet_spot_percent,"
+        "barrel_batted_rate,hard_hit_percent,avg_best_speed,whiff_percent,"
+        "swing_percent,pull_percent,opposite_percent,groundballs_percent,"
+        "flyballs_percent,linedrives_percent"
+        "&chart=false&x=ab&y=ab&r=no&chartType=beeswarm&csv=true",
+    ),
+    (
+        # Prior-season backfill for batters: same min=1 leaderboard but for
+        # the previous MLB season. Used in app.py as a final fallback when a
+        # current-season player_id has too small a sample for any real values
+        # (e.g. recently called up rookies, players returning from injury who
+        # only have 2-3 PA so far). Joined by player_id only — never replaces
+        # current-season values.
+        "Data:savant_batters_prev.csv.csv",
+        "https://baseballsavant.mlb.com/leaderboard/custom?"
+        "year={prev_year}&type=batter&filter=&sort=4&sortDir=desc&min=1"
         "&selections=ab,pa,hit,single,double,triple,home_run,strikeout,walk,"
         "k_percent,bb_percent,batting_avg,slg_percent,on_base_percent,"
         "on_base_plus_slg,isolated_power,xba,xslg,woba,xwoba,xobp,xiso,"
@@ -104,12 +127,30 @@ TARGETS = [
     (
         "Data:savant_bat_tracking.csv",
         # Baseball Savant per-batter bat-tracking leaderboard. Provides real
-        # avg_bat_speed (mph) and swing_length (ft) per player_id, which the
-        # custom batter leaderboard does NOT expose. Keyed by `id` (= player_id).
+        # avg_bat_speed (mph), swing_length (ft), batted_ball_events (BIP) and
+        # swings_competitive (Pitches) per player_id. The custom batter
+        # leaderboard does NOT expose these. Keyed by `id` (= player_id).
+        # minSwings=10 (was minSwings=q) so non-qualified hitters and
+        # recent call-ups appear on the leaderboard with whatever bat-tracking
+        # data they have. Combined with the new min=1 batters_all backfill,
+        # this is what guarantees Pitches/BIP cells are populated for every
+        # active major-league hitter.
         "https://baseballsavant.mlb.com/leaderboard/bat-tracking?"
         "attackZone=&batSide=&contact=&count=&dateRangeStart=&dateRangeEnd="
-        "&gameType=R&groupBy=&isHardHit=&minSwings=q&minGroupSwings=1"
+        "&gameType=R&groupBy=&isHardHit=&minSwings=10&minGroupSwings=1"
         "&pitchHand=&pitchType=&seasonStart={year}&seasonEnd={year}"
+        "&team=&type=batter&csv=true",
+    ),
+    (
+        # Prior-season bat-tracking backfill: same minSwings=10 leaderboard
+        # for the previous MLB season. Used in app.py as a final fallback
+        # when a current-season player_id has no bat-tracking data yet (e.g.
+        # April rookies). Joined by player_id only.
+        "Data:savant_bat_tracking_prev.csv",
+        "https://baseballsavant.mlb.com/leaderboard/bat-tracking?"
+        "attackZone=&batSide=&contact=&count=&dateRangeStart=&dateRangeEnd="
+        "&gameType=R&groupBy=&isHardHit=&minSwings=10&minGroupSwings=1"
+        "&pitchHand=&pitchType=&seasonStart={prev_year}&seasonEnd={prev_year}"
         "&team=&type=batter&csv=true",
     ),
     (
@@ -206,7 +247,7 @@ def main() -> int:
     failures = []
     changes = 0
     for filename, url_tmpl in TARGETS:
-        url = url_tmpl.format(year=year)
+        url = url_tmpl.format(year=year, prev_year=year - 1)
         out_path = os.path.join(args.out_dir, filename)
         print(f"\n-> {filename}", flush=True)
         try:

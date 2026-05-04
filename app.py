@@ -55,10 +55,19 @@ CSV_FILES = {
 }
 
 def raw_github_url(path: str) -> str:
-    encoded = urllib.parse.quote(path, safe="/")
+    # The Savant CSVs in this repo are stored at the repo root with literal
+    # "Data:" prefixes (e.g. "Data:savant_batters.csv.csv") — the colon is
+    # part of the filename, not a path separator. Keep ":" in the safe set
+    # so it is not percent-encoded to %3A in the resulting URL.
+    encoded = urllib.parse.quote(path, safe="/:")
     return f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/{encoded}"
 
 CSV_URLS = {label: raw_github_url(name) for label, name in CSV_FILES.items()}
+
+# CSVs that are optional fallbacks — their absence is expected and should not
+# surface a user-facing warning banner. The app already handles empty frames
+# for these keys downstream (see `_batters_prev_raw` / `_bat_tracking_prev_df`).
+OPTIONAL_CSVS = {"batters_prev", "bat_tracking_prev"}
 
 # ---------------------------------------------------------------------------
 # Brand assets (logo + player headshots)
@@ -754,14 +763,18 @@ def _flip_last_first(name):
 # Data loading
 # ===========================================================================
 @st.cache_data(ttl=1800, show_spinner=False)
-def load_remote_csv(url):
+def load_remote_csv(url, optional: bool = False):
     """Fetch a Savant CSV via raw GitHub.
 
     Returns (df, last_modified_utc). last_modified_utc is the GitHub
     object's Last-Modified header parsed to a UTC timestamp, or None
     if not available. We HEAD the URL first (cheap) so we know exactly
     how stale the underlying file in the repo is — independent of our
-    in-process cache TTL."""
+    in-process cache TTL.
+
+    When ``optional`` is True a failed fetch returns an empty frame
+    silently — used for prior-season fallback files that may not yet be
+    committed."""
     last_modified = None
     try:
         # Try a HEAD request to capture the file's actual last-modified time.
@@ -779,7 +792,8 @@ def load_remote_csv(url):
     try:
         df = pd.read_csv(url)
     except Exception as exc:
-        st.warning(f"CSV load failed: {url} :: {exc}")
+        if not optional:
+            st.warning(f"CSV load failed: {url} :: {exc}")
         return pd.DataFrame(), last_modified
     if df.empty:
         return df, last_modified
@@ -810,15 +824,24 @@ def load_all_csvs():
     # cushion accounts for in-day Savant publishing latency without
     # flagging a healthy file as stale.
     for label, url in CSV_URLS.items():
-        df, last_mod = load_remote_csv(url)
+        is_optional = label in OPTIONAL_CSVS
+        df, last_mod = load_remote_csv(url, optional=is_optional)
         out[label] = df
         key = f"savant:{label}"
         if df is None or df.empty:
+            # Optional fallbacks log as "missing" rather than "error" — their
+            # absence is expected when the prior-season refresh hasn't run
+            # yet. Downstream consumers already treat them as opt-in.
             record_source(
                 key,
                 label=SOURCE_LABEL.get(label, f"Savant · {label}"),
-                url=url, status="error",
-                detail="Empty CSV — Savant may have rate-limited the nightly refresh.",
+                url=url,
+                status="missing" if is_optional else "error",
+                detail=(
+                    "Optional fallback CSV not present yet."
+                    if is_optional
+                    else "Empty CSV — Savant may have rate-limited the nightly refresh."
+                ),
                 max_age_min=36 * 60,
                 fetched_at=last_mod,
             )
@@ -4918,12 +4941,12 @@ with top_cols[0]:
     selected_date = st.date_input("📅 Slate date", value=today_ct(), key="slate_date_picker")
 with top_cols[1]:
     st.markdown('<div class="toolbar-spacer-label">.</div>', unsafe_allow_html=True)
-    if st.button("🔄 Refresh data", use_container_width=True, key="refresh_btn"):
+    if st.button("🔄 Refresh data", width='stretch', key="refresh_btn"):
         st.cache_data.clear()
         st.rerun()
 with top_cols[2]:
     st.markdown('<div class="toolbar-spacer-label">.</div>', unsafe_allow_html=True)
-    if st.button("📆 Today", use_container_width=True, key="today_btn"):
+    if st.button("📆 Today", width='stretch', key="today_btn"):
         # Defer the actual session_state write to the next run, BEFORE the
         # widget is recreated, to avoid StreamlitAPIException.
         st.session_state["_reset_to_today"] = True
@@ -5317,7 +5340,7 @@ if _view == "🥎 Slate Pitchers":
             data=csv_bytes,
             file_name=f"slate_pitchers_{selected_date}.csv",
             mime="text/csv",
-            use_container_width=False,
+            width='content',
         )
     st.stop()
 
@@ -5400,7 +5423,7 @@ if _view == "💎 HR Sleepers":
             data=csv_bytes,
             file_name=f"hr_sleepers_{selected_date}.csv",
             mime="text/csv",
-            use_container_width=False,
+            width='content',
         )
     st.stop()
 
@@ -5490,7 +5513,7 @@ if _view == "📊 Total Bases 1.5+":
             data=csv_bytes,
             file_name=f"total_bases_targets_{selected_date}.csv",
             mime="text/csv",
-            use_container_width=False,
+            width='content',
         )
     st.stop()
 
@@ -5580,7 +5603,7 @@ if _view == "🎯 HRR 1.5+":
             data=csv_bytes,
             file_name=f"hrr_targets_{selected_date}.csv",
             mime="text/csv",
-            use_container_width=False,
+            width='content',
         )
     st.stop()
 
@@ -5670,7 +5693,7 @@ if _view == "🔥 2+ RBI":
             data=csv_bytes,
             file_name=f"rbi_targets_{selected_date}.csv",
             mime="text/csv",
-            use_container_width=False,
+            width='content',
         )
     st.stop()
 
@@ -5735,7 +5758,7 @@ if _view == "🤖 AI HR Parlay":
             start_utc = pd.to_datetime(gt, utc=True)
         except Exception:
             start_utc = pd.NaT
-        _now = pd.Timestamp.utcnow()
+        _now = pd.Timestamp.now('UTC')
         now_utc = _now if _now.tzinfo is not None else _now.tz_localize("UTC")
         if any(tok in status for tok in _PREGAME_TOKENS):
             if pd.isna(start_utc):
@@ -6016,7 +6039,7 @@ if _view == "🤖 AI HR Parlay":
     r_cols = st.columns([1.0, 1.0, 2.0])
     with r_cols[0]:
         if st.button("🎲 Generate New Parlays", key="ai_parlay_reroll",
-                     use_container_width=True,
+                     width='stretch',
                      help="Reroll: rebuilds 2-leg & 3-leg tickets via weighted "
                           "sampling on the same eligible pool. Filters stay the same."):
             st.session_state["ai_parlay_seed"] = int(
@@ -6573,7 +6596,7 @@ if _view == "👑 HR Round Robin":
         gt = row.get("game_time_utc")
         try:    start_utc = pd.to_datetime(gt, utc=True)
         except Exception: start_utc = pd.NaT
-        _now = pd.Timestamp.utcnow()
+        _now = pd.Timestamp.now('UTC')
         now_utc = _now if _now.tzinfo is not None else _now.tz_localize("UTC")
         if any(t in status for t in _RR_PRE):
             if pd.isna(start_utc): return True
@@ -6739,7 +6762,7 @@ if _view == "👑 HR Round Robin":
             disabled=rr_all_confirmed,
             help=("Generates a fresh top-5 from the qualifying HR candidate "
                   "pool. Disabled once all lineups are confirmed."),
-            use_container_width=True,
+            width='stretch',
         ):
             # Bump seed each click so st.session_state drives a new slate.
             st.session_state["rr_reroll_seed"] = int(
@@ -7045,7 +7068,7 @@ if _view == "🎯 AI K Generator":
         gt = row.get("game_time_utc")
         try:    start_utc = pd.to_datetime(gt, utc=True)
         except Exception: start_utc = pd.NaT
-        _now = pd.Timestamp.utcnow()
+        _now = pd.Timestamp.now('UTC')
         now_utc = _now if _now.tzinfo is not None else _now.tz_localize("UTC")
         if any(t in status for t in _K_PRE):
             if pd.isna(start_utc): return True
@@ -7429,7 +7452,7 @@ if _view == "🎯 AI K Generator":
     r_cols = st.columns([1.0, 2.0])
     with r_cols[0]:
         if st.button("🎲 Generate New K Tickets", key="ai_k_reroll",
-                     use_container_width=True,
+                     width='stretch',
                      help="Reroll: rebuilds the K board's 1-/2-/3-leg tickets via "
                           "weighted sampling on the same eligible pool."):
             st.session_state["ai_k_seed"] = int(
@@ -8506,10 +8529,10 @@ with tab_rolling:
     home_roll = build_rolling_table(ctx["home_lineup"], batters_df, win)
     render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"])
     if away_roll.empty: st.info(f"{game_row['away_abbr']} lineup not posted yet.")
-    else: st.dataframe(style_rolling_table(away_roll), use_container_width=True, hide_index=True)
+    else: st.dataframe(style_rolling_table(away_roll), width='stretch', hide_index=True)
     render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"])
     if home_roll.empty: st.info(f"{game_row['home_abbr']} lineup not posted yet.")
-    else: st.dataframe(style_rolling_table(home_roll), use_container_width=True, hide_index=True)
+    else: st.dataframe(style_rolling_table(home_roll), width='stretch', hide_index=True)
     st.caption("Rolling form is derived from full-season Baseball Savant aggregates with the selected window weighting recency emphasis.")
 
 # ============== Hot / Cold Batters tabs (slate-wide) ==============
@@ -8571,7 +8594,7 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
     st.dataframe(
         style_matchup_table(out),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         height=min(640, 60 + 38 * len(out)),
     )
@@ -8581,7 +8604,7 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
         csv,
         file_name=f"{selected_date}_{'hot' if top else 'cold'}_top{n}.csv",
         mime="text/csv",
-        use_container_width=True,
+        width='stretch',
     )
 
 with tab_hot:

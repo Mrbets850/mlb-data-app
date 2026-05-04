@@ -2879,6 +2879,71 @@ def render_matchup_heatmap_html(df):
     )
     return table_html
 
+# Columns the user can sort the heat-map board by, in display order.
+# "Lineup Spot" maps to the default Spot ordering (1-9) — exposed as the first
+# option so the existing default behavior is preserved.
+MATCHUP_SORTABLE_COLUMNS = [
+    "Lineup Spot", "Hitter",
+    "Matchup", "Test Score", "Ceiling", "Zone Fit", "HR Form", "kHR",
+    "Pitches", "BIP", "ISO", "xwOBA", "xwOBAcon", "SwStr%", "PulledBrl%",
+    "Brl/BIP%", "SweetSpot%", "FB%", "GB%", "HH%", "LA", "Likely",
+]
+
+def sort_matchup_board(df, sort_col, descending):
+    """Return a copy of the heat-map board sorted by `sort_col`.
+
+    Numeric columns (everything in HEATMAP_THRESHOLDS) sort by their numeric
+    value with NaNs pushed to the bottom regardless of direction so blank
+    cells never crowd the top of a high-to-low view. "Lineup Spot" restores
+    the original 1-9 batting order. "Hitter" / "Likely" sort as strings.
+    """
+    if df is None or df.empty:
+        return df
+    if sort_col == "Lineup Spot" or sort_col not in df.columns:
+        return df.sort_values("Spot").reset_index(drop=True)
+    if sort_col in HEATMAP_THRESHOLDS:
+        numeric = pd.to_numeric(df[sort_col], errors="coerce")
+        out = df.assign(_sort=numeric).sort_values(
+            "_sort", ascending=not descending, na_position="last"
+        ).drop(columns=["_sort"]).reset_index(drop=True)
+        return out
+    # Non-numeric (Hitter, Likely) — string sort, blanks last.
+    return df.sort_values(
+        sort_col, ascending=not descending, na_position="last", key=lambda s: s.astype(str)
+    ).reset_index(drop=True)
+
+def render_matchup_board_with_sort(board_df, key_prefix, label):
+    """Render sort controls (column + direction) above a matchup heat-map
+    board, then render the sorted board as colored HTML. `key_prefix` must be
+    unique per board on the page so Streamlit widget state stays isolated
+    (e.g. "away_NYY_BOS" vs "home_NYY_BOS").
+    """
+    if board_df is None or board_df.empty:
+        st.markdown(render_matchup_heatmap_html(board_df), unsafe_allow_html=True)
+        return
+    available = [c for c in MATCHUP_SORTABLE_COLUMNS
+                 if c == "Lineup Spot" or c in board_df.columns]
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        sort_col = st.selectbox(
+            f"Sort {label} by",
+            available,
+            index=0,
+            key=f"mhm_sort_col_{key_prefix}",
+        )
+    with c2:
+        direction = st.radio(
+            "Direction",
+            ["High → Low", "Low → High"],
+            index=0,
+            horizontal=True,
+            key=f"mhm_sort_dir_{key_prefix}",
+            label_visibility="visible",
+        )
+    descending = direction.startswith("High")
+    sorted_df = sort_matchup_board(board_df, sort_col, descending)
+    st.markdown(render_matchup_heatmap_html(sorted_df), unsafe_allow_html=True)
+
 # ===========================================================================
 # Slate pitchers (Baseball Savant CSV joined by player_id +
 #                MLB Stats API for handedness only)
@@ -8077,21 +8142,34 @@ with tab_matchup:
         ctx["home_lineup"], batters_df, pitchers_df,
         game_row["away_probable"], weather, game_row["park_factor"],
     )
+    # Per-board widget keys so each game's away/home sort controls stay isolated
+    # in Streamlit's session_state when the user switches between games.
+    _board_key_base = str(game_row.get("game_pk", selected_idx))
     render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"])
     if away_board.empty:
         st.info(f"{game_row['away_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:
-        st.markdown(render_matchup_heatmap_html(away_board), unsafe_allow_html=True)
+        render_matchup_board_with_sort(
+            away_board,
+            key_prefix=f"away_{_board_key_base}",
+            label=f"{game_row['away_abbr']} lineup",
+        )
     # home lineup
     render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"])
     if home_board.empty:
         st.info(f"{game_row['home_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:
-        st.markdown(render_matchup_heatmap_html(home_board), unsafe_allow_html=True)
+        render_matchup_board_with_sort(
+            home_board,
+            key_prefix=f"home_{_board_key_base}",
+            label=f"{game_row['home_abbr']} lineup",
+        )
     st.caption(
-        "Dark green = best, light green → yellow → orange → red = worst. "
-        "Swipe horizontally to see all stats. SwStr% and GB% are reverse-scaled "
-        "(lower = better for power); LA peaks around 14° (sweet-spot range)."
+        "Use the **Sort** controls above each lineup to rank by any column "
+        "(High → Low or Low → High). Dark green = best, light green → yellow → "
+        "orange → red = worst. Swipe horizontally to see all stats. SwStr% and "
+        "GB% are reverse-scaled (lower = better for power); LA peaks around 14° "
+        "(sweet-spot range)."
     )
 
     # ----- Top 3 Hitters for this game (above Pitcher Vulnerability) -----

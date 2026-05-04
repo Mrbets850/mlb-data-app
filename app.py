@@ -4529,9 +4529,23 @@ st.markdown(
     # Hide Streamlit's default 'View' label
     ".top-tab-row [data-testid=\"stRadio\"] > label { display:none; }"
     ".top-tab-row [data-testid=\"stWidgetLabel\"] { display:none; }"
-    # The radio group: wrap on mobile, comfortable spacing
-    ".top-tab-row [role=\"radiogroup\"] { gap: 10px; flex-wrap: wrap; "
-    "  justify-content: flex-start; }"
+    # The radio group: HORIZONTAL CAROUSEL — single row, scrollable on overflow.
+    # No wrap; users swipe / scroll horizontally instead of pills wrapping into
+    # multiple crowded rows.
+    ".top-tab-row [role=\"radiogroup\"] { gap: 10px; flex-wrap: nowrap; "
+    "  justify-content: flex-start; overflow-x: auto; overflow-y: hidden; "
+    "  -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; "
+    "  scrollbar-width: thin; scrollbar-color: #92400e transparent; "
+    "  padding-bottom: 4px; }"
+    # Hide scrollbar visually but keep functionality (WebKit)
+    ".top-tab-row [role=\"radiogroup\"]::-webkit-scrollbar { height: 6px; }"
+    ".top-tab-row [role=\"radiogroup\"]::-webkit-scrollbar-thumb { "
+    "  background: #92400e; border-radius: 3px; }"
+    ".top-tab-row [role=\"radiogroup\"]::-webkit-scrollbar-track { "
+    "  background: transparent; }"
+    # Each pill participates in scroll-snap so it lines up after a swipe
+    ".top-tab-row [role=\"radiogroup\"] > label { scroll-snap-align: start; "
+    "  flex: 0 0 auto; white-space: nowrap; }"
     # Each pill: bold text, big tap target, clear unselected state with subtle
     # 'tap me' hint via slight lift
     ".top-tab-row [role=\"radiogroup\"] > label { "
@@ -4571,16 +4585,18 @@ st.markdown(
     "  color: inherit !important; "
     "  letter-spacing: .01em; "
     "  line-height: 1.2; }"
-    # Mobile (≤640px): bigger touch targets, full-width pills, larger text
+    # Mobile (≤640px): bigger touch targets, larger text — pills still flow
+    # in a single horizontal scrollable row (carousel) instead of wrapping.
     "@media (max-width: 640px) { "
     "  .top-tab-row { padding: 12px; } "
     "  .top-tab-row [role=\"radiogroup\"] { gap: 8px; } "
     "  .top-tab-row [role=\"radiogroup\"] > label { "
-    "    flex: 1 1 calc(50% - 8px); "           # 2 pills per row on phones
+    "    flex: 0 0 auto; "                       # never wrap on phones either
     "    justify-content: center; "
-    "    padding: 12px 10px; "
-    "    min-height: 50px; "
-    "    font-size: 1.0rem; } "
+    "    padding: 12px 14px; "
+    "    min-height: 48px; "
+    "    font-size: 1.0rem; "
+    "    white-space: nowrap; } "
     "  .top-tab-row [role=\"radiogroup\"] > label p, "
     "  .top-tab-row [role=\"radiogroup\"] > label span, "
     "  .top-tab-row [role=\"radiogroup\"] > label div { "
@@ -4615,7 +4631,7 @@ if _qp_view is None:
 st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
 _view = st.radio(
     "View",
-    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI", "🤖 AI HR Parlay", "👑 HR Round Robin", "🎯 AI K Generator"],
+    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI", "🤖 AI HR Parlay", "👑 HR Round Robin", "🎯 AI K Generator", "🌬️ Ballpark Weather"],
     horizontal=True,
     label_visibility="collapsed",
     key="top_view_tab",
@@ -7322,6 +7338,333 @@ if _view == "🎯 AI K Generator":
             "is Proj Ks rounded to nearest 0.5 then nudged down 0.5 — it is "
             "a model projection, not a book line."
         )
+    st.stop()
+
+
+# ============== Ballpark Weather rankings view ==============
+# Slate-wide hitter-friendliness leaderboard. Reuses the existing
+# RotoGrinders → Open-Meteo weather pipeline (`get_combined_weather`) and
+# `compute_weather_impact` so the score is consistent with what shows up on
+# each game card. No new scraping is added.
+if _view == "🌬️ Ballpark Weather":
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '🌬️ Ballpark Weather — Hitter-Friendliness Rankings</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Every game on tonight's slate, ranked from most hitter-friendly to "
+        "least. Score blends park HR factor, temperature, wind out/in to CF, "
+        "humidity, and rain risk via the same model that powers each game's "
+        "weather card."
+    )
+
+    # ---- Compass helper for the wind dial (degrees → 8-point compass) ----
+    def _bw_compass(deg):
+        if deg is None:
+            return "—"
+        try:
+            d = float(deg) % 360.0
+        except Exception:
+            return "—"
+        dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        return dirs[int((d + 22.5) // 45) % 8]
+
+    # ---- Build one row per scheduled game ----
+    bw_rows = []
+    with st.spinner("Loading ballpark weather for every game…"):
+        for _, gr in schedule_df.iterrows():
+            try:
+                wx = get_combined_weather(gr) or {}
+            except Exception:
+                wx = {}
+            try:
+                imp = compute_weather_impact(
+                    wx, gr.get("park_factor", 100), gr.get("home_abbr", "")
+                ) or {}
+            except Exception:
+                imp = {}
+
+            domed = gr.get("home_abbr", "") in DOMED_PARKS
+
+            # ---- Hitter-friendly score (higher = better for bats) ----
+            # Anchored at compute_weather_impact's HR%/Runs% deltas (already
+            # account for park, temp, wind-out, humidity) and lightly
+            # penalized for rain risk. Domes / unknown weather collapse to a
+            # neutral 50 so they sort to the middle rather than the top or
+            # bottom.
+            hr_pct = imp.get("hr_pct")
+            runs_pct = imp.get("runs_pct")
+            rain_pct = wx.get("rain_pct") or 0
+            if hr_pct is None and runs_pct is None:
+                score = 50.0
+            else:
+                base = 0.6 * float(hr_pct or 0) + 0.4 * float(runs_pct or 0)
+                rain_drag = max(0.0, float(rain_pct) - 20.0) * 0.20
+                score = 50.0 + base * 1.6 - rain_drag
+                if domed:
+                    # Roof closed → no outdoor weather edge; pull toward neutral.
+                    score = 50.0 + (score - 50.0) * 0.25
+                score = max(0.0, min(100.0, score))
+
+            # ---- Reason chips: short why-it-ranks-here strip ----
+            chips = []
+            pf = gr.get("park_factor", 100)
+            try:
+                pf_i = int(round(float(pf)))
+            except Exception:
+                pf_i = 100
+            if pf_i >= 105:
+                chips.append(("Hitter park", "good", f"PF {pf_i}"))
+            elif pf_i <= 95:
+                chips.append(("Pitcher park", "bad", f"PF {pf_i}"))
+            else:
+                chips.append(("Neutral park", "neu", f"PF {pf_i}"))
+
+            temp = wx.get("temp_f")
+            if temp is not None and not domed:
+                t_i = int(round(float(temp)))
+                if t_i >= 80:
+                    chips.append(("Hot", "good", f"{t_i}°F"))
+                elif t_i <= 55:
+                    chips.append(("Cold", "bad", f"{t_i}°F"))
+
+            wind_lbl = imp.get("wind_label") or ""
+            wind_mph = wx.get("wind_mph")
+            if domed:
+                chips.append(("Roof / Dome", "neu", "indoor"))
+            elif wind_lbl in ("out", "out to CF") and wind_mph:
+                chips.append(("Wind helping", "good",
+                              f"{int(round(float(wind_mph)))} mph {wind_lbl}"))
+            elif wind_lbl in ("in", "in from CF") and wind_mph:
+                chips.append(("Wind suppressing", "bad",
+                              f"{int(round(float(wind_mph)))} mph {wind_lbl}"))
+
+            if rain_pct and float(rain_pct) >= 40:
+                chips.append(("Rain risk", "bad", f"{int(round(float(rain_pct)))}%"))
+
+            bw_rows.append({
+                "matchup": gr.get("short_label") or
+                           f"{gr.get('away_abbr','')} @ {gr.get('home_abbr','')}",
+                "time": gr.get("time_short", ""),
+                "venue": gr.get("venue", "Unknown"),
+                "home_abbr": gr.get("home_abbr", ""),
+                "domed": domed,
+                "sky": imp.get("sky", "—"),
+                "sky_icon": imp.get("sky_icon", ""),
+                "temp": temp,
+                "rain_pct": rain_pct,
+                "wind_mph": wind_mph,
+                "wind_dir_deg": wx.get("wind_dir_deg"),
+                "wind_compass": _bw_compass(wx.get("wind_dir_deg")),
+                "wind_label": wind_lbl or ("calm" if not domed else "roof closed"),
+                "park_factor": pf_i,
+                "hr_pct": hr_pct,
+                "runs_pct": runs_pct,
+                "score": round(score, 1),
+                "chips": chips,
+                "source_label": wx.get("source_label") or "—",
+            })
+
+    if not bw_rows:
+        st.info("No games on the schedule yet. Check back closer to first pitch.")
+        st.stop()
+
+    bw_rows.sort(key=lambda r: r["score"], reverse=True)
+
+    # ---- Dark, compact card/table styling (matches reference screenshot) ----
+    st.markdown(
+        "<style>"
+        ".bw-wrap { background: linear-gradient(180deg, #0b1220 0%, #0f172a 100%); "
+        "  border-radius: 14px; padding: 10px 8px; "
+        "  border: 1px solid #1e293b; "
+        "  box-shadow: 0 6px 20px rgba(2,6,23,.35); }"
+        ".bw-row { display: grid; "
+        "  grid-template-columns: 44px 1.4fr 0.9fr 1.4fr 0.7fr 0.7fr 0.9fr 0.8fr; "
+        "  gap: 8px; align-items: center; "
+        "  padding: 10px 12px; border-radius: 10px; "
+        "  margin: 6px 0; "
+        "  background: #111827; border: 1px solid #1f2937; "
+        "  color: #e5e7eb; font-size: 0.92rem; }"
+        ".bw-row.head { background: transparent; border: none; "
+        "  color: #94a3b8; font-size: .72rem; letter-spacing: .08em; "
+        "  text-transform: uppercase; padding: 4px 12px; margin: 0; }"
+        ".bw-rank { display: inline-flex; align-items: center; justify-content: center; "
+        "  width: 32px; height: 32px; border-radius: 50%; "
+        "  background: #1e293b; color: #facc15; font-weight: 900; "
+        "  border: 2px solid #facc15; }"
+        ".bw-rank.r1 { background: #facc15; color: #0f172a; }"
+        ".bw-rank.r2 { background: #cbd5e1; color: #0f172a; border-color: #cbd5e1; }"
+        ".bw-rank.r3 { background: #b45309; color: #fde68a; border-color: #f59e0b; }"
+        ".bw-matchup { font-weight: 800; color: #f8fafc; }"
+        ".bw-meta { color: #94a3b8; font-size: .78rem; line-height: 1.25; }"
+        ".bw-time { font-weight: 700; color: #e2e8f0; }"
+        ".bw-venue { color: #cbd5e1; font-size: .8rem; }"
+        ".bw-temp { font-weight: 800; color: #fbbf24; font-size: 1.05rem; }"
+        ".bw-precip { color: #38bdf8; font-weight: 700; }"
+        ".bw-wind { display: flex; align-items: center; gap: 6px; }"
+        ".bw-arrow { display: inline-block; width: 22px; height: 22px; "
+        "  border-radius: 50%; background: #0f172a; "
+        "  border: 1px solid #334155; position: relative; "
+        "  font-size: .72rem; line-height: 22px; text-align: center; "
+        "  color: #fbbf24; font-weight: 800; }"
+        ".bw-windspd { font-weight: 800; color: #e2e8f0; }"
+        ".bw-windlbl { color: #94a3b8; font-size: .72rem; }"
+        ".bw-score { display: inline-flex; align-items: center; "
+        "  justify-content: center; min-width: 54px; "
+        "  padding: 4px 10px; border-radius: 999px; "
+        "  font-weight: 900; font-size: 1.0rem; "
+        "  background: #1e293b; color: #facc15; border: 1px solid #334155; }"
+        ".bw-score.good { background: linear-gradient(135deg, #14532d, #166534); "
+        "  color: #bbf7d0; border-color: #22c55e; }"
+        ".bw-score.bad  { background: linear-gradient(135deg, #4c1d24, #7f1d1d); "
+        "  color: #fecaca; border-color: #f87171; }"
+        ".bw-score.neu  { background: linear-gradient(135deg, #1e293b, #334155); "
+        "  color: #fde68a; border-color: #facc15; }"
+        ".bw-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }"
+        ".bw-chip { display: inline-flex; align-items: center; gap: 4px; "
+        "  padding: 2px 7px; border-radius: 999px; font-size: .68rem; "
+        "  font-weight: 700; letter-spacing: .02em; "
+        "  background: #0f172a; border: 1px solid #334155; color: #cbd5e1; }"
+        ".bw-chip.good { background: rgba(34,197,94,.12); "
+        "  border-color: rgba(34,197,94,.55); color: #86efac; }"
+        ".bw-chip.bad  { background: rgba(248,113,113,.10); "
+        "  border-color: rgba(248,113,113,.55); color: #fecaca; }"
+        ".bw-chip.neu  { background: rgba(250,204,21,.10); "
+        "  border-color: rgba(250,204,21,.45); color: #fde68a; }"
+        ".bw-chip-val { color: inherit; opacity: .85; font-weight: 600; }"
+        "@media (max-width: 720px) { "
+        "  .bw-row { grid-template-columns: 38px 1.3fr 0.7fr 0.7fr 0.85fr; "
+        "    row-gap: 4px; } "
+        "  .bw-row .bw-col-venue, .bw-row .bw-col-precip, .bw-row .bw-col-impact "
+        "  { display: none; } "
+        "  .bw-row.head .bw-col-venue, .bw-row.head .bw-col-precip, "
+        "  .bw-row.head .bw-col-impact { display: none; } "
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+    # ---- Header row ----
+    header_html = (
+        '<div class="bw-row head">'
+        '<div>#</div>'
+        '<div>Matchup</div>'
+        '<div>Time</div>'
+        '<div class="bw-col-venue">Ballpark</div>'
+        '<div>Temp</div>'
+        '<div class="bw-col-precip">Precip</div>'
+        '<div>Wind</div>'
+        '<div class="bw-col-impact">Hitter Score</div>'
+        '</div>'
+    )
+
+    cards_html = []
+    for i, r in enumerate(bw_rows, 1):
+        rank_cls = "r1" if i == 1 else ("r2" if i == 2 else ("r3" if i == 3 else ""))
+        # Score color tier
+        sc = r["score"]
+        if sc >= 62: sc_cls = "good"
+        elif sc <= 38: sc_cls = "bad"
+        else: sc_cls = "neu"
+
+        temp_html = (f"{int(round(float(r['temp'])))}°F"
+                     if r["temp"] is not None else
+                     ("Dome" if r["domed"] else "—"))
+        rain_v = r["rain_pct"]
+        rain_html = (f"{int(round(float(rain_v)))}%"
+                     if rain_v is not None and not r["domed"] else
+                     ("—" if not r["domed"] else "—"))
+        wind_v = r["wind_mph"]
+        if r["domed"]:
+            wind_html = (
+                '<span class="bw-arrow">·</span>'
+                '<span class="bw-windspd">—</span>'
+                '<span class="bw-windlbl">roof</span>'
+            )
+        elif wind_v is None:
+            wind_html = (
+                '<span class="bw-arrow">·</span>'
+                '<span class="bw-windspd">—</span>'
+                '<span class="bw-windlbl">unknown</span>'
+            )
+        else:
+            wind_html = (
+                f'<span class="bw-arrow" title="{r["wind_compass"]}">{r["wind_compass"]}</span>'
+                f'<span class="bw-windspd">{int(round(float(wind_v)))} mph</span>'
+                f'<span class="bw-windlbl">{r["wind_label"]}</span>'
+            )
+
+        chips_html = ""
+        if r["chips"]:
+            chip_items = []
+            for label, kind, val in r["chips"]:
+                chip_items.append(
+                    f'<span class="bw-chip {kind}">{label}'
+                    f'<span class="bw-chip-val">· {val}</span></span>'
+                )
+            chips_html = '<div class="bw-chips">' + "".join(chip_items) + '</div>'
+
+        # HR / Runs deltas in the meta line (transparent)
+        hr_pct = r["hr_pct"]; runs_pct = r["runs_pct"]
+        impact_bits = []
+        if hr_pct is not None:
+            impact_bits.append(f"HR {hr_pct:+d}%")
+        if runs_pct is not None:
+            impact_bits.append(f"Runs {runs_pct:+d}%")
+        impact_str = " · ".join(impact_bits) if impact_bits else "neutral"
+
+        cards_html.append(
+            '<div class="bw-row">'
+            f'<div><span class="bw-rank {rank_cls}">{i}</span></div>'
+            f'<div><div class="bw-matchup">{r["matchup"]}</div>'
+            f'<div class="bw-meta">{r["sky_icon"]} {r["sky"]} · {impact_str}</div>'
+            f'{chips_html}</div>'
+            f'<div class="bw-time">{r["time"]}</div>'
+            f'<div class="bw-col-venue bw-venue">{r["venue"]}</div>'
+            f'<div class="bw-temp">{temp_html}</div>'
+            f'<div class="bw-col-precip bw-precip">{rain_html}</div>'
+            f'<div class="bw-wind">{wind_html}</div>'
+            f'<div class="bw-col-impact"><span class="bw-score {sc_cls}">{sc:.1f}</span></div>'
+            '</div>'
+        )
+
+    st.markdown(
+        '<div class="bw-wrap">' + header_html + "".join(cards_html) + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("How the hitter-friendly score is built"):
+        st.markdown(
+            "**Hitter Score (0-100)** — anchored at 50 (neutral) and reuses "
+            "the existing `compute_weather_impact` model:\n\n"
+            "- **Park HR factor** — hitter parks (PF > 100) lift the score; "
+            "pitcher parks (PF < 100) drop it.\n"
+            "- **Temperature** — every °F over 70 ≈ +0.4% HR; cold air drags "
+            "carry.\n"
+            "- **Wind out / in to CF** — out-to-CF wind helps (~+1% HR per "
+            "mph of out-component); in-from-CF wind kills.\n"
+            "- **Humidity** — heavier (humid) air shortens flights slightly.\n"
+            "- **Rain risk** — high precip% adds a drag (delay / suppressed "
+            "carry).\n"
+            "- **Domes** — roof-closed games collapse to ~50 (neutral) — "
+            "no outdoor edge either way.\n\n"
+            "Higher = more hitter-friendly. Data source: RotoGrinders MLB "
+            "weather (preferred) → Open-Meteo fallback. Park factors from the "
+            "app's built-in table."
+        )
+
+    # Source freshness chips so users know how stale/live the weather is.
+    try:
+        st.markdown(
+            render_source_chips([
+                "rotogrinders:weather", "openmeteo:weather", "statsapi:schedule",
+            ]),
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
     st.stop()
 
 

@@ -2686,7 +2686,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         ts  = test_score(b_row, p_row)
         cl  = ceiling_score(b_row, weather, park_factor)
         zf  = zone_fit(b_row, p_row, r["bat_side"], opp_hand)
-        hrf, _arrow = hr_form_pct(b_row)
+        hrf, hr_trend = hr_form_pct(b_row)
         khr = k_adj_hr(b_row, p_row, cl)
 
         def _g(key, default=None):
@@ -2759,6 +2759,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "Ceiling": cl,
             "Zone Fit": zf,
             "HR Form": hrf,
+            "_HR Trend": hr_trend,
             "kHR": khr,
             "Pitches": round(pitches, 0) if pitches is not None else None,
             "BIP": round(bip, 0) if bip is not None else None,
@@ -2789,7 +2790,9 @@ def render_matchup_heatmap_html(df):
 
     # Numeric columns in display order (everything except identifiers/Likely).
     numeric_cols = [c for c in df.columns if c in HEATMAP_THRESHOLDS]
-    display_cols = [c for c in df.columns if c != "Spot"]  # Spot collapses into row label
+    # Spot collapses into row label; _HR Trend is carried alongside HR Form
+    # for arrow rendering and is not its own column.
+    display_cols = [c for c in df.columns if c not in ("Spot", "_HR Trend")]
 
     css = """
 <style>
@@ -2817,6 +2820,11 @@ def render_matchup_heatmap_html(df):
   background: #f1f5f9; color: #0f172a; display: inline-block; }
 .mhm-na { color: #94a3b8; font-weight: 700; }
 .mhm-empty { padding: 14px 16px; color: #64748b; font-weight: 700; font-style: italic; }
+.mhm-trend { display: inline-block; margin-left: 4px; font-size: 0.78rem;
+  font-weight: 900; line-height: 1; vertical-align: baseline; }
+.mhm-trend-up   { color: #15803d; }
+.mhm-trend-down { color: #b91c1c; }
+.mhm-trend-flat { color: #475569; }
 </style>
 """
 
@@ -2858,6 +2866,16 @@ def render_matchup_heatmap_html(df):
                 txt = fmt.format(float(v))
             except Exception:
                 txt = str(v)
+            if c == "HR Form":
+                trend = r.get("_HR Trend")
+                arrow_map = {"↑": ("mhm-trend-up", "↑"),
+                             "↓": ("mhm-trend-down", "↓"),
+                             "→": ("mhm-trend-flat", "→")}
+                arrow_cls, arrow_glyph = arrow_map.get(
+                    trend if isinstance(trend, str) else "",
+                    ("mhm-trend-flat", "→"),
+                )
+                txt = f'{txt} <span class="mhm-trend {arrow_cls}">{arrow_glyph}</span>'
             rgb, text_color = _heatmap_color_for(c, v)
             if rgb is None:
                 cells.append(f'<td>{txt}</td>')

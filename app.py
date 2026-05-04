@@ -7998,8 +7998,8 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
-tab_matchup, tab_rolling, tab_h_zones, tab_hot, tab_cold, tab_injuries = st.tabs(
-    ["📊 Matchup", "📈 Rolling", "🌡️ Heat Map", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
+tab_matchup, tab_rolling, tab_hot, tab_cold, tab_injuries = st.tabs(
+    ["📊 Matchup", "📈 Rolling", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
 )
 
 # ============== Matchup tab ==============
@@ -8022,18 +8022,31 @@ with tab_matchup:
     if ctx["away_status"] == "Projected" or ctx["home_status"] == "Projected":
         st.caption("⚡ Showing **projected lineups** built from each team's most-used 9 over recent games. Rows auto-update once MLB posts the confirmed lineup.")
 
-    # away lineup
+    # away lineup — full heat-map stat board (one place for all stats)
+    away_board = build_matchup_heatmap_board(
+        ctx["away_lineup"], batters_df, pitchers_df,
+        game_row["home_probable"], weather, game_row["park_factor"],
+    )
+    home_board = build_matchup_heatmap_board(
+        ctx["home_lineup"], batters_df, pitchers_df,
+        game_row["away_probable"], weather, game_row["park_factor"],
+    )
     render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"])
-    if away_matchup.empty:
+    if away_board.empty:
         st.info(f"{game_row['away_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:
-        st.dataframe(style_matchup_table(away_matchup), use_container_width=True, hide_index=True, height=min(440, 60 + 38*len(away_matchup)))
+        st.markdown(render_matchup_heatmap_html(away_board), unsafe_allow_html=True)
     # home lineup
     render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"])
-    if home_matchup.empty:
+    if home_board.empty:
         st.info(f"{game_row['home_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:
-        st.dataframe(style_matchup_table(home_matchup), use_container_width=True, hide_index=True, height=min(440, 60 + 38*len(home_matchup)))
+        st.markdown(render_matchup_heatmap_html(home_board), unsafe_allow_html=True)
+    st.caption(
+        "Dark green = best, light green → yellow → orange → red = worst. "
+        "Swipe horizontally to see all stats. SwStr% and GB% are reverse-scaled "
+        "(lower = better for power); LA peaks around 14° (sweet-spot range)."
+    )
 
     # ----- Top 3 Hitters for this game (above Pitcher Vulnerability) -----
     combined_for_ranking = pd.concat([away_matchup, home_matchup], ignore_index=True) \
@@ -8178,32 +8191,6 @@ with tab_rolling:
     if home_roll.empty: st.info(f"{game_row['home_abbr']} lineup not posted yet.")
     else: st.dataframe(style_rolling_table(home_roll), use_container_width=True, hide_index=True)
     st.caption("Rolling form is derived from full-season Baseball Savant aggregates with the selected window weighting recency emphasis.")
-
-# ============== Heat Map tab (horizontally-scrollable matchup board) ==============
-with tab_h_zones:
-    away_board = build_matchup_heatmap_board(
-        ctx["away_lineup"], batters_df, pitchers_df,
-        game_row["home_probable"], weather, game_row["park_factor"],
-    )
-    home_board = build_matchup_heatmap_board(
-        ctx["home_lineup"], batters_df, pitchers_df,
-        game_row["away_probable"], weather, game_row["park_factor"],
-    )
-    render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"])
-    if away_board.empty:
-        st.info(f"{game_row['away_abbr']} lineup not posted yet.")
-    else:
-        st.markdown(render_matchup_heatmap_html(away_board), unsafe_allow_html=True)
-    render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"])
-    if home_board.empty:
-        st.info(f"{game_row['home_abbr']} lineup not posted yet.")
-    else:
-        st.markdown(render_matchup_heatmap_html(home_board), unsafe_allow_html=True)
-    st.caption(
-        "Dark green = best, light green → yellow → orange → red = worst. "
-        "Swipe horizontally to see all stats. SwStr% and GB% are reverse-scaled "
-        "(lower = better for power); LA peaks around 14° (sweet-spot range)."
-    )
 
 # ============== Hot / Cold Batters tabs (slate-wide) ==============
 @st.cache_data(ttl=600, show_spinner=False)

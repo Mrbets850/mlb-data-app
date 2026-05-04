@@ -30,6 +30,11 @@ GITHUB_BRANCH = "main"
 
 CSV_FILES = {
     "batters":         "Data:savant_batters.csv.csv",
+    # Wider-coverage batter leaderboard (min=1 PA). Used as a fallback layer
+    # to backfill any slate hitter missing from the qualified-ish (min=10)
+    # leaderboard above so the Matchup heat-map fills in for non-qualified
+    # bats (rookies, platoon roles, returning IL guys).
+    "batters_min1":    "Data:savant_batters_min1.csv",
     "pitchers":        "Data:savant_pitchers.csv.csv",
     # Pitcher results (xwOBA, Whiff%, Barrel%-against, HH%, FB%, K%, BB%, etc.)
     # used by the Slate Pitchers tab. Joined to the slate by player_id.
@@ -785,6 +790,7 @@ def load_all_csvs():
     out = {}
     SOURCE_LABEL = {
         "batters":       "Baseball Savant · Batter Statcast leaderboard",
+        "batters_min1":  "Baseball Savant · Batter leaderboard (min 1 PA, fallback)",
         "pitchers":      "Baseball Savant · Pitcher Statcast leaderboard",
         "pitcher_stats": "Baseball Savant · Pitcher results leaderboard",
         "bat_tracking":  "Baseball Savant · Bat-tracking leaderboard",
@@ -2090,8 +2096,25 @@ def build_game_context(game_row):
         "home_pitch_hand": home_pitch_hand, "away_pitch_hand": away_pitch_hand,
     }
 
-def find_player_row(df, name_key, team):
-    if df.empty: return None
+def find_player_row(df, name_key, team, player_id=None):
+    """Locate a player's row in batters/pitchers_df.
+
+    Order of preference:
+      1. exact player_id match (most reliable — survives accents, name flips,
+         trade team mismatches, and Savant's 'Last, First' formatting).
+      2. exact name + team match.
+      3. exact name match (any team — covers mid-day trades).
+    """
+    if df is None or df.empty:
+        return None
+    if player_id is not None and "player_id" in df.columns:
+        try:
+            pid = int(player_id)
+            pid_match = df[pd.to_numeric(df["player_id"], errors="coerce") == pid]
+            if not pid_match.empty:
+                return pid_match.iloc[0]
+        except (TypeError, ValueError):
+            pass
     exact = df[(df["name_key"] == name_key) & (df["team_key"] == norm_team(team))]
     if not exact.empty: return exact.iloc[0]
     exact2 = df[df["name_key"] == name_key]
@@ -2401,7 +2424,8 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
     opp_pitches = _build_pitcher_arsenal_set(arsenal_p, opp_pitcher_id)
     rows = []
     for _, r in lineup_df.iterrows():
-        b_row = find_player_row(batters_df, r["name_key"], r["team"])
+        pid = r.get("player_id") if "player_id" in r.index else None
+        b_row = find_player_row(batters_df, r["name_key"], r["team"], pid)
         opp_hand = r.get("opposing_pitch_hand", "")
         m   = matchup_score(b_row, p_row, r["lineup_spot"], weather, park_factor, r["bat_side"], opp_hand)
         ts  = test_score(b_row, p_row)
@@ -2409,7 +2433,6 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
         zf  = zone_fit(b_row, p_row, r["bat_side"], opp_hand)
         hrf, arrow = hr_form_pct(b_row)
         khr = k_adj_hr(b_row, p_row, cl)
-        pid = r.get("player_id") if "player_id" in r.index else None
         crushes = _crushes_cell(arsenal_b, pid, opp_pitches) if arsenal_b is not None else "—"
         rows.append({
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
@@ -2445,7 +2468,8 @@ def build_rolling_table(lineup_df, batters_df, window):
     # weight scales by window: shorter window = more variance, longer = smoother
     w_var = {"7": 1.20, "15": 1.05, "30": 0.92}.get(str(window), 1.0)
     for _, r in lineup_df.iterrows():
-        b = find_player_row(batters_df, r["name_key"], r["team"])
+        pid = r.get("player_id") if "player_id" in r.index else None
+        b = find_player_row(batters_df, r["name_key"], r["team"], pid)
         barrel  = safe_float(b.get("Barrel%") if b is not None else None, 8.0)
         hardhit = safe_float(b.get("HardHit%") if b is not None else None, 38.0)
         iso     = safe_float(b.get("ISO") if b is not None else None, 0.170)
@@ -2674,7 +2698,8 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
     p_row = find_pitcher_row(pitchers_df, opp_pitcher_name)
     rows = []
     for _, r in lineup_df.iterrows():
-        b_row = find_player_row(batters_df, r["name_key"], r["team"])
+        pid = r.get("player_id") if "player_id" in r.index else None
+        b_row = find_player_row(batters_df, r["name_key"], r["team"], pid)
         opp_hand = r.get("opposing_pitch_hand", "")
         m   = matchup_score(b_row, p_row, r["lineup_spot"], weather, park_factor, r["bat_side"], opp_hand)
         ts  = test_score(b_row, p_row)
@@ -3568,7 +3593,8 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df):
                 continue
             p_row = find_pitcher_row(_pitchers_df, opp_pitcher)
             for _, r in lineup_df.iterrows():
-                b = find_player_row(_batters_df, r["name_key"], r["team"])
+                pid = r.get("player_id") if "player_id" in r.index else None
+                b = find_player_row(_batters_df, r["name_key"], r["team"], pid)
                 if b is None:
                     continue
                 opp_hand = r.get("opposing_pitch_hand", "")
@@ -3825,7 +3851,8 @@ def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb"):
                 continue
             p_row = find_pitcher_row(_pitchers_df, opp_pitcher)
             for _, r in lineup_df.iterrows():
-                b = find_player_row(_batters_df, r["name_key"], r["team"])
+                pid = r.get("player_id") if "player_id" in r.index else None
+                b = find_player_row(_batters_df, r["name_key"], r["team"], pid)
                 if b is None:
                     continue
                 opp_hand = r.get("opposing_pitch_hand", "")
@@ -4531,6 +4558,25 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
 with st.spinner("Loading Baseball Savant data from GitHub..."):
     csvs = load_all_csvs()
 batters_df = standardize_columns(csvs.get("batters", pd.DataFrame()))
+# Wider-coverage fallback (min=1 PA). Any slate hitter missing from the
+# qualified-ish (min=10) leaderboard above is appended from this file so the
+# Matchup heat-map covers every starting bat the slate produces, not just
+# qualifiers. Identical schema, joined on player_id.
+batters_min1_df = standardize_columns(csvs.get("batters_min1", pd.DataFrame()))
+if (
+    not batters_min1_df.empty
+    and "player_id" in batters_min1_df.columns
+    and "player_id" in batters_df.columns
+):
+    primary_ids = set(
+        pd.to_numeric(batters_df["player_id"], errors="coerce").dropna().astype("int64").tolist()
+    )
+    add_mask = pd.to_numeric(batters_min1_df["player_id"], errors="coerce").apply(
+        lambda v: bool(pd.notna(v)) and int(v) not in primary_ids
+    )
+    extra = batters_min1_df[add_mask]
+    if not extra.empty:
+        batters_df = pd.concat([batters_df, extra], ignore_index=True, sort=False)
 pitchers_df = standardize_columns(csvs.get("pitchers", pd.DataFrame()))
 pitcher_stats_df = standardize_columns(csvs.get("pitcher_stats", pd.DataFrame()))
 

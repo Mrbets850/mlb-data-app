@@ -49,8 +49,13 @@ def current_season_year() -> int:
 TARGETS = [
     (
         "Data:savant_batters.csv.csv",
+        # min=10 PA instead of min=q. Qualified-only caps the leaderboard at
+        # ~150 players, leaving most slate hitters (rookies, platoon bats,
+        # injured returnees) with empty rows on the Matchup heat-map. min=10
+        # PA still excludes single-AB bench guys but covers virtually every
+        # starting slate hitter.
         "https://baseballsavant.mlb.com/leaderboard/custom?"
-        "year={year}&type=batter&filter=&sort=4&sortDir=desc&min=q"
+        "year={year}&type=batter&filter=&sort=4&sortDir=desc&min=10"
         "&selections=ab,pa,hit,single,double,triple,home_run,strikeout,walk,"
         "k_percent,bb_percent,batting_avg,slg_percent,on_base_percent,"
         "on_base_plus_slg,isolated_power,xba,xslg,woba,xwoba,xobp,xiso,"
@@ -82,11 +87,30 @@ TARGETS = [
         # Baseball Savant per-batter bat-tracking leaderboard. Provides real
         # avg_bat_speed (mph) and swing_length (ft) per player_id, which the
         # custom batter leaderboard does NOT expose. Keyed by `id` (= player_id).
+        # minSwings=10 (instead of q) so non-qualified slate bats — rookies,
+        # platoon role players, returning IL guys — still have a bat-tracking
+        # row. Without this, every non-qualifier shows blank Pitches/BIP/etc.
         "https://baseballsavant.mlb.com/leaderboard/bat-tracking?"
         "attackZone=&batSide=&contact=&count=&dateRangeStart=&dateRangeEnd="
-        "&gameType=R&groupBy=&isHardHit=&minSwings=q&minGroupSwings=1"
+        "&gameType=R&groupBy=&isHardHit=&minSwings=10&minGroupSwings=1"
         "&pitchHand=&pitchType=&seasonStart={year}&seasonEnd={year}"
         "&team=&type=batter&csv=true",
+    ),
+    (
+        # Fallback batter leaderboard at min=1 PA. Used by app.py to backfill
+        # any slate hitter missing from the min=10 file (very early-season
+        # call-ups). Same column set, just a wider coverage net.
+        "Data:savant_batters_min1.csv",
+        "https://baseballsavant.mlb.com/leaderboard/custom?"
+        "year={year}&type=batter&filter=&sort=4&sortDir=desc&min=1"
+        "&selections=ab,pa,hit,single,double,triple,home_run,strikeout,walk,"
+        "k_percent,bb_percent,batting_avg,slg_percent,on_base_percent,"
+        "on_base_plus_slg,isolated_power,xba,xslg,woba,xwoba,xobp,xiso,"
+        "exit_velocity_avg,launch_angle_avg,sweet_spot_percent,"
+        "barrel_batted_rate,hard_hit_percent,avg_best_speed,whiff_percent,"
+        "swing_percent,pull_percent,opposite_percent,groundballs_percent,"
+        "flyballs_percent,linedrives_percent"
+        "&chart=false&x=ab&y=ab&r=no&chartType=beeswarm&csv=true",
     ),
     (
         "Data:savant_pitcher_stats.csv",

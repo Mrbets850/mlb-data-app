@@ -679,10 +679,15 @@ html, body, [class*="css"] {
     background: linear-gradient(180deg, #fde68a 0%, #f59e0b 55%, #b45309 100%) !important;
     border-color: #92400e !important;
 }
-[data-theme="dark"] .top-tab-row [role="radiogroup"] > label {
+[data-theme="dark"] .top-tab-row .top-tab-pill {
     background: #1e293b !important;
     color: #f1f5f9 !important;
     border-color: #475569 !important;
+}
+[data-theme="dark"] .top-tab-row .top-tab-pill.active {
+    background: linear-gradient(110deg, #04130b 0%, #0f3a2e 60%, #1d5a3f 100%) !important;
+    color: #facc15 !important;
+    border-color: #facc15 !important;
 }
 [data-theme="dark"] .hrs-table td, [data-theme="dark"] .tg-table td {
     color: #0f172a !important;
@@ -4516,91 +4521,55 @@ _render_rbi_hero_strip()
 # Implemented as a styled radio so we can toggle large sections of the page
 # without re-indenting the entire game flow.
 # ===========================================================================
+_TOP_VIEW_OPTIONS = [
+    "⚾ Games",
+    "🥎 Slate Pitchers",
+    "💎 HR Sleepers",
+    "📊 Total Bases 1.5+",
+    "🎯 HRR 1.5+",
+    "🔥 2+ RBI",
+    "🤖 AI HR Parlay",
+    "👑 HR Round Robin",
+    "🎯 AI K Generator",
+    "🌬️ Ballpark Weather",
+]
+
 st.markdown(
     "<style>"
-    # ---- Top-level view tabs: bold, mobile-friendly pills ----
-    # Wrapper card: padded, rounded, flush against the brand bar above so it
-    # reads as a navigation strip rather than a bare radio.
-    # Gold strip to match the MrBets850 logo crown
+    # ---- Top-level view tabs: bold, mobile-friendly pill carousel ----
+    # Pure HTML anchor pills — no Streamlit radio internals to fight.
     ".top-tab-row { margin: 8px 0 14px 0; padding: 10px; "
     "  background: linear-gradient(180deg, #fde68a 0%, #f59e0b 55%, #b45309 100%); "
     "  border-radius: 16px; border: 2px solid #92400e; "
     "  box-shadow: 0 2px 8px rgba(120,53,15,.25), inset 0 1px 0 rgba(255,255,255,.45); }"
-    # Hide Streamlit's default 'View' label
-    ".top-tab-row [data-testid=\"stRadio\"] > label { display:none; }"
-    ".top-tab-row [data-testid=\"stWidgetLabel\"] { display:none; }"
-    # The radio group: HORIZONTAL CAROUSEL — single row, scrollable on overflow.
-    # No wrap; users swipe / scroll horizontally instead of pills wrapping into
-    # multiple crowded rows.
-    ".top-tab-row [role=\"radiogroup\"] { gap: 10px; flex-wrap: nowrap; "
-    "  justify-content: flex-start; overflow-x: auto; overflow-y: hidden; "
-    "  -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; "
-    "  scrollbar-width: thin; scrollbar-color: #92400e transparent; "
-    "  padding-bottom: 4px; }"
-    # Hide scrollbar visually but keep functionality (WebKit)
-    ".top-tab-row [role=\"radiogroup\"]::-webkit-scrollbar { height: 6px; }"
-    ".top-tab-row [role=\"radiogroup\"]::-webkit-scrollbar-thumb { "
-    "  background: #92400e; border-radius: 3px; }"
-    ".top-tab-row [role=\"radiogroup\"]::-webkit-scrollbar-track { "
-    "  background: transparent; }"
-    # Each pill participates in scroll-snap so it lines up after a swipe
-    ".top-tab-row [role=\"radiogroup\"] > label { scroll-snap-align: start; "
-    "  flex: 0 0 auto; white-space: nowrap; }"
-    # Each pill: bold text, big tap target, clear unselected state with subtle
-    # 'tap me' hint via slight lift
-    ".top-tab-row [role=\"radiogroup\"] > label { "
-    "  background: #ffffff; "
-    "  padding: 10px 18px; "
-    "  min-height: 44px; "          # iOS Apple HIG minimum tap target
-    "  border-radius: 999px; "
-    "  border: 2px solid #cbd5e1; "
-    "  cursor: pointer; "
-    "  font-weight: 800; "
-    "  font-size: 0.98rem; "
-    "  color: #0f172a; "
-    "  transition: all .18s ease; "
-    "  box-shadow: 0 1px 3px rgba(15,23,42,.06); "
-    "  display: inline-flex; align-items: center; }"
-    # Hover: lift slightly, highlight border
-    ".top-tab-row [role=\"radiogroup\"] > label:hover { "
-    "  border-color: #0f3a2e; "
-    "  transform: translateY(-1px); "
-    "  box-shadow: 0 4px 10px rgba(15,58,46,.12); }"
-    # Selected pill: dark green gradient + gold text + glow ring — unmistakable
-    ".top-tab-row [role=\"radiogroup\"] > label:has(input:checked) { "
-    "  background: linear-gradient(110deg, #04130b 0%, #0f3a2e 60%, #1d5a3f 100%); "
-    "  color: #facc15; "
-    "  border-color: #facc15; "
-    "  box-shadow: 0 0 0 3px rgba(250,204,21,.25), 0 6px 16px rgba(5,20,12,.35); "
-    "  transform: translateY(-1px); }"
-    # Hide the actual radio circle (we want pure pill UI)
-    ".top-tab-row [role=\"radiogroup\"] > label > div:first-child { display:none !important; }"
-    # Streamlit nests the text in extra divs — make sure the label text is bold,
-    # readable, and inherits the pill's color (so gold-on-green works on selected)
-    ".top-tab-row [role=\"radiogroup\"] > label p, "
-    ".top-tab-row [role=\"radiogroup\"] > label span, "
-    ".top-tab-row [role=\"radiogroup\"] > label div { "
-    "  font-weight: 800 !important; "
-    "  font-size: 0.98rem !important; "
-    "  color: inherit !important; "
-    "  letter-spacing: .01em; "
-    "  line-height: 1.2; }"
-    # Mobile (≤640px): bigger touch targets, larger text — pills still flow
-    # in a single horizontal scrollable row (carousel) instead of wrapping.
+    ".top-tab-strip { display:flex; gap:10px; flex-wrap:nowrap; "
+    "  justify-content:flex-start; overflow-x:auto; overflow-y:hidden; "
+    "  -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; "
+    "  scrollbar-width:thin; scrollbar-color:#92400e transparent; "
+    "  padding-bottom:4px; }"
+    ".top-tab-strip::-webkit-scrollbar { height:6px; }"
+    ".top-tab-strip::-webkit-scrollbar-thumb { background:#92400e; border-radius:3px; }"
+    ".top-tab-strip::-webkit-scrollbar-track { background:transparent; }"
+    ".top-tab-pill { scroll-snap-align:start; flex:0 0 auto; white-space:nowrap; "
+    "  background:#ffffff; padding:10px 18px; min-height:44px; "
+    "  border-radius:999px; border:2px solid #cbd5e1; cursor:pointer; "
+    "  font-weight:800; font-size:0.98rem; color:#0f172a; "
+    "  text-decoration:none; line-height:1.2; letter-spacing:.01em; "
+    "  transition:all .18s ease; box-shadow:0 1px 3px rgba(15,23,42,.06); "
+    "  display:inline-flex; align-items:center; }"
+    ".top-tab-pill:hover { border-color:#0f3a2e; transform:translateY(-1px); "
+    "  box-shadow:0 4px 10px rgba(15,58,46,.12); color:#0f172a; "
+    "  text-decoration:none; }"
+    ".top-tab-pill.active { "
+    "  background:linear-gradient(110deg, #04130b 0%, #0f3a2e 60%, #1d5a3f 100%); "
+    "  color:#facc15; border-color:#facc15; "
+    "  box-shadow:0 0 0 3px rgba(250,204,21,.25), 0 6px 16px rgba(5,20,12,.35); "
+    "  transform:translateY(-1px); text-decoration:none; }"
+    ".top-tab-pill.active:hover { color:#facc15; }"
     "@media (max-width: 640px) { "
-    "  .top-tab-row { padding: 12px; } "
-    "  .top-tab-row [role=\"radiogroup\"] { gap: 8px; } "
-    "  .top-tab-row [role=\"radiogroup\"] > label { "
-    "    flex: 0 0 auto; "                       # never wrap on phones either
-    "    justify-content: center; "
-    "    padding: 12px 14px; "
-    "    min-height: 48px; "
-    "    font-size: 1.0rem; "
-    "    white-space: nowrap; } "
-    "  .top-tab-row [role=\"radiogroup\"] > label p, "
-    "  .top-tab-row [role=\"radiogroup\"] > label span, "
-    "  .top-tab-row [role=\"radiogroup\"] > label div { "
-    "    font-size: 1.0rem !important; } "
+    "  .top-tab-row { padding:12px; } "
+    "  .top-tab-strip { gap:8px; } "
+    "  .top-tab-pill { padding:12px 14px; min-height:48px; font-size:1.0rem; } "
     "}"
     ".sp-legend { color:#64748b; font-size:.78rem; margin: 4px 0 12px 0; }"
     ".sp-legend code { background:#f1f5f9; padding: 1px 6px; border-radius:6px; "
@@ -4608,35 +4577,91 @@ st.markdown(
     "</style>",
     unsafe_allow_html=True,
 )
-# ---- Deep-link handler: ?view=games&g=<idx> ----
-# Read query params BEFORE the view radio is instantiated, since Streamlit
-# forbids writing to st.session_state[<widget_key>] after the widget exists.
+
+# ---- Deep-link handler: ?view=games&g=<idx> AND ?top_view=<idx> ----
+# We drive selection through a plain session_state string (NOT a widget key,
+# so it can be freely written at any time).
 try:
-    _qp_view = st.query_params.get("view", None)
+    _qp = st.query_params
+    _qp_view = _qp.get("view", None)
+    _qp_top_view = _qp.get("top_view", None)
 except Exception:
     _qp_view = None
-if _qp_view == "games" and "top_view_tab" not in st.session_state:
-    # Only set if the user hasn't already interacted with the radio this run.
-    st.session_state["top_view_tab"] = "⚾ Games"
-elif _qp_view == "games" and st.session_state.get("top_view_tab") != "⚾ Games":
-    # Force a switch when arriving via deep-link, but only on the first such
-    # arrival per click (use a one-shot flag).
-    if not st.session_state.get("_deep_link_consumed"):
+    _qp_top_view = None
+
+# Pill click → ?top_view=<idx>. Apply, then strip the param so refreshing
+# doesn't re-trigger and so the URL stays clean.
+if _qp_top_view is not None:
+    try:
+        _idx = int(_qp_top_view)
+        if 0 <= _idx < len(_TOP_VIEW_OPTIONS):
+            st.session_state["top_view_tab"] = _TOP_VIEW_OPTIONS[_idx]
+    except (TypeError, ValueError):
+        pass
+    try:
+        # Remove just the top_view param, leave others (e.g. g=) intact.
+        try:
+            del st.query_params["top_view"]
+        except Exception:
+            # Older Streamlit query_params API — fall back to dict assignment.
+            _remaining = {k: v for k, v in dict(_qp).items() if k != "top_view"}
+            st.query_params.clear()
+            for _k, _v in _remaining.items():
+                st.query_params[_k] = _v
+    except Exception:
+        pass
+
+# Existing ?view=games deep-link continues to work.
+if _qp_view == "games":
+    if "top_view_tab" not in st.session_state:
         st.session_state["top_view_tab"] = "⚾ Games"
-        st.session_state["_deep_link_consumed"] = True
-# Reset the consumed flag whenever ?view= is missing so a future click works.
+    elif st.session_state.get("top_view_tab") != "⚾ Games":
+        if not st.session_state.get("_deep_link_consumed"):
+            st.session_state["top_view_tab"] = "⚾ Games"
+            st.session_state["_deep_link_consumed"] = True
 if _qp_view is None:
     st.session_state.pop("_deep_link_consumed", None)
 
-st.markdown('<div class="top-tab-row">', unsafe_allow_html=True)
-_view = st.radio(
-    "View",
-    ["⚾ Games", "🥎 Slate Pitchers", "💎 HR Sleepers", "📊 Total Bases 1.5+", "🎯 HRR 1.5+", "🔥 2+ RBI", "🤖 AI HR Parlay", "👑 HR Round Robin", "🎯 AI K Generator", "🌬️ Ballpark Weather"],
-    horizontal=True,
-    label_visibility="collapsed",
-    key="top_view_tab",
+# Default selection on first load.
+if "top_view_tab" not in st.session_state:
+    st.session_state["top_view_tab"] = _TOP_VIEW_OPTIONS[0]
+
+_view = st.session_state["top_view_tab"]
+if _view not in _TOP_VIEW_OPTIONS:
+    _view = _TOP_VIEW_OPTIONS[0]
+    st.session_state["top_view_tab"] = _view
+
+# Render the pill carousel as anchor links. Clicking a pill navigates to
+# ?top_view=<idx> (preserving any other query params like &g=) which the
+# handler above translates into the new selection on the next run.
+def _build_top_tab_href(idx: int) -> str:
+    try:
+        _other = {k: v for k, v in dict(st.query_params).items()
+                  if k not in ("top_view", "view")}
+    except Exception:
+        _other = {}
+    _parts = [f"top_view={idx}"]
+    for _k, _v in _other.items():
+        if isinstance(_v, list):
+            for _item in _v:
+                _parts.append(f"{_k}={_item}")
+        else:
+            _parts.append(f"{_k}={_v}")
+    return "?" + "&".join(_parts)
+
+_pills_html = []
+for _i, _opt in enumerate(_TOP_VIEW_OPTIONS):
+    _active = " active" if _opt == _view else ""
+    _href = _build_top_tab_href(_i)
+    _pills_html.append(
+        f'<a class="top-tab-pill{_active}" href="{_href}" target="_self">{_opt}</a>'
+    )
+st.markdown(
+    '<div class="top-tab-row"><div class="top-tab-strip">'
+    + "".join(_pills_html)
+    + '</div></div>',
+    unsafe_allow_html=True,
 )
-st.markdown('</div>', unsafe_allow_html=True)
 
 if _view == "🥎 Slate Pitchers":
     st.markdown('<div class="section-title" style="font-size:1.4rem;margin-top:8px;">🥎 Slate Pitchers</div>', unsafe_allow_html=True)

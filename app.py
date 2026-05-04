@@ -30,19 +30,28 @@ GITHUB_BRANCH = "main"
 
 CSV_FILES = {
     "batters":         "Data:savant_batters.csv.csv",
-    # Low-PA batter leaderboard (min=10 PA). Used as a *backfill* source for
+    # Low-PA batter leaderboard (min=1 PA). Used as a *backfill* source for
     # rookies, call-ups, and bench bats whose appearance in a daily lineup
     # would otherwise leave the Matchup heat-map board empty. Merged into
     # batters_df only for player_ids not present in the qualified leaderboard.
     "batters_all":     "Data:savant_batters_all.csv.csv",
+    # Prior-season batter leaderboard (min=1 PA). Used as a final fallback
+    # for player_ids that have a current-season row but with NaN Statcast
+    # values (too-small sample). Filled in cell-by-cell only — never replaces
+    # current-season data. Refreshed by scripts/refresh_savant.py.
+    "batters_prev":    "Data:savant_batters_prev.csv.csv",
     "pitchers":        "Data:savant_pitchers.csv.csv",
     # Pitcher results (xwOBA, Whiff%, Barrel%-against, HH%, FB%, K%, BB%, etc.)
     # used by the Slate Pitchers tab. Joined to the slate by player_id.
     "pitcher_stats":   "Data:savant_pitcher_stats.csv",
-    # Per-batter bat-tracking leaderboard: real avg_bat_speed (mph) and
-    # swing_length (ft) per player_id. Merged into batters_df below so the
-    # lineup tables can show actual Bat Speed instead of a placeholder.
+    # Per-batter bat-tracking leaderboard: real avg_bat_speed (mph),
+    # swing_length (ft), batted_ball_events (BIP), and swings_competitive
+    # (Pitches) per player_id. Merged into batters_df below so the lineup
+    # tables can show actual Pitches/BIP instead of placeholders.
     "bat_tracking":    "Data:savant_bat_tracking.csv",
+    # Prior-season bat-tracking — fallback for current-season call-ups with
+    # no bat-tracking sample yet.
+    "bat_tracking_prev": "Data:savant_bat_tracking_prev.csv",
 }
 
 def raw_github_url(path: str) -> str:
@@ -789,11 +798,13 @@ def load_all_csvs():
     """Load every Savant CSV and register source freshness for each."""
     out = {}
     SOURCE_LABEL = {
-        "batters":       "Baseball Savant · Batter Statcast leaderboard",
-        "batters_all":   "Baseball Savant · Batter Statcast leaderboard (low-PA backfill)",
-        "pitchers":      "Baseball Savant · Pitcher Statcast leaderboard",
-        "pitcher_stats": "Baseball Savant · Pitcher results leaderboard",
-        "bat_tracking":  "Baseball Savant · Bat-tracking leaderboard",
+        "batters":           "Baseball Savant · Batter Statcast leaderboard",
+        "batters_all":       "Baseball Savant · Batter Statcast leaderboard (low-PA backfill)",
+        "batters_prev":      "Baseball Savant · Batter Statcast leaderboard (prior-season fallback)",
+        "pitchers":          "Baseball Savant · Pitcher Statcast leaderboard",
+        "pitcher_stats":     "Baseball Savant · Pitcher results leaderboard",
+        "bat_tracking":      "Baseball Savant · Bat-tracking leaderboard",
+        "bat_tracking_prev": "Baseball Savant · Bat-tracking leaderboard (prior-season fallback)",
     }
     # Savant CSVs are refreshed nightly via GitHub Actions, so a 36-hr
     # cushion accounts for in-day Savant publishing latency without
@@ -2096,12 +2107,31 @@ def build_game_context(game_row):
         "home_pitch_hand": home_pitch_hand, "away_pitch_hand": away_pitch_hand,
     }
 
-def find_player_row(df, name_key, team):
-    if df.empty: return None
+def find_player_row(df, name_key, team, player_id=None):
+    """Locate a hitter row in batters_df. ID-first when player_id is provided
+    (lineups always carry it), then fall back to (name_key, team), then
+    name_key alone, and finally a last-name "contains" fallback so that
+    accent/suffix mismatches (e.g. "Jose Ramirez" vs "José Ramírez") still
+    resolve to a real Savant row instead of leaving the lineup row blank."""
+    if df is None or df.empty: return None
+    if player_id is not None and "player_id" in df.columns:
+        try:
+            pid = int(player_id)
+            id_match = df[pd.to_numeric(df["player_id"], errors="coerce") == pid]
+            if not id_match.empty:
+                return id_match.iloc[0]
+        except (TypeError, ValueError):
+            pass
     exact = df[(df["name_key"] == name_key) & (df["team_key"] == norm_team(team))]
     if not exact.empty: return exact.iloc[0]
     exact2 = df[df["name_key"] == name_key]
     if not exact2.empty: return exact2.iloc[0]
+    if isinstance(name_key, str) and " " in name_key:
+        last = name_key.split(" ")[-1]
+        if len(last) >= 4:
+            contains = df[df["name_key"].str.endswith(" " + last, na=False)]
+            if not contains.empty:
+                return contains.iloc[0]
     return None
 
 # ===========================================================================
@@ -2670,17 +2700,59 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
     """Build the wide horizontal heat-map stat board for one team's lineup.
 
     Columns mirror the screenshot reference, with sensible fallbacks when a
-    Statcast field isn't populated (rookies, low-PA samples)."""
+    Statcast field isn't populated (rookies, low-PA samples).
+
+    Fallback ladder for each cell:
+      1. Real Savant value for the matched hitter (current season).
+      2. Prior-season value (already merged into batters_df at startup via
+         combine_first), for hitters whose current sample is too small.
+      3. League-average proxy from the qualified-batter slice of batters_df,
+         used only for cells that are STILL NaN after steps 1-2. This last
+         step keeps every starting hitter from rendering as a long row of
+         empty dashes when Savant simply hasn't published a value yet.
+    """
     cols = ["Spot", "Hitter", "Team", "Matchup", "Test Score", "Ceiling", "Zone Fit",
             "HR Form", "kHR", "Pitches", "BIP", "ISO", "xwOBA", "xwOBAcon",
             "SwStr%", "PulledBrl%", "Brl/BIP%", "SweetSpot%", "FB%", "GB%", "HH%",
             "LA", "Likely"]
     if lineup_df.empty:
         return pd.DataFrame(columns=cols)
+
+    # Compute league-avg fallbacks once per call from the full batters_df so
+    # the proxies adjust automatically as the season progresses (they lock
+    # to the actual median of qualified hitters loaded from Savant).
+    def _league_avg(col, default):
+        if batters_df is None or batters_df.empty or col not in batters_df.columns:
+            return default
+        s = pd.to_numeric(batters_df[col], errors="coerce").dropna()
+        if s.empty:
+            return default
+        return float(s.median())
+
+    _LG = {
+        "K%":         _league_avg("K%",          22.0),
+        "BB%":        _league_avg("BB%",          8.0),
+        "ISO":        _league_avg("ISO",          0.155),
+        "xwOBA":      _league_avg("xwOBA",        0.318),
+        "xSLG":       _league_avg("xSLG",         0.410),
+        "xOBP":       _league_avg("xOBP",         0.320),
+        "Whiff%":     _league_avg("Whiff%",      24.0),
+        "Swing%":     _league_avg("Swing%",      47.0),
+        "Barrel%":    _league_avg("Barrel%",      8.0),
+        "Pull%":      _league_avg("Pull%",       40.0),
+        "SweetSpot%": _league_avg("SweetSpot%", 33.0),
+        "FB%":        _league_avg("FB%",         34.0),
+        "GB%":        _league_avg("GB%",         44.0),
+        "HardHit%":   _league_avg("HardHit%",   38.0),
+        "LA":         _league_avg("LA",          12.0),
+    }
     p_row = find_pitcher_row(pitchers_df, opp_pitcher_name)
     rows = []
     for _, r in lineup_df.iterrows():
-        b_row = find_player_row(batters_df, r["name_key"], r["team"])
+        b_row = find_player_row(
+            batters_df, r["name_key"], r["team"],
+            player_id=r.get("player_id") if "player_id" in r.index else None,
+        )
         opp_hand = r.get("opposing_pitch_hand", "")
         m   = matchup_score(b_row, p_row, r["lineup_spot"], weather, park_factor, r["bat_side"], opp_hand)
         ts  = test_score(b_row, p_row)
@@ -2701,7 +2773,9 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         # Pitches column = total swings_competitive (from bat-tracking) when
         # available, else fall back to plate appearances * 3.9 (league avg
         # pitches/PA) as a proxy. BIP from bat-tracking when available, else
-        # estimated as PA * (1 - K%/100 - BB%/100).
+        # estimated as PA * (1 - K%/100 - BB%/100). For lineup hitters with
+        # neither bat-tracking nor PA on file (rookies just called up), use
+        # a league-typical placeholder so the row is filled rather than blank.
         pa = _g("pa")
         sc = _g("SwingsComp")
         if sc is not None and sc > 0:
@@ -2709,24 +2783,31 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         elif pa is not None:
             pitches = pa * 3.9
         else:
-            pitches = None
+            # Lineup-typical: ~4 PA/game * ~3.9 pitches/PA ≈ 15.6 pitches/game.
+            # Anchor at 50 to land mid-scale on the heat ramp (200–1800).
+            pitches = 50.0
 
         bip = _g("BIP")
-        if bip is None and pa is not None:
-            kp = _g("K%", 22.0) or 22.0
-            bbp = _g("BB%", 8.0) or 8.0
-            bip = max(0.0, pa * (1 - kp / 100.0 - bbp / 100.0))
+        if bip is None:
+            kp = _g("K%", _LG["K%"]) or _LG["K%"]
+            bbp = _g("BB%", _LG["BB%"]) or _LG["BB%"]
+            if pa is not None:
+                bip = max(0.0, pa * (1 - kp / 100.0 - bbp / 100.0))
+            else:
+                # No PA on file — assume a typical starting-hitter sample
+                # (~50 BIP/month) so the cell shows a neutral value.
+                bip = 12.0
 
-        iso     = _g("ISO")
-        xwoba   = _g("xwOBA")
-        xslg    = _g("xSLG", 0.420) or 0.420
-        xobp_v  = _g("xOBP", 0.320) or 0.320
+        iso     = _g("ISO", _LG["ISO"])
+        xwoba   = _g("xwOBA", _LG["xwOBA"])
+        xslg    = _g("xSLG", _LG["xSLG"]) or _LG["xSLG"]
+        xobp_v  = _g("xOBP", _LG["xOBP"]) or _LG["xOBP"]
         # xwOBAcon proxy = xSLG/1.7 + xOBP/3 (scales typical Statcast values
         # into the .330–.470 band shown on Savant's "xwOBA on contact" view).
         xwobacon = round(xslg * 0.55 + xobp_v * 0.45, 3) if xslg and xobp_v else None
 
-        whiff   = _g("Whiff%")
-        swing   = _g("Swing%")
+        whiff   = _g("Whiff%", _LG["Whiff%"])
+        swing   = _g("Swing%", _LG["Swing%"])
         # SwStr% = Whiff% × Swing% / 100 (rate of swinging strikes per pitch).
         if whiff is not None and swing is not None:
             swstr = round(whiff * swing / 100.0, 1)
@@ -2734,21 +2815,21 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             # Whiff% alone is per-swing; approximate by multiplying league-avg swing rate.
             swstr = round(whiff * 0.47, 1)
         else:
-            swstr = None
+            swstr = round(_LG["Whiff%"] * _LG["Swing%"] / 100.0, 1)
 
-        barrel  = _g("Barrel%")
-        pull    = _g("Pull%")
+        barrel  = _g("Barrel%", _LG["Barrel%"])
+        pull    = _g("Pull%", _LG["Pull%"])
         # PulledBrl% proxy = Barrel% × (Pull% / 100) — Savant doesn't expose
         # the exact pulled-barrel rate in the public CSV, but pulled barrels
         # are the most damaging contact type and this is a strong correlate.
         pulledbrl = round(barrel * pull / 100.0, 1) if (barrel is not None and pull is not None) else None
         brl_bip = barrel  # Savant's barrel_batted_rate IS Brl/BIP%
 
-        sweet   = _g("SweetSpot%")
-        fb      = _g("FB%")
-        gb      = _g("GB%")
-        hh      = _g("HardHit%")
-        la      = _g("LA")
+        sweet   = _g("SweetSpot%", _LG["SweetSpot%"])
+        fb      = _g("FB%", _LG["FB%"])
+        gb      = _g("GB%", _LG["GB%"])
+        hh      = _g("HardHit%", _LG["HardHit%"])
+        la      = _g("LA", _LG["LA"])
 
         rows.append({
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
@@ -2818,7 +2899,9 @@ def render_matchup_heatmap_html(df):
 .mhm-hitter-meta { font-size: 0.68rem; color: #64748b; font-weight: 700; margin-top: 1px; }
 .mhm-likely { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800;
   background: #f1f5f9; color: #0f172a; display: inline-block; }
-.mhm-na { color: #94a3b8; font-weight: 700; }
+/* Missing/insufficient-sample cells: muted neutral background instead of bare
+   white, so the heat map reads as one continuous board. */
+.mhm-na { background-color: #cbd5e1; color: #475569; font-weight: 800; }
 .mhm-empty { padding: 14px 16px; color: #64748b; font-weight: 700; font-style: italic; }
 .mhm-trend { display: inline-block; margin-left: 4px; font-size: 0.78rem;
   font-weight: 900; line-height: 1; vertical-align: baseline; }
@@ -2854,8 +2937,10 @@ def render_matchup_heatmap_html(df):
                 # Already rendered alongside Hitter — skip dedicated cell.
                 continue
             if c == "Likely":
-                txt = "—" if (v is None or (isinstance(v, float) and pd.isna(v))) else str(v)
-                cells.append(f'<td><span class="mhm-likely">{txt}</span></td>')
+                if v is None or (isinstance(v, float) and pd.isna(v)) or str(v) == "—":
+                    cells.append('<td class="mhm-na">—</td>')
+                else:
+                    cells.append(f'<td><span class="mhm-likely">{v}</span></td>')
                 continue
             spec = HEATMAP_THRESHOLDS.get(c)
             fmt = spec[3] if spec else "{}"
@@ -4654,13 +4739,73 @@ if (
                 _missing = _missing.reindex(columns=batters_df.columns, fill_value=pd.NA)
                 batters_df = pd.concat([batters_df, _missing], ignore_index=True)
             _after = len(batters_df)
-            # Sanity: never let a backfill more than double the table.
-            if _after > _before * 2 + 50:
-                # Pathological — revert to the qualified-only frame.
+            # Sanity: cap at ~2,500 hitters total (well above the ~1,400 active
+            # major-leaguers in any given season). Anything larger means the
+            # CSV has been polluted with duplicate / minor-league rows and we
+            # should revert to the qualified-only frame.
+            if _after > 2500:
                 batters_df = batters_df.iloc[:_before].reset_index(drop=True)
     except Exception:
         # Backfill must never break startup. The qualified leaderboard alone
         # is still a fully usable batters_df.
+        pass
+
+# Cell-level prior-season fallback: fill *missing* (NaN) Statcast values on
+# current-season rows from each player's prior-season row, joined by
+# player_id. This catches main-team batters whose 2026 sample is too small
+# for some metrics (e.g. a player with PA but no xwOBA yet because they
+# haven't put enough balls in play). NEVER overwrites an existing value —
+# only fills gaps. Out-of-band rows (player_ids unique to prior season,
+# i.e. retired players) are appended at the end so they're available if a
+# lineup unexpectedly references them.
+_batters_prev_raw = csvs.get("batters_prev", pd.DataFrame())
+if (
+    not batters_df.empty
+    and _batters_prev_raw is not None
+    and not _batters_prev_raw.empty
+):
+    try:
+        _batters_prev = standardize_columns(_batters_prev_raw)
+        if (
+            "player_id" in batters_df.columns
+            and "player_id" in _batters_prev.columns
+        ):
+            batters_df["player_id"] = pd.to_numeric(
+                batters_df["player_id"], errors="coerce"
+            ).astype("Int64")
+            _batters_prev["player_id"] = pd.to_numeric(
+                _batters_prev["player_id"], errors="coerce"
+            ).astype("Int64")
+            _batters_prev = _batters_prev.dropna(subset=["player_id"]).drop_duplicates(
+                "player_id"
+            )
+            # Align prev columns to batters_df shape; keep extras Untouched
+            _prev_aligned = _batters_prev.set_index("player_id").reindex(
+                columns=[c for c in batters_df.columns if c != "player_id"]
+            )
+            _cur_indexed = batters_df.set_index("player_id")
+            # Fill only NaN cells in current with prior-season values. combine_first
+            # would prefer the *left* table where present, which is what we want.
+            _cur_filled = _cur_indexed.combine_first(_prev_aligned)
+            # Preserve original row order
+            _cur_filled = _cur_filled.reindex(_cur_indexed.index)
+            batters_df = _cur_filled.reset_index()
+            # Append prior-season players entirely missing from current season
+            _cur_idset = set(int(x) for x in _cur_indexed.index.dropna().tolist())
+            _prev_only = _batters_prev[
+                ~_batters_prev["player_id"].isin(_cur_idset)
+            ]
+            if not _prev_only.empty:
+                _before = len(batters_df)
+                _prev_only = _prev_only.reindex(
+                    columns=batters_df.columns, fill_value=pd.NA
+                )
+                batters_df = pd.concat([batters_df, _prev_only], ignore_index=True)
+                _after = len(batters_df)
+                if _after > _before * 2 + 200:
+                    batters_df = batters_df.iloc[:_before].reset_index(drop=True)
+    except Exception:
+        # Prior-season fallback must never break startup.
         pass
 
 # Merge real per-batter bat-tracking data (avg_bat_speed in mph) into
@@ -4668,33 +4813,66 @@ if (
 # expose bat speed, so without this merge the lineup tables fall back to a
 # constant placeholder. If the bat-tracking CSV is missing or empty, the
 # Bat Speed column simply renders as "—" downstream rather than a fake value.
+def _prep_bat_tracking_frame(_raw):
+    """Return a (player_id, BatSpeed, SwingsComp, BIP) frame from a raw
+    bat-tracking CSV, or an empty DataFrame if the columns aren't present."""
+    if _raw is None or _raw.empty:
+        return pd.DataFrame()
+    _bt = _raw.copy()
+    _bt.columns = [str(c).strip() for c in _bt.columns]
+    if "id" not in _bt.columns or "avg_bat_speed" not in _bt.columns:
+        return pd.DataFrame()
+    keep = ["id", "avg_bat_speed"]
+    rename = {"id": "player_id", "avg_bat_speed": "BatSpeed"}
+    if "swings_competitive" in _bt.columns:
+        keep.append("swings_competitive")
+        rename["swings_competitive"] = "SwingsComp"
+    if "batted_ball_events" in _bt.columns:
+        keep.append("batted_ball_events")
+        rename["batted_ball_events"] = "BIP"
+    _bt = _bt[keep].rename(columns=rename)
+    _bt["player_id"] = pd.to_numeric(_bt["player_id"], errors="coerce").astype("Int64")
+    for _c in ("BatSpeed", "SwingsComp", "BIP"):
+        if _c in _bt.columns:
+            _bt[_c] = pd.to_numeric(_bt[_c], errors="coerce")
+    return _bt.dropna(subset=["player_id"]).drop_duplicates("player_id")
+
 _bat_tracking_df = csvs.get("bat_tracking", pd.DataFrame())
+_bat_tracking_prev_df = csvs.get("bat_tracking_prev", pd.DataFrame())
 if (
     not batters_df.empty
-    and _bat_tracking_df is not None
-    and not _bat_tracking_df.empty
     and "player_id" in batters_df.columns
+    and (
+        (_bat_tracking_df is not None and not _bat_tracking_df.empty)
+        or (_bat_tracking_prev_df is not None and not _bat_tracking_prev_df.empty)
+    )
 ):
-    _bt = _bat_tracking_df.copy()
-    _bt.columns = [str(c).strip() for c in _bt.columns]
-    if "id" in _bt.columns and "avg_bat_speed" in _bt.columns:
-        _bt_keep_cols = ["id", "avg_bat_speed"]
-        _bt_rename = {"id": "player_id", "avg_bat_speed": "BatSpeed"}
-        if "swings_competitive" in _bt.columns:
-            _bt_keep_cols.append("swings_competitive")
-            _bt_rename["swings_competitive"] = "SwingsComp"
-        if "batted_ball_events" in _bt.columns:
-            _bt_keep_cols.append("batted_ball_events")
-            _bt_rename["batted_ball_events"] = "BIP"
-        _bt = _bt[_bt_keep_cols].rename(columns=_bt_rename)
-        _bt["player_id"] = pd.to_numeric(_bt["player_id"], errors="coerce").astype("Int64")
-        for _c in ("BatSpeed", "SwingsComp", "BIP"):
-            if _c in _bt.columns:
-                _bt[_c] = pd.to_numeric(_bt[_c], errors="coerce")
-        batters_df["player_id"] = pd.to_numeric(batters_df["player_id"], errors="coerce").astype("Int64")
+    _bt_cur = _prep_bat_tracking_frame(_bat_tracking_df)
+    _bt_prev = _prep_bat_tracking_frame(_bat_tracking_prev_df)
+    # Cell-level fill: prefer current-season values, fall back to prior-season
+    # only for cells the current frame doesn't cover. This ensures every
+    # active hitter that swung a bat in either season has Pitches/BIP filled.
+    if not _bt_cur.empty and not _bt_prev.empty:
+        _bt = (
+            _bt_cur.set_index("player_id")
+            .combine_first(_bt_prev.set_index("player_id"))
+            .reset_index()
+        )
+    elif not _bt_cur.empty:
+        _bt = _bt_cur
+    else:
+        _bt = _bt_prev
+    if not _bt.empty:
+        batters_df["player_id"] = pd.to_numeric(
+            batters_df["player_id"], errors="coerce"
+        ).astype("Int64")
         # Drop any pre-existing merge cols so the merge cleanly populates them.
-        batters_df = batters_df.drop(columns=[c for c in ("BatSpeed", "SwingsComp", "BIP") if c in batters_df.columns])
-        batters_df = batters_df.merge(_bt.drop_duplicates("player_id"), on="player_id", how="left")
+        batters_df = batters_df.drop(
+            columns=[c for c in ("BatSpeed", "SwingsComp", "BIP") if c in batters_df.columns]
+        )
+        batters_df = batters_df.merge(
+            _bt.drop_duplicates("player_id"), on="player_id", how="left"
+        )
 
 # Pitch-arsenal leaderboards (per pitch type) — fetched directly from
 # Baseball Savant. Cached for an hour. Used by Top 3 Hitters "Crushes" line

@@ -2312,19 +2312,40 @@ def zone_fit(b_row, p_row, bat_side, opp_pitch_hand):
 
 def hr_form_pct(b_row):
     """Recent HR-rate proxy as percentage 0-100. Uses HR / PA scaled with barrel weighting.
-    Returns (pct_value, trend_arrow) — trend is up if barrel+hardhit are above their thresholds."""
+    Returns (pct_value, trend_arrow).
+
+    Trend uses Statcast over/under-performance signals — expected stats vs actual:
+    - xSLG - SLG: positive means batter's contact quality predicts more slug than
+      they've cashed in (trending up / "due"); negative means they've outrun their
+      contact quality (trending down).
+    - xwOBA - wOBA: same idea for overall offensive output.
+    - Barrel% / HardHit% above (or below) league baselines reinforce the direction.
+    These are season-aggregate fields, but the gap between expected and actual is
+    the standard public proxy for short-term trend direction when no rolling
+    window is available."""
     if b_row is None: return (40.0, "→")
     hr  = safe_float(b_row.get("HR"), 0)
     pa  = safe_float(b_row.get("pa"), 1)
     if pa <= 0: pa = 1
-    barrel = safe_float(b_row.get("Barrel%"), 8.0)
+    barrel  = safe_float(b_row.get("Barrel%"), 8.0)
     hardhit = safe_float(b_row.get("HardHit%"), 38.0)
     raw = (hr / pa) * 1100 + (barrel - 7) * 2.2 + (hardhit - 36) * 0.4
     pct = max(0, min(100, raw + 30))
 
-    # Trend arrow based on signal alignment
-    if barrel >= 11 and hardhit >= 42: arrow = "↑"
-    elif barrel <= 6 or hardhit <= 33: arrow = "↓"
+    slg     = safe_float(b_row.get("SLG"), 0.400)
+    xslg    = safe_float(b_row.get("xSLG"), slg)
+    woba    = safe_float(b_row.get("wOBA"), 0.320)
+    xwoba   = safe_float(b_row.get("xwOBA"), woba)
+    # Composite trend score: expected-vs-actual gap weighted with quality-of-contact
+    # signal. Positive => trending up, negative => trending down.
+    trend = (
+        (xslg - slg)   * 60.0   # ~ ±15 pts per .025 SLG gap
+        + (xwoba - woba) * 80.0 # ~ ±20 pts per .025 wOBA gap
+        + (barrel  - 7.0) * 0.8
+        + (hardhit - 36.0) * 0.25
+    )
+    if trend >=  6.0: arrow = "↑"
+    elif trend <= -6.0: arrow = "↓"
     else: arrow = "→"
     return (round(pct, 0), arrow)
 
@@ -2686,7 +2707,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         ts  = test_score(b_row, p_row)
         cl  = ceiling_score(b_row, weather, park_factor)
         zf  = zone_fit(b_row, p_row, r["bat_side"], opp_hand)
-        hrf, _arrow = hr_form_pct(b_row)
+        hrf, hrf_arrow = hr_form_pct(b_row)
         khr = k_adj_hr(b_row, p_row, cl)
 
         def _g(key, default=None):
@@ -2759,6 +2780,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "Ceiling": cl,
             "Zone Fit": zf,
             "HR Form": hrf,
+            "_HR Trend": hrf_arrow,
             "kHR": khr,
             "Pitches": round(pitches, 0) if pitches is not None else None,
             "BIP": round(bip, 0) if bip is not None else None,
@@ -2789,7 +2811,10 @@ def render_matchup_heatmap_html(df):
 
     # Numeric columns in display order (everything except identifiers/Likely).
     numeric_cols = [c for c in df.columns if c in HEATMAP_THRESHOLDS]
-    display_cols = [c for c in df.columns if c != "Spot"]  # Spot collapses into row label
+    # Hidden helper columns: Spot collapses into the Hitter row label, _HR Trend
+    # is rendered inline next to HR Form.
+    hidden_cols = {"Spot", "_HR Trend"}
+    display_cols = [c for c in df.columns if c not in hidden_cols]
 
     css = """
 <style>
@@ -2858,6 +2883,10 @@ def render_matchup_heatmap_html(df):
                 txt = fmt.format(float(v))
             except Exception:
                 txt = str(v)
+            if c == "HR Form":
+                arrow = r.get("_HR Trend", "")
+                if isinstance(arrow, str) and arrow:
+                    txt = f"{txt} {arrow}"
             rgb, text_color = _heatmap_color_for(c, v)
             if rgb is None:
                 cells.append(f'<td>{txt}</td>')

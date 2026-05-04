@@ -2469,38 +2469,6 @@ def build_rolling_table(lineup_df, batters_df, window):
     if not df.empty: df = df.sort_values("Spot").reset_index(drop=True)
     return df
 
-def build_hitter_zones_table(lineup_df, batters_df):
-    """Hitter batted-ball / swing profile — shows where each hitter does damage."""
-    cols = ["Spot", "Hitter", "Team", "Pull%", "Oppo%", "FB%", "LD%", "GB%", "Bat Speed", "Whiff%"]
-    if lineup_df.empty: return pd.DataFrame(columns=cols)
-    rows = []
-    for _, r in lineup_df.iterrows():
-        b = find_player_row(batters_df, r["name_key"], r["team"])
-        # Real Bat Speed comes from the Savant bat-tracking CSV merge above.
-        # If the batter has no bat-tracking row (fewer than the qualifier's
-        # competitive swings), leave it as NaN so the table renders "—"
-        # instead of a misleading constant placeholder.
-        bs_raw = b.get("BatSpeed") if b is not None else None
-        try:
-            bs_val = float(bs_raw) if bs_raw is not None and not pd.isna(bs_raw) else None
-        except (TypeError, ValueError):
-            bs_val = None
-        rows.append({
-            "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
-            "Hitter": r["player_name"],
-            "Team": norm_team(r["team"]),
-            "Pull%":   round(safe_float(b.get("Pull%") if b is not None else None, 38), 1),
-            "Oppo%":   round(safe_float(b.get("Oppo%") if b is not None else None, 25), 1),
-            "FB%":     round(safe_float(b.get("FB%") if b is not None else None, 35), 1),
-            "LD%":     round(safe_float(b.get("LD%") if b is not None else None, 22), 1),
-            "GB%":     round(safe_float(b.get("GB%") if b is not None else None, 43), 1),
-            "Bat Speed": round(bs_val, 1) if bs_val is not None else None,
-            "Whiff%":  round(safe_float(b.get("Whiff%") if b is not None else None, 25), 1),
-        })
-    df = pd.DataFrame(rows)
-    if not df.empty: df = df.sort_values("Spot").reset_index(drop=True)
-    return df
-
 # ===========================================================================
 # Heatmap styling — red→amber→green like the reference site
 # ===========================================================================
@@ -2597,29 +2565,313 @@ def style_rolling_table(df):
             styler = styler.map(heat_score, subset=[c])
     return styler
 
-def style_zones_table(df, kind="hitter"):
-    if df.empty: return df
-    # na_rep="—" so missing Bat Speed (batter not in Savant bat-tracking
-    # leaderboard yet) shows a clear placeholder instead of "nan" or 0.
-    styler = df.style.format(precision=1, na_rep="—")
-    base_text = [
-        {"selector": "th", "props": [("color", "#0f172a"), ("font-size", "12px"),
-                                     ("font-weight", "800"), ("background-color", "#f1f5f9"),
-                                     ("text-transform", "uppercase"), ("letter-spacing", "0.04em")]},
-        {"selector": "td", "props": [("color", "#0f172a"), ("font-size", "13px"), ("font-weight", "700")]},
+# ===========================================================================
+# Matchup Heat-Map Board — horizontally-scrollable stat board
+# ===========================================================================
+# Color ramp: dark green = best, light green → yellow → orange → red = worst.
+# Each column has its own (low, high) thresholds and a `reverse` flag for
+# metrics where lower = better (e.g. SwStr%/Whiff%, GB% for power hitters).
+# LA uses an "optimal range" curve that peaks at ~14 deg (sweet-spot zone)
+# and falls off in either direction — flatter or popup launches go orange/red.
+HEATMAP_THRESHOLDS = {
+    # name           low      high    reverse  fmt
+    "Matchup":      (95.0,    150.0,  False, "{:.1f}"),
+    "Test Score":   (35.0,    85.0,   False, "{:.0f}"),
+    "Ceiling":      (35.0,    85.0,   False, "{:.0f}"),
+    "Zone Fit":     (0.030,   0.090,  False, "{:.3f}"),
+    "HR Form":      (25.0,    75.0,   False, "{:.0f}%"),
+    "kHR":          (25.0,    75.0,   False, "{:.1f}"),
+    "Pitches":      (200.0,   1800.0, False, "{:.0f}"),
+    "BIP":          (40.0,    320.0,  False, "{:.0f}"),
+    "ISO":          (0.130,   0.250,  False, "{:.3f}"),
+    "xwOBA":        (0.290,   0.380,  False, "{:.3f}"),
+    "xwOBAcon":     (0.330,   0.470,  False, "{:.3f}"),
+    "SwStr%":       (8.0,     16.0,   True,  "{:.1f}%"),
+    "PulledBrl%":   (3.0,     14.0,   False, "{:.1f}%"),
+    "Brl/BIP%":     (4.0,     14.0,   False, "{:.1f}%"),
+    "SweetSpot%":   (28.0,    40.0,   False, "{:.1f}%"),
+    "FB%":          (28.0,    45.0,   False, "{:.1f}%"),
+    "GB%":          (35.0,    50.0,   True,  "{:.1f}%"),
+    "HH%":          (32.0,    48.0,   False, "{:.1f}%"),
+    "LA":           (None,    None,   False, "{:.1f}°"),  # optimal-range, custom
+}
+
+def _heatmap_rgb(pct):
+    """Map pct in [0,1] to an RGB tuple along red→orange→yellow→light-green→dark-green."""
+    pct = max(0.0, min(1.0, float(pct)))
+    # 5-stop ramp matching the screenshots
+    stops = [
+        (0.00, (220,  53,  69)),   # red
+        (0.25, (245, 130,  48)),   # orange
+        (0.50, (250, 204,  21)),   # yellow
+        (0.75, (134, 239, 172)),   # light green
+        (1.00, ( 21, 128,  61)),   # dark green
     ]
-    styler = styler.set_table_styles(base_text)
-    if kind == "hitter":
-        for c, lo, hi, rev in [("Pull%", 30, 50, False), ("Oppo%", 18, 32, False),
-                                ("FB%", 28, 45, False), ("LD%", 18, 28, False),
-                                ("GB%", 35, 50, True),  ("Bat Speed", 68, 78, False),
-                                ("Whiff%", 18, 35, True)]:
-            if c in df.columns:
-                styler = styler.map(lambda v, lo=lo, hi=hi, rev=rev: heat_color(v, lo, hi, reverse=rev), subset=[c])
+    for i in range(len(stops) - 1):
+        p0, c0 = stops[i]
+        p1, c1 = stops[i + 1]
+        if pct <= p1:
+            t = (pct - p0) / (p1 - p0) if p1 > p0 else 0.0
+            return tuple(int(c0[k] + (c1[k] - c0[k]) * t) for k in range(3))
+    return stops[-1][1]
+
+def _heatmap_color_for(col, value):
+    """Return (background_rgb, text_color) tuple for one cell, or (None, None) if blank."""
+    try:
+        v = float(value)
+    except Exception:
+        return (None, None)
+    if pd.isna(v):
+        return (None, None)
+    spec = HEATMAP_THRESHOLDS.get(col)
+    if spec is None:
+        return (None, None)
+    low, high, reverse, _ = spec
+    if col == "LA":
+        # Optimal launch-angle window centered at ~14°, gives best in 10-18 range,
+        # falls off toward 0 (grounders) and >25 (popups).
+        center, span = 14.0, 14.0
+        dist = abs(v - center) / span
+        pct = max(0.0, 1.0 - dist)
     else:
-        if "Velo" in df.columns: styler = styler.map(lambda v: heat_color(v, 82, 100), subset=["Velo"])
-        if "Spin" in df.columns: styler = styler.map(lambda v: heat_color(v, 1800, 2700), subset=["Spin"])
-    return styler
+        rng = (high - low)
+        if rng <= 0:
+            return (None, None)
+        pct = (v - low) / rng
+        if reverse:
+            pct = 1.0 - pct
+        pct = max(0.0, min(1.0, pct))
+    rgb = _heatmap_rgb(pct)
+    # readable text color depending on luminance
+    lum = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255.0
+    text = "#0f172a" if lum > 0.55 else "#ffffff"
+    return (rgb, text)
+
+def _likely_label(matchup, ceiling):
+    """Synthesize a 'Likely' outcome chip from Matchup + Ceiling tiers."""
+    try:
+        m = float(matchup); c = float(ceiling)
+    except Exception:
+        return "—"
+    if m >= 145 and c >= 75: return "🔥 HR"
+    if m >= 130 and c >= 65: return "💪 XBH"
+    if m >= 115:             return "✅ Hit"
+    if m >= 100:             return "➖ Avg"
+    return "❌ Tough"
+
+def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_name,
+                                weather, park_factor):
+    """Build the wide horizontal heat-map stat board for one team's lineup.
+
+    Columns mirror the screenshot reference, with sensible fallbacks when a
+    Statcast field isn't populated (rookies, low-PA samples)."""
+    cols = ["Spot", "Hitter", "Team", "Matchup", "Test Score", "Ceiling", "Zone Fit",
+            "HR Form", "kHR", "Pitches", "BIP", "ISO", "xwOBA", "xwOBAcon",
+            "SwStr%", "PulledBrl%", "Brl/BIP%", "SweetSpot%", "FB%", "GB%", "HH%",
+            "LA", "Likely"]
+    if lineup_df.empty:
+        return pd.DataFrame(columns=cols)
+    p_row = find_pitcher_row(pitchers_df, opp_pitcher_name)
+    rows = []
+    for _, r in lineup_df.iterrows():
+        b_row = find_player_row(batters_df, r["name_key"], r["team"])
+        opp_hand = r.get("opposing_pitch_hand", "")
+        m   = matchup_score(b_row, p_row, r["lineup_spot"], weather, park_factor, r["bat_side"], opp_hand)
+        ts  = test_score(b_row, p_row)
+        cl  = ceiling_score(b_row, weather, park_factor)
+        zf  = zone_fit(b_row, p_row, r["bat_side"], opp_hand)
+        hrf, _arrow = hr_form_pct(b_row)
+        khr = k_adj_hr(b_row, p_row, cl)
+
+        def _g(key, default=None):
+            if b_row is None: return default
+            v = b_row.get(key)
+            try:
+                if v is None or pd.isna(v): return default
+                return float(v)
+            except Exception:
+                return default
+
+        # Pitches column = total swings_competitive (from bat-tracking) when
+        # available, else fall back to plate appearances * 3.9 (league avg
+        # pitches/PA) as a proxy. BIP from bat-tracking when available, else
+        # estimated as PA * (1 - K%/100 - BB%/100).
+        pa = _g("pa")
+        sc = _g("SwingsComp")
+        if sc is not None and sc > 0:
+            pitches = sc
+        elif pa is not None:
+            pitches = pa * 3.9
+        else:
+            pitches = None
+
+        bip = _g("BIP")
+        if bip is None and pa is not None:
+            kp = _g("K%", 22.0) or 22.0
+            bbp = _g("BB%", 8.0) or 8.0
+            bip = max(0.0, pa * (1 - kp / 100.0 - bbp / 100.0))
+
+        iso     = _g("ISO")
+        xwoba   = _g("xwOBA")
+        xslg    = _g("xSLG", 0.420) or 0.420
+        xobp_v  = _g("xOBP", 0.320) or 0.320
+        # xwOBAcon proxy = xSLG/1.7 + xOBP/3 (scales typical Statcast values
+        # into the .330–.470 band shown on Savant's "xwOBA on contact" view).
+        xwobacon = round(xslg * 0.55 + xobp_v * 0.45, 3) if xslg and xobp_v else None
+
+        whiff   = _g("Whiff%")
+        swing   = _g("Swing%")
+        # SwStr% = Whiff% × Swing% / 100 (rate of swinging strikes per pitch).
+        if whiff is not None and swing is not None:
+            swstr = round(whiff * swing / 100.0, 1)
+        elif whiff is not None:
+            # Whiff% alone is per-swing; approximate by multiplying league-avg swing rate.
+            swstr = round(whiff * 0.47, 1)
+        else:
+            swstr = None
+
+        barrel  = _g("Barrel%")
+        pull    = _g("Pull%")
+        # PulledBrl% proxy = Barrel% × (Pull% / 100) — Savant doesn't expose
+        # the exact pulled-barrel rate in the public CSV, but pulled barrels
+        # are the most damaging contact type and this is a strong correlate.
+        pulledbrl = round(barrel * pull / 100.0, 1) if (barrel is not None and pull is not None) else None
+        brl_bip = barrel  # Savant's barrel_batted_rate IS Brl/BIP%
+
+        sweet   = _g("SweetSpot%")
+        fb      = _g("FB%")
+        gb      = _g("GB%")
+        hh      = _g("HardHit%")
+        la      = _g("LA")
+
+        rows.append({
+            "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
+            "Hitter": r["player_name"],
+            "Team": norm_team(r["team"]),
+            "Matchup": m,
+            "Test Score": ts,
+            "Ceiling": cl,
+            "Zone Fit": zf,
+            "HR Form": hrf,
+            "kHR": khr,
+            "Pitches": round(pitches, 0) if pitches is not None else None,
+            "BIP": round(bip, 0) if bip is not None else None,
+            "ISO": round(iso, 3) if iso is not None else None,
+            "xwOBA": round(xwoba, 3) if xwoba is not None else None,
+            "xwOBAcon": xwobacon,
+            "SwStr%": swstr,
+            "PulledBrl%": pulledbrl,
+            "Brl/BIP%": round(brl_bip, 1) if brl_bip is not None else None,
+            "SweetSpot%": round(sweet, 1) if sweet is not None else None,
+            "FB%": round(fb, 1) if fb is not None else None,
+            "GB%": round(gb, 1) if gb is not None else None,
+            "HH%": round(hh, 1) if hh is not None else None,
+            "LA": round(la, 1) if la is not None else None,
+            "Likely": _likely_label(m, cl),
+        })
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("Spot").reset_index(drop=True)
+    return df
+
+def render_matchup_heatmap_html(df):
+    """Render the wide heat-map board as an HTML table that scrolls horizontally
+    on mobile + desktop. The first two columns (Spot, Hitter) are sticky so
+    the player stays visible while you swipe through the stat columns."""
+    if df is None or df.empty:
+        return '<div class="mhm-empty">Lineup not posted yet.</div>'
+
+    # Numeric columns in display order (everything except identifiers/Likely).
+    numeric_cols = [c for c in df.columns if c in HEATMAP_THRESHOLDS]
+    display_cols = [c for c in df.columns if c != "Spot"]  # Spot collapses into row label
+
+    css = """
+<style>
+.mhm-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;
+  box-shadow: 0 2px 10px rgba(15,23,42,0.06); margin: 6px 0 14px 0; }
+.mhm-wrap::-webkit-scrollbar { height: 10px; }
+.mhm-wrap::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+.mhm-wrap::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 6px; }
+.mhm-table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.mhm-table th { position: sticky; top: 0; z-index: 3; background: #0f172a; color: #f8fafc;
+  font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+  padding: 8px 10px; text-align: center; white-space: nowrap; border-bottom: 2px solid #1e293b; }
+.mhm-table td { padding: 7px 10px; text-align: center; font-size: 0.82rem;
+  font-weight: 700; color: #0f172a; white-space: nowrap; border-bottom: 1px solid #e2e8f0; }
+.mhm-table tr:last-child td { border-bottom: none; }
+.mhm-col-hitter { position: sticky; left: 0; z-index: 2; background: #ffffff;
+  text-align: left !important; min-width: 170px; box-shadow: 2px 0 4px rgba(15,23,42,0.06); }
+.mhm-table th.mhm-col-hitter { z-index: 4; background: #0f172a; }
+.mhm-table tr:nth-child(even) td.mhm-col-hitter { background: #f8fafc; }
+.mhm-hitter-name { font-weight: 800; color: #0f172a; }
+.mhm-hitter-meta { font-size: 0.68rem; color: #64748b; font-weight: 700; margin-top: 1px; }
+.mhm-likely { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800;
+  background: #f1f5f9; color: #0f172a; display: inline-block; }
+.mhm-na { color: #94a3b8; font-weight: 700; }
+.mhm-empty { padding: 14px 16px; color: #64748b; font-weight: 700; font-style: italic; }
+</style>
+"""
+
+    # Build header row
+    header_cells = []
+    for c in display_cols:
+        cls = "mhm-col-hitter" if c == "Hitter" else ""
+        header_cells.append(f'<th class="{cls}">{c}</th>')
+
+    # Build body rows
+    body_rows = []
+    for _, r in df.iterrows():
+        cells = []
+        for c in display_cols:
+            v = r.get(c)
+            if c == "Hitter":
+                spot = r.get("Spot", "")
+                team = r.get("Team", "")
+                cells.append(
+                    f'<td class="mhm-col-hitter">'
+                    f'<div class="mhm-hitter-name">{spot}. {v}</div>'
+                    f'<div class="mhm-hitter-meta">{team}</div>'
+                    f'</td>'
+                )
+                continue
+            if c == "Team":
+                # Already rendered alongside Hitter — skip dedicated cell.
+                continue
+            if c == "Likely":
+                txt = "—" if (v is None or (isinstance(v, float) and pd.isna(v))) else str(v)
+                cells.append(f'<td><span class="mhm-likely">{txt}</span></td>')
+                continue
+            spec = HEATMAP_THRESHOLDS.get(c)
+            fmt = spec[3] if spec else "{}"
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                cells.append('<td class="mhm-na">—</td>')
+                continue
+            try:
+                txt = fmt.format(float(v))
+            except Exception:
+                txt = str(v)
+            rgb, text_color = _heatmap_color_for(c, v)
+            if rgb is None:
+                cells.append(f'<td>{txt}</td>')
+            else:
+                style = (f'background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]}); '
+                         f'color: {text_color}; font-weight: 800;')
+                cells.append(f'<td style="{style}">{txt}</td>')
+        body_rows.append(f'<tr>{"".join(cells)}</tr>')
+
+    # Filter out the "Team" column from header (Team is rendered with Hitter).
+    header_cells_filtered = [
+        h for h, c in zip(header_cells, display_cols) if c != "Team"
+    ]
+    table_html = (
+        f'{css}<div class="mhm-wrap"><table class="mhm-table">'
+        f'<thead><tr>{"".join(header_cells_filtered)}</tr></thead>'
+        f'<tbody>{"".join(body_rows)}</tbody>'
+        f'</table></div>'
+    )
+    return table_html
 
 # ===========================================================================
 # Slate pitchers (Baseball Savant CSV joined by player_id +
@@ -4297,14 +4549,22 @@ if (
     _bt = _bat_tracking_df.copy()
     _bt.columns = [str(c).strip() for c in _bt.columns]
     if "id" in _bt.columns and "avg_bat_speed" in _bt.columns:
-        _bt = _bt[["id", "avg_bat_speed"]].rename(
-            columns={"id": "player_id", "avg_bat_speed": "BatSpeed"}
-        )
+        _bt_keep_cols = ["id", "avg_bat_speed"]
+        _bt_rename = {"id": "player_id", "avg_bat_speed": "BatSpeed"}
+        if "swings_competitive" in _bt.columns:
+            _bt_keep_cols.append("swings_competitive")
+            _bt_rename["swings_competitive"] = "SwingsComp"
+        if "batted_ball_events" in _bt.columns:
+            _bt_keep_cols.append("batted_ball_events")
+            _bt_rename["batted_ball_events"] = "BIP"
+        _bt = _bt[_bt_keep_cols].rename(columns=_bt_rename)
         _bt["player_id"] = pd.to_numeric(_bt["player_id"], errors="coerce").astype("Int64")
-        _bt["BatSpeed"] = pd.to_numeric(_bt["BatSpeed"], errors="coerce")
+        for _c in ("BatSpeed", "SwingsComp", "BIP"):
+            if _c in _bt.columns:
+                _bt[_c] = pd.to_numeric(_bt[_c], errors="coerce")
         batters_df["player_id"] = pd.to_numeric(batters_df["player_id"], errors="coerce").astype("Int64")
-        # Drop any pre-existing BatSpeed so the merge cleanly populates it.
-        batters_df = batters_df.drop(columns=[c for c in ("BatSpeed",) if c in batters_df.columns])
+        # Drop any pre-existing merge cols so the merge cleanly populates them.
+        batters_df = batters_df.drop(columns=[c for c in ("BatSpeed", "SwingsComp", "BIP") if c in batters_df.columns])
         batters_df = batters_df.merge(_bt.drop_duplicates("player_id"), on="player_id", how="left")
 
 # Pitch-arsenal leaderboards (per pitch type) — fetched directly from
@@ -7739,7 +7999,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 tab_matchup, tab_rolling, tab_h_zones, tab_hot, tab_cold, tab_injuries = st.tabs(
-    ["📊 Matchup", "📈 Rolling", "🌡️ Hitter Zones", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
+    ["📊 Matchup", "📈 Rolling", "🌡️ Heat Map", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
 )
 
 # ============== Matchup tab ==============
@@ -7919,17 +8179,31 @@ with tab_rolling:
     else: st.dataframe(style_rolling_table(home_roll), use_container_width=True, hide_index=True)
     st.caption("Rolling form is derived from full-season Baseball Savant aggregates with the selected window weighting recency emphasis.")
 
-# ============== Hitter Zones tab ==============
+# ============== Heat Map tab (horizontally-scrollable matchup board) ==============
 with tab_h_zones:
-    away_zones = build_hitter_zones_table(ctx["away_lineup"], batters_df)
-    home_zones = build_hitter_zones_table(ctx["home_lineup"], batters_df)
+    away_board = build_matchup_heatmap_board(
+        ctx["away_lineup"], batters_df, pitchers_df,
+        game_row["home_probable"], weather, game_row["park_factor"],
+    )
+    home_board = build_matchup_heatmap_board(
+        ctx["home_lineup"], batters_df, pitchers_df,
+        game_row["away_probable"], weather, game_row["park_factor"],
+    )
     render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"])
-    if away_zones.empty: st.info(f"{game_row['away_abbr']} lineup not posted yet.")
-    else: st.dataframe(style_zones_table(away_zones, "hitter"), use_container_width=True, hide_index=True)
+    if away_board.empty:
+        st.info(f"{game_row['away_abbr']} lineup not posted yet.")
+    else:
+        st.markdown(render_matchup_heatmap_html(away_board), unsafe_allow_html=True)
     render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"])
-    if home_zones.empty: st.info(f"{game_row['home_abbr']} lineup not posted yet.")
-    else: st.dataframe(style_zones_table(home_zones, "hitter"), use_container_width=True, hide_index=True)
-    st.caption("Pull/Oppo/FB/LD/GB tells you where each hitter does damage. Green columns = strengths to exploit.")
+    if home_board.empty:
+        st.info(f"{game_row['home_abbr']} lineup not posted yet.")
+    else:
+        st.markdown(render_matchup_heatmap_html(home_board), unsafe_allow_html=True)
+    st.caption(
+        "Dark green = best, light green → yellow → orange → red = worst. "
+        "Swipe horizontally to see all stats. SwStr% and GB% are reverse-scaled "
+        "(lower = better for power); LA peaks around 14° (sweet-spot range)."
+    )
 
 # ============== Hot / Cold Batters tabs (slate-wide) ==============
 @st.cache_data(ttl=600, show_spinner=False)

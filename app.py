@@ -3748,6 +3748,53 @@ def _sleeper_bonus(hr_total, lineup_spot):
 
     return 0.55 * hr_b + 0.45 * spot_b
 
+def park_weather_indicator(weather: dict, park_factor, home_abbr: str) -> dict:
+    """Map ballpark + weather into a Good/OK/Bad indicator for HR scoring.
+
+    Drives off compute_weather_impact()'s hr_pct (already used elsewhere on
+    the Weather Impact card), so the verdict here matches the rest of the app.
+
+    Thresholds (HR boost vs. league-average):
+        hr_pct >=  6  -> Good   (🟢)  hot park + favorable weather
+        -3 <= hr_pct <  6 -> OK   (🟡)  neutral / mixed signals
+        hr_pct <  -3 -> Bad      (🔴)  pitcher-friendly park or HR-suppressing weather
+    """
+    try:
+        imp = compute_weather_impact(weather or {}, park_factor, home_abbr or "")
+    except Exception:
+        return {"label": "OK", "tier": "ok", "hr_pct": 0,
+                "icon": "🟡", "tooltip": "Park/weather signal unavailable"}
+    hr_pct = int(imp.get("hr_pct", 0) or 0)
+    if hr_pct >= 6:
+        tier, label, icon = "good", "Good", "🟢"
+    elif hr_pct < -3:
+        tier, label, icon = "bad", "Bad", "🔴"
+    else:
+        tier, label, icon = "ok", "OK", "🟡"
+    sky = imp.get("sky") or ""
+    wind_label = imp.get("wind_label") or ""
+    temp = imp.get("temp")
+    wind = imp.get("wind")
+    bits = []
+    if temp is not None:
+        try: bits.append(f"{int(round(float(temp)))}°F")
+        except Exception: pass
+    if wind:
+        try:
+            w = int(round(float(wind)))
+            if wind_label and wind_label not in ("unknown", "roof closed"):
+                bits.append(f"wind {w} mph {wind_label}")
+            elif w > 0:
+                bits.append(f"wind {w} mph")
+        except Exception: pass
+    if sky:
+        bits.append(sky)
+    tip = f"Park/weather HR {hr_pct:+d}%"
+    if bits:
+        tip += " · " + " · ".join(bits)
+    return {"label": label, "tier": tier, "hr_pct": hr_pct,
+            "icon": icon, "tooltip": tip}
+
 def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df):
     """Score every posted-lineup batter for HR sleeper potential and return a
     sorted DataFrame ready for rendering."""
@@ -3757,6 +3804,9 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df):
             cc = build_game_context(g)
         except Exception:
             continue
+        bpw = park_weather_indicator(
+            cc.get("weather", {}), g.get("park_factor"), g.get("home_abbr", "")
+        )
         for side, lineup_df, opp_pitcher in (
             ("away", cc["away_lineup"], g["home_probable"]),
             ("home", cc["home_lineup"], g["away_probable"]),
@@ -3824,6 +3874,11 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df):
                     "Ceiling":  c_score,
                     "kHR":      khr,
                     "PA":       pa,
+                    "BPW Label":  bpw["label"],
+                    "BPW Tier":   bpw["tier"],
+                    "BPW HR%":    bpw["hr_pct"],
+                    "BPW Icon":   bpw["icon"],
+                    "BPW Tip":    bpw["tooltip"],
                 })
     df = pd.DataFrame(rows)
     if df.empty:
@@ -6322,6 +6377,22 @@ if _view == "🤖 AI HR Parlay":
             except Exception:
                 ai_str = "—"
             stats_line = _compact_stats_line(leg)
+            bpw_label = leg.get("BPW Label") or "OK"
+            bpw_tier  = leg.get("BPW Tier")  or "ok"
+            bpw_icon  = leg.get("BPW Icon")  or "🟡"
+            bpw_tip   = leg.get("BPW Tip")   or "Park/weather signal"
+            try:
+                bpw_hr_pct = int(leg.get("BPW HR%") or 0)
+                bpw_hr_str = f"{bpw_hr_pct:+d}%"
+            except Exception:
+                bpw_hr_str = ""
+            bpw_pill = (
+                f'<span class="aip-bpw aip-bpw-{bpw_tier}" title="{bpw_tip}">'
+                f'{bpw_icon} <b>{bpw_label}</b> Ballpark Weather'
+                + (f' <span class="aip-bpw-pct">({bpw_hr_str} HR)</span>'
+                   if bpw_hr_str else '')
+                + f'</span>'
+            )
             leg_html.append(
                 f'<div class="aip-leg">'
                 f'  <div class="aip-leg-head">'
@@ -6337,7 +6408,9 @@ if _view == "🤖 AI HR Parlay":
                 f'  </div>'
                 f'  <div class="aip-ctx">{leg.get("Game","")} '
                 f'<span style="color:#94a3b8;">·</span> vs '
-                f'<b>{leg.get("Opp SP","")}</b></div>'
+                f'<b>{leg.get("Opp SP","")}</b>'
+                f'  <span class="aip-bpw-wrap">{bpw_pill}</span>'
+                f'  </div>'
                 f'  <div class="aip-stats">{stats_line}</div>'
                 f'  <ul class="aip-reasons">{reason_html}</ul>'
                 f'</div>'
@@ -6381,7 +6454,19 @@ if _view == "🤖 AI HR Parlay":
         ".aip-leg-score { display:flex; align-items:center; gap:6px; }"
         ".aip-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
         "  font-variant-numeric: tabular-nums; }"
-        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 4px 0; }"
+        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 4px 0; "
+        "  display:flex; flex-wrap:wrap; align-items:center; gap:8px; }"
+        ".aip-bpw-wrap { display:inline-flex; }"
+        ".aip-bpw { display:inline-flex; align-items:center; gap:4px; "
+        "  padding:2px 8px; border-radius:999px; font-size:.74rem; "
+        "  font-weight:700; letter-spacing:.02em; line-height:1.4; "
+        "  border:1px solid transparent; cursor:help; }"
+        ".aip-bpw b { font-weight:800; }"
+        ".aip-bpw-pct { font-weight:600; opacity:.8; margin-left:2px; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".aip-bpw-good { background:#dcfce7; color:#065f46; border-color:#86efac; }"
+        ".aip-bpw-ok   { background:#fef9c3; color:#713f12; border-color:#fde68a; }"
+        ".aip-bpw-bad  { background:#fee2e2; color:#7f1d1d; border-color:#fecaca; }"
         ".aip-stats { color:#0f172a; font-size:.84rem; margin: 0 0 4px 0; "
         "  background:#f8fafc; border-radius:6px; padding:5px 8px; "
         "  font-variant-numeric: tabular-nums; }"

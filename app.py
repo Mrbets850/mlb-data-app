@@ -5860,6 +5860,26 @@ if _view == "🤖 AI HR Parlay":
         st.info("No lineups posted yet for the upcoming/live games. Check back closer to first pitch.")
         st.stop()
 
+    # Per-game ballpark+weather indicator map keyed by short_label, used as a
+    # fallback when a leg dict somehow loses its BPW columns (cache, merges,
+    # downstream filters). Guarantees every parlay leg can render the pill.
+    _bpw_game_map = {}
+    for _, _g in eligible_schedule_df.iterrows():
+        try:
+            _gc = build_game_context(_g)
+            _wx = _gc.get("weather", {}) if isinstance(_gc, dict) else {}
+        except Exception:
+            _wx = {}
+        try:
+            _bpw_game_map[str(_g.get("short_label", ""))] = park_weather_indicator(
+                _wx, _g.get("park_factor"), _g.get("home_abbr", "")
+            )
+        except Exception:
+            _bpw_game_map[str(_g.get("short_label", ""))] = {
+                "label": "OK", "tier": "ok", "hr_pct": 0,
+                "icon": "🟡", "tooltip": "Park/weather signal unavailable",
+            }
+
     # ---- Controls (clean, compact, odds-free) ----
     c_cols = st.columns([1.6, 1.0, 1.0, 1.0])
     with c_cols[0]:
@@ -6354,6 +6374,63 @@ if _view == "🤖 AI HR Parlay":
             pass
         return " · ".join(parts) if parts else "—"
 
+    def _bpw_for_leg(leg) -> dict:
+        """Resolve a Good/OK/Bad ballpark+weather indicator for one parlay leg.
+
+        Order of resolution:
+          1. Use BPW columns already on the leg dict (set by build_hr_sleepers_table).
+          2. Fall back to the per-game map keyed by short_label.
+          3. Final default = neutral OK.
+
+        Returns a dict with str fields safe to interpolate into HTML, including
+        a pre-formatted 'hr_str' like "+8%" / "-6%" (or "" if unknown).
+        """
+        def _is_blank(v):
+            try:
+                if v is None: return True
+                if isinstance(v, float) and pd.isna(v): return True
+                if pd.isna(v): return True
+            except Exception:
+                pass
+            s = str(v).strip()
+            return s == "" or s.lower() in ("nan", "none")
+
+        label = leg.get("BPW Label")
+        tier  = leg.get("BPW Tier")
+        icon  = leg.get("BPW Icon")
+        tip   = leg.get("BPW Tip")
+        hr_pct = leg.get("BPW HR%")
+
+        if any(_is_blank(x) for x in (label, tier, icon)):
+            fallback = _bpw_game_map.get(str(leg.get("Game", "")))
+            if fallback:
+                label  = label  if not _is_blank(label)  else fallback.get("label")
+                tier   = tier   if not _is_blank(tier)   else fallback.get("tier")
+                icon   = icon   if not _is_blank(icon)   else fallback.get("icon")
+                tip    = tip    if not _is_blank(tip)    else fallback.get("tooltip")
+                if _is_blank(hr_pct):
+                    hr_pct = fallback.get("hr_pct")
+
+        # Final defaults so something always renders.
+        if _is_blank(label): label = "OK"
+        if _is_blank(tier):  tier  = "ok"
+        if _is_blank(icon):  icon  = "🟡"
+        if _is_blank(tip):   tip   = "Park/weather signal"
+
+        try:
+            hr_int = int(float(hr_pct))
+            hr_str = f"{hr_int:+d}%"
+        except Exception:
+            hr_str = ""
+
+        return {
+            "label": str(label),
+            "tier":  str(tier),
+            "icon":  str(icon),
+            "tooltip": str(tip).replace('"', "'"),
+            "hr_str": hr_str,
+        }
+
     def _render_parlay_card(title: str, legs: list, badge: str) -> str:
         if not legs:
             return (
@@ -6377,21 +6454,18 @@ if _view == "🤖 AI HR Parlay":
             except Exception:
                 ai_str = "—"
             stats_line = _compact_stats_line(leg)
-            bpw_label = leg.get("BPW Label") or "OK"
-            bpw_tier  = leg.get("BPW Tier")  or "ok"
-            bpw_icon  = leg.get("BPW Icon")  or "🟡"
-            bpw_tip   = leg.get("BPW Tip")   or "Park/weather signal"
-            try:
-                bpw_hr_pct = int(leg.get("BPW HR%") or 0)
-                bpw_hr_str = f"{bpw_hr_pct:+d}%"
-            except Exception:
-                bpw_hr_str = ""
-            bpw_pill = (
-                f'<span class="aip-bpw aip-bpw-{bpw_tier}" title="{bpw_tip}">'
-                f'{bpw_icon} <b>{bpw_label}</b> Ballpark Weather'
+            bpw = _bpw_for_leg(leg)
+            bpw_label = bpw["label"]
+            bpw_tier  = bpw["tier"]
+            bpw_icon  = bpw["icon"]
+            bpw_tip   = bpw["tooltip"]
+            bpw_hr_str = bpw["hr_str"]
+            bpw_line = (
+                f'<div class="aip-bpw-line aip-bpw-{bpw_tier}" title="{bpw_tip}">'
+                f'{bpw_icon} <b>{bpw_label} Ballpark Weather</b>'
                 + (f' <span class="aip-bpw-pct">({bpw_hr_str} HR)</span>'
                    if bpw_hr_str else '')
-                + f'</span>'
+                + f'</div>'
             )
             leg_html.append(
                 f'<div class="aip-leg">'
@@ -6408,9 +6482,8 @@ if _view == "🤖 AI HR Parlay":
                 f'  </div>'
                 f'  <div class="aip-ctx">{leg.get("Game","")} '
                 f'<span style="color:#94a3b8;">·</span> vs '
-                f'<b>{leg.get("Opp SP","")}</b>'
-                f'  <span class="aip-bpw-wrap">{bpw_pill}</span>'
-                f'  </div>'
+                f'<b>{leg.get("Opp SP","")}</b></div>'
+                f'  {bpw_line}'
                 f'  <div class="aip-stats">{stats_line}</div>'
                 f'  <ul class="aip-reasons">{reason_html}</ul>'
                 f'</div>'
@@ -6454,15 +6527,12 @@ if _view == "🤖 AI HR Parlay":
         ".aip-leg-score { display:flex; align-items:center; gap:6px; }"
         ".aip-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
         "  font-variant-numeric: tabular-nums; }"
-        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 4px 0; "
-        "  display:flex; flex-wrap:wrap; align-items:center; gap:8px; }"
-        ".aip-bpw-wrap { display:inline-flex; }"
-        ".aip-bpw { display:inline-flex; align-items:center; gap:4px; "
-        "  padding:2px 8px; border-radius:999px; font-size:.74rem; "
-        "  font-weight:700; letter-spacing:.02em; line-height:1.4; "
-        "  border:1px solid transparent; cursor:help; }"
-        ".aip-bpw b { font-weight:800; }"
-        ".aip-bpw-pct { font-weight:600; opacity:.8; margin-left:2px; "
+        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 4px 0; }"
+        ".aip-bpw-line { display:block; margin: 4px 0 6px 0; padding:6px 10px; "
+        "  border-radius:8px; font-size:.86rem; font-weight:700; line-height:1.35; "
+        "  border:1px solid transparent; }"
+        ".aip-bpw-line b { font-weight:800; }"
+        ".aip-bpw-pct { font-weight:700; margin-left:4px; "
         "  font-variant-numeric: tabular-nums; }"
         ".aip-bpw-good { background:#dcfce7; color:#065f46; border-color:#86efac; }"
         ".aip-bpw-ok   { background:#fef9c3; color:#713f12; border-color:#fde68a; }"

@@ -5177,6 +5177,7 @@ _TOP_VIEW_OPTIONS = [
     "👑 HR Round Robin",
     "🎯 AI K Generator",
     "🌬️ Ballpark Weather",
+    "🥎 AI 1+ Hits Parlay",
 ]
 
 st.markdown(
@@ -8435,6 +8436,888 @@ if _view == "🌬️ Ballpark Weather":
     except Exception:
         pass
 
+    st.stop()
+
+
+# ============== AI 1+ Hits Parlay view ==============
+# Builds 2-, 3-, and 4-leg "1+ hits" parlays from the slate's full eligible
+# lineup pool. Score is HITS-specific: contact quality (xBA, AVG, K%-inverse,
+# LD%, SweetSpot%, Whiff%-inverse), opportunity (lineup spot PA weight),
+# matchup (opposing SP AVG/xBA-allowed, K%, HardHit%-allowed, platoon edge),
+# environment (park + weather hit-friendliness), and a small recent-power
+# tilt (xwOBA / xSLG) so productive contact bats float up. Avoids HR-specific
+# weighting (Barrel%, FB%, Pull%) so we don't bias toward boom/bust profiles
+# that go 0-for-4 with a homer.
+if _view == "🥎 AI 1+ Hits Parlay":
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '🥎 AI 1+ Hits Parlay Generator</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Two-, three-, and four-leg <b>1+ hits</b> parlays built from the '
+        'slate model. The <b>AI Hits Score</b> blends <b>contact quality</b> '
+        '(xBA, AVG, K%-inverse, LD%, SweetSpot%, Whiff%-inverse), '
+        '<b>opportunity</b> (lineup-spot PA weight), <b>matchup</b> '
+        '(opposing SP AVG/xBA allowed, K%, HardHit% allowed, platoon edge), '
+        'and <b>environment</b> (park + weather hit-friendliness). '
+        'No HR bias — every leg is a contact-first 1+ hit play.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if batters_df is None or batters_df.empty:
+        st.warning("Batter CSV (`Data:savant_batters.csv.csv`) hasn’t loaded yet.")
+        st.stop()
+
+    # ---- Eligibility filter (mirrors AI HR Parlay) ----------------------
+    _COMPLETED_TOKENS_H = (
+        "final", "completed", "game over", "postponed", "cancelled",
+        "canceled", "suspended", "forfeit", "if necessary",
+    )
+    _LIVE_TOKENS_H = (
+        "in progress", "live", "manager challenge", "review",
+        "delayed", "warmup", "warm-up", "warm up",
+    )
+    _PREGAME_TOKENS_H = (
+        "scheduled", "pre-game", "pregame", "pre game",
+    )
+
+    def _hits_game_eligible(row) -> bool:
+        status = str(row.get("status") or "").strip().lower()
+        if any(tok in status for tok in _COMPLETED_TOKENS_H):
+            return False
+        if any(tok in status for tok in _LIVE_TOKENS_H):
+            return True
+        gt = row.get("game_time_utc")
+        try:
+            start_utc = pd.to_datetime(gt, utc=True)
+        except Exception:
+            start_utc = pd.NaT
+        _now = pd.Timestamp.now('UTC')
+        now_utc = _now if _now.tzinfo is not None else _now.tz_localize("UTC")
+        if any(tok in status for tok in _PREGAME_TOKENS_H):
+            if pd.isna(start_utc):
+                return True
+            return start_utc >= now_utc
+        if pd.isna(start_utc):
+            return True
+        return start_utc >= now_utc
+
+    if schedule_df is None or schedule_df.empty:
+        st.warning("No games on the slate. Pick a different date or check back later.")
+        st.stop()
+
+    _h_mask = schedule_df.apply(_hits_game_eligible, axis=1)
+    eligible_h_df = schedule_df[_h_mask].reset_index(drop=True)
+    _h_total = int(len(schedule_df))
+    _h_elig  = int(len(eligible_h_df))
+    _h_excl  = _h_total - _h_elig
+
+    if eligible_h_df.empty:
+        st.warning(
+            f"All {_h_total} games on this slate have already finished or are no "
+            f"longer available. No upcoming/live games to build a hits parlay from."
+        )
+        st.stop()
+
+    st.markdown(
+        f'<div style="margin:0 0 10px 0; padding:8px 12px; '
+        f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+        f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
+        f'🕒 Using <b>{_h_elig}</b> upcoming/live game'
+        f'{"s" if _h_elig != 1 else ""}; '
+        f'completed games excluded'
+        f'{f" ({_h_excl} hidden)" if _h_excl > 0 else ""}.'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ---- Per-game ballpark+weather indicator map keyed by short_label.
+    # Mirrors the AI HR Parlay flow so each leg can render the BPW pill.
+    _h_bpw_map = {}
+    for _, _g in eligible_h_df.iterrows():
+        try:
+            _gc = build_game_context(_g)
+            _wx = _gc.get("weather", {}) if isinstance(_gc, dict) else {}
+        except Exception:
+            _wx = {}
+        try:
+            _h_bpw_map[str(_g.get("short_label", ""))] = park_weather_indicator(
+                _wx, _g.get("park_factor"), _g.get("home_abbr", "")
+            )
+        except Exception:
+            _h_bpw_map[str(_g.get("short_label", ""))] = {
+                "label": "OK", "tier": "ok", "hr_pct": 0,
+                "icon": "🟡", "tooltip": "Park/weather signal unavailable",
+            }
+
+    # ---- Controls ------------------------------------------------------
+    hc_cols = st.columns([1.6, 1.0, 1.0, 1.0])
+    with hc_cols[0]:
+        _h_risk = st.radio(
+            "Risk profile",
+            ["Safer", "Balanced", "Sleeper Hunt", "Aggressive"],
+            index=1,
+            horizontal=True,
+            key="ai_hits_risk",
+            help=(
+                "Safer: top-of-order contact bats, strict thresholds. "
+                "Balanced: default mix of contact stars and quality plays. "
+                "Sleeper Hunt: boosts under-radar contact bats with strong "
+                "AI Hits Score. Aggressive: opens spots 1-9, deeper variance."
+            ),
+        )
+    with hc_cols[1]:
+        _h_avoid_game = st.checkbox(
+            "Avoid same game", value=True, key="ai_hits_avoid_game",
+            help="Prevent two legs from the same game (correlation risk).",
+        )
+    with hc_cols[2]:
+        _h_avoid_team = st.checkbox(
+            "Avoid same team", value=True, key="ai_hits_avoid_team",
+            help="Prevent two legs from the same team.",
+        )
+    with hc_cols[3]:
+        _h_max_spot = st.slider(
+            "Max lineup spot", min_value=4, max_value=9, value=8, step=1,
+            key="ai_hits_max_spot",
+            help="Hide bats batting deeper than this in the order.",
+        )
+
+    # ---- Hits-specific scoring helper ----------------------------------
+    # Returns AI Hits Score (0..100) plus the structured signal dict used
+    # by the reasons builder. Robust to missing fields — every input falls
+    # back to a neutral mid-range value rather than crashing.
+    def _norm_h(val, lo, hi, default=50.0):
+        try:
+            f = float(val)
+            if pd.isna(f):
+                return float(default)
+        except Exception:
+            return float(default)
+        if hi == lo:
+            return float(default)
+        return float(max(0.0, min(100.0, (f - lo) / (hi - lo) * 100.0)))
+
+    def _opt_float(v):
+        try:
+            f = float(v)
+            if pd.isna(f):
+                return None
+            return f
+        except Exception:
+            return None
+
+    def _platoon_edge_h(bat_side: str, opp_hand: str) -> float:
+        """Return 0..1 platoon-edge multiplier component (0.5 neutral)."""
+        b = (str(bat_side or "").upper()[:1])
+        h = (str(opp_hand or "").upper()[:1])
+        if not b or not h:
+            return 0.5
+        if b == "S":
+            return 0.62  # switch hitters always grab a small edge
+        if (b == "L" and h == "R") or (b == "R" and h == "L"):
+            return 0.85
+        if (b == "L" and h == "L") or (b == "R" and h == "R"):
+            return 0.30
+        return 0.5
+
+    def _ai_hits_score(b_row, p_row, lineup_spot, bat_side, opp_hand,
+                       weather: dict, park_factor):
+        """Compute AI Hits Score (0..100) and signals for one batter vs SP.
+
+        Weights:
+          35% Contact   (xBA 12 · AVG 9 · K%-inverse 7 · LD% 4 · SweetSpot% 3)
+          15% Plate-skill (Whiff%-inverse 8 · Bat speed 4 · BB% 3)
+          20% Opportunity (PA weight by lineup spot)
+          20% Matchup    (SP AVG/xBA allowed 8 · SP K% inverse 6 · SP HardHit% 4
+                          · Platoon edge 2)
+          10% Environment (park HR/run factor + weather hit boost)
+        """
+        # --- Contact quality (35) ---
+        xba    = _opt_float(b_row.get("xBA")     if b_row is not None else None)
+        avg    = _opt_float(b_row.get("AVG")     if b_row is not None else None)
+        k_pct  = _opt_float(b_row.get("K%")      if b_row is not None else None)
+        ld     = _opt_float(b_row.get("LD%")     if b_row is not None else None)
+        ss_pct = _opt_float(b_row.get("SweetSpot%") if b_row is not None else None)
+        whiff  = _opt_float(b_row.get("Whiff%")  if b_row is not None else None)
+        bb_pct = _opt_float(b_row.get("BB%")     if b_row is not None else None)
+        bs     = _opt_float(b_row.get("BatSpeed") if b_row is not None else None)
+        xwoba  = _opt_float(b_row.get("xwOBA")   if b_row is not None else None)
+        xslg   = _opt_float(b_row.get("xSLG")    if b_row is not None else None)
+
+        n_xba   = _norm_h(xba,    0.220, 0.310)
+        n_avg   = _norm_h(avg,    0.210, 0.320)
+        n_kinv  = 100.0 - _norm_h(k_pct, 12.0, 32.0)  # lower K% better
+        n_ld    = _norm_h(ld,     17.0, 28.0)
+        n_ss    = _norm_h(ss_pct, 28.0, 40.0)
+        contact = 0.12*n_xba + 0.09*n_avg + 0.07*n_kinv + 0.04*n_ld + 0.03*n_ss
+
+        # --- Plate skill (15) ---
+        n_whiffinv = 100.0 - _norm_h(whiff, 16.0, 34.0)
+        n_bs       = _norm_h(bs,    67.0, 76.0)
+        n_bb       = _norm_h(bb_pct, 5.0, 14.0)
+        plate = 0.08*n_whiffinv + 0.04*n_bs + 0.03*n_bb
+
+        # --- Opportunity (20) — PA weight by lineup spot ---
+        spot_w = _spot_pa_weight(lineup_spot)  # 0..100
+        opp_part = 0.20 * spot_w
+
+        # --- Matchup vs opposing SP (20) ---
+        # SP AVG / xBA allowed -> higher = easier hits.
+        p_avg = _opt_float(p_row.get("AVG") if p_row is not None else None)
+        p_xba = _opt_float(p_row.get("xBA") if p_row is not None else None)
+        p_k   = _opt_float(p_row.get("K%")  if p_row is not None else None)
+        p_hh  = _opt_float(p_row.get("HardHit%") if p_row is not None else None)
+        n_pavg = _norm_h(p_avg, 0.210, 0.290)   # higher AVG-against = better for hitter
+        n_pxba = _norm_h(p_xba, 0.220, 0.290)
+        # Low K% pitcher = more contact = more hit chances. Invert.
+        n_pkinv = 100.0 - _norm_h(p_k, 16.0, 30.0)
+        n_phh   = _norm_h(p_hh, 32.0, 44.0)     # lots of hard contact allowed = good
+        sp_avg_part = 0.5*n_pavg + 0.5*n_pxba
+        plat = _platoon_edge_h(bat_side, opp_hand) * 100.0
+        matchup = 0.08*sp_avg_part + 0.06*n_pkinv + 0.04*n_phh + 0.02*plat
+
+        # --- Environment (10) ---
+        # Use compute_weather_impact for runs/HR % deltas and park factor.
+        env_score = 50.0
+        try:
+            imp = compute_weather_impact(weather or {}, park_factor, "") or {}
+            r_pct = imp.get("runs_pct")
+            h_pct = imp.get("hr_pct")
+            base = 0.0
+            if r_pct is not None: base += 0.7 * float(r_pct)
+            if h_pct is not None: base += 0.3 * float(h_pct)
+            env_score = max(0.0, min(100.0, 50.0 + base * 1.2))
+        except Exception:
+            pass
+        env = 0.10 * env_score
+
+        score = contact + plate + opp_part + matchup + env
+        score = round(max(0.0, min(100.0, score)), 1)
+
+        signals = {
+            "xBA": xba, "AVG": avg, "K%": k_pct, "LD%": ld,
+            "SweetSpot%": ss_pct, "Whiff%": whiff, "BB%": bb_pct,
+            "BatSpeed": bs, "xwOBA": xwoba, "xSLG": xslg,
+            "p_AVG_against": p_avg, "p_xBA_against": p_xba,
+            "p_K%": p_k, "p_HardHit%": p_hh,
+            "platoon": plat / 100.0,
+            "spot_w": spot_w, "env": env_score,
+            "contact_part": contact, "matchup_part": matchup,
+        }
+        return score, signals
+
+    # ---- Build candidate pool (one row per batter on every eligible game)
+    def _build_hits_pool():
+        rows = []
+        for _, g in eligible_h_df.iterrows():
+            try:
+                cc = build_game_context(g)
+            except Exception:
+                continue
+            wx = cc.get("weather", {}) if isinstance(cc, dict) else {}
+            for side, lineup_df, opp_pitcher in (
+                ("away", cc.get("away_lineup"), g.get("home_probable")),
+                ("home", cc.get("home_lineup"), g.get("away_probable")),
+            ):
+                if lineup_df is None or lineup_df.empty:
+                    continue
+                p_row = find_pitcher_row(pitchers_df, opp_pitcher)
+                opp_p_hand = (cc.get("home_pitch_hand") if side == "away"
+                              else cc.get("away_pitch_hand")) or ""
+                lineup_status = (cc.get("away_status") if side == "away"
+                                 else cc.get("home_status")) or "Not Posted"
+                bpw = _h_bpw_map.get(str(g.get("short_label", "")), {
+                    "label":"OK","tier":"ok","hr_pct":0,
+                    "icon":"🟡","tooltip":"Park/weather signal"
+                })
+                for _, r in lineup_df.iterrows():
+                    b = find_player_row(batters_df, r["name_key"], r["team"])
+                    bat_side = r.get("bat_side") or ""
+                    spot = r.get("lineup_spot")
+                    score, sig = _ai_hits_score(
+                        b, p_row, spot, bat_side, opp_p_hand,
+                        wx, g.get("park_factor", 100),
+                    )
+                    rows.append({
+                        "_player_id": r.get("player_id"),
+                        "Hitter":   r.get("player_name", ""),
+                        "Team":     norm_team(r.get("team", "")),
+                        "Bat":      bat_side,
+                        "Spot":     int(spot) if pd.notna(spot) else 99,
+                        "LineupStatus": lineup_status,
+                        "Game":     g.get("short_label", ""),
+                        "Opp SP":   opp_pitcher or "TBD",
+                        "OppHand":  opp_p_hand,
+                        "AI Hits Score": score,
+                        # surfaced metrics for reasons + compact line
+                        "AVG":      sig.get("AVG"),
+                        "xBA":      sig.get("xBA"),
+                        "K%":       sig.get("K%"),
+                        "LD%":      sig.get("LD%"),
+                        "SweetSpot%": sig.get("SweetSpot%"),
+                        "Whiff%":   sig.get("Whiff%"),
+                        "BB%":      sig.get("BB%"),
+                        "BatSpeed": sig.get("BatSpeed"),
+                        "xwOBA":    sig.get("xwOBA"),
+                        "xSLG":     sig.get("xSLG"),
+                        "p_AVG_against": sig.get("p_AVG_against"),
+                        "p_xBA_against": sig.get("p_xBA_against"),
+                        "p_K%":     sig.get("p_K%"),
+                        "p_HardHit%": sig.get("p_HardHit%"),
+                        "platoon":  sig.get("platoon"),
+                        "env":      sig.get("env"),
+                        "BPW Label":  bpw.get("label"),
+                        "BPW Tier":   bpw.get("tier"),
+                        "BPW HR%":    bpw.get("hr_pct"),
+                        "BPW Icon":   bpw.get("icon"),
+                        "BPW Tip":    bpw.get("tooltip"),
+                    })
+        return pd.DataFrame(rows)
+
+    with st.spinner("Scoring 1+ hits candidates across the slate…"):
+        h_pool = _build_hits_pool()
+
+    if h_pool is None or h_pool.empty:
+        st.info("No lineups posted yet for the upcoming/live games. Check back closer to first pitch.")
+        st.stop()
+
+    # ---- Risk-profile thresholds + filter ------------------------------
+    if _h_risk == "Safer":
+        h_min_score, h_min_xba, h_max_k = 62.0, 0.255, 26.0
+        h_max_spot = min(_h_max_spot, 5)
+    elif _h_risk == "Sleeper Hunt":
+        h_min_score, h_min_xba, h_max_k = 50.0, 0.235, 30.0
+        h_max_spot = _h_max_spot
+    elif _h_risk == "Aggressive":
+        h_min_score, h_min_xba, h_max_k = 45.0, 0.225, 34.0
+        h_max_spot = _h_max_spot
+    else:  # Balanced
+        h_min_score, h_min_xba, h_max_k = 55.0, 0.245, 28.0
+        h_max_spot = _h_max_spot
+
+    # Soft thresholds: if a metric is missing we DON'T filter on it (None
+    # passes), so coverage is robust when CSVs are partial.
+    def _passes_min(v, lo):
+        if v is None: return True
+        try: return float(v) >= float(lo)
+        except Exception: return True
+
+    def _passes_max(v, hi):
+        if v is None: return True
+        try: return float(v) <= float(hi)
+        except Exception: return True
+
+    h_pool = h_pool[h_pool["AI Hits Score"].fillna(0) >= float(h_min_score)]
+    h_pool = h_pool[h_pool["xBA"].apply(lambda v: _passes_min(v, h_min_xba))]
+    h_pool = h_pool[h_pool["K%"].apply(lambda v: _passes_max(v, h_max_k))]
+    h_pool = h_pool[h_pool["Spot"].fillna(99).astype(int) <= int(h_max_spot)]
+    h_pool = h_pool.sort_values("AI Hits Score", ascending=False).reset_index(drop=True)
+
+    if h_pool.empty or len(h_pool) < 2:
+        st.info(
+            f"Not enough qualifying bats for the **{_h_risk}** profile — "
+            f"only {len(h_pool)} hitter(s) cleared the thresholds. "
+            f"Try **Sleeper Hunt** or **Aggressive**, or raise **Max lineup spot**."
+        )
+        st.stop()
+
+    # ---- Reroll controls -----------------------------------------------
+    if "ai_hits_seed" not in st.session_state:
+        st.session_state["ai_hits_seed"] = 1
+    if "ai_hits_generated_at" not in st.session_state:
+        st.session_state["ai_hits_generated_at"] = datetime.now(
+            ZoneInfo("America/New_York")
+        ).strftime("%Y-%m-%d %I:%M:%S %p ET")
+
+    hr_cols = st.columns([1.0, 1.0, 2.0])
+    with hr_cols[0]:
+        if st.button("🎲 Generate New Hits Parlays", key="ai_hits_reroll",
+                     width='stretch',
+                     help="Reroll: rebuilds 2-leg, 3-leg, and 4-leg tickets via "
+                          "weighted sampling on the same eligible pool."):
+            st.session_state["ai_hits_seed"] = int(
+                st.session_state.get("ai_hits_seed", 1)
+            ) + 1
+            st.session_state["ai_hits_generated_at"] = datetime.now(
+                ZoneInfo("America/New_York")
+            ).strftime("%Y-%m-%d %I:%M:%S %p ET")
+    with hr_cols[1]:
+        _h_show_alts = st.checkbox(
+            "Show alternate tickets", value=True, key="ai_hits_show_alts",
+            help="Also surface alternate 2-leg and 3-leg tickets from the same pool.",
+        )
+    with hr_cols[2]:
+        st.markdown(
+            f'<div style="padding-top:6px; color:#475569; font-size:0.86rem;">'
+            f'🎟️ <b>Ticket #{int(st.session_state["ai_hits_seed"])}</b> · '
+            f'{len(h_pool)} eligible hitters · '
+            f'Generated {st.session_state["ai_hits_generated_at"]}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    _h_seed = int(st.session_state["ai_hits_seed"])
+
+    # Sleeper-hunt boost on contact bats with low playing-time recognition:
+    # weight rises for bats with strong xBA but lower lineup spot (under-owned
+    # contact plays). Aggressive gets a smaller version; Safer none.
+    if _h_risk == "Sleeper Hunt":
+        h_sleeper_bias = 0.55
+    elif _h_risk == "Aggressive":
+        h_sleeper_bias = 0.25
+    elif _h_risk == "Balanced":
+        h_sleeper_bias = 0.10
+    else:
+        h_sleeper_bias = 0.0
+
+    def _weighted_sample_hits(_pool, n: int,
+                              avoid_same_game: bool, avoid_same_team: bool,
+                              seed: int):
+        if _pool is None or _pool.empty:
+            return []
+        rng = np.random.default_rng(int(seed))
+        scores = _pool["AI Hits Score"].fillna(0).to_numpy(dtype=float)
+        weights = np.clip(scores, 1.0, None) ** 1.4
+        if h_sleeper_bias > 0:
+            xba_arr = _pool["xBA"].fillna(0.245).to_numpy(dtype=float)
+            spot    = _pool["Spot"].fillna(5).to_numpy(dtype=float)
+            sleeper_factor = (
+                np.clip((xba_arr - 0.245) / 0.060, 0.0, 1.0) * 0.5 +
+                np.clip((spot - 2.0) /  7.0,        0.0, 1.0) * 0.5
+            )
+            weights = weights * (1.0 + h_sleeper_bias * sleeper_factor)
+        if not np.isfinite(weights).any() or weights.sum() <= 0:
+            weights = np.ones_like(scores)
+
+        rows = list(_pool.to_dict("records"))
+        idxs = list(range(len(rows)))
+        legs, used_games, used_teams = [], set(), set()
+        available = idxs.copy()
+        avail_w = weights.copy()
+        while available and len(legs) < n:
+            w = avail_w[available]
+            if w.sum() <= 0:
+                pick_local = int(rng.integers(0, len(available)))
+            else:
+                p = w / w.sum()
+                pick_local = int(rng.choice(len(available), p=p))
+            pick = available.pop(pick_local)
+            row = rows[pick]
+            g = str(row.get("Game", "") or "")
+            t = str(row.get("Team", "") or "")
+            if avoid_same_game and g and g in used_games:
+                continue
+            if avoid_same_team and t and t in used_teams:
+                continue
+            legs.append(row)
+            if g: used_games.add(g)
+            if t: used_teams.add(t)
+
+        if len(legs) < n:
+            taken_names = {l.get("Hitter") for l in legs}
+            for row in rows:
+                if len(legs) >= n: break
+                if row.get("Hitter") in taken_names: continue
+                legs.append(row)
+        return legs[:n]
+
+    def _h_pick_legs(_pool, n, avoid_same_game, avoid_same_team, seed=0):
+        return _weighted_sample_hits(_pool, n, avoid_same_game,
+                                     avoid_same_team, seed)
+
+    # ---- Hits-specific reasons ----------------------------------------
+    def _h_reasons_for(row) -> list:
+        reasons = []
+        def _f(v):
+            try:
+                if v is None: return None
+                f = float(v)
+                if pd.isna(f): return None
+                return f
+            except Exception:
+                return None
+
+        xba   = _f(row.get("xBA"))
+        avg   = _f(row.get("AVG"))
+        kpct  = _f(row.get("K%"))
+        ld    = _f(row.get("LD%"))
+        ss    = _f(row.get("SweetSpot%"))
+        whiff = _f(row.get("Whiff%"))
+        bs    = _f(row.get("BatSpeed"))
+        xwoba = _f(row.get("xwOBA"))
+        p_avg = _f(row.get("p_AVG_against"))
+        p_xba = _f(row.get("p_xBA_against"))
+        p_k   = _f(row.get("p_K%"))
+        p_hh  = _f(row.get("p_HardHit%"))
+        plat  = _f(row.get("platoon"))
+        env   = _f(row.get("env"))
+        spot  = row.get("Spot")
+        bat   = (row.get("Bat") or "").upper()[:1]
+        opp_h = (row.get("OppHand") or "").upper()[:1]
+
+        # 1. Contact quality (priority — this prop is hits)
+        if xba is not None and xba >= 0.290:
+            reasons.append(f"🎯 xBA <b>{xba:.3f}</b> — elite contact profile")
+        elif xba is not None and xba >= 0.270:
+            reasons.append(f"🎯 xBA <b>{xba:.3f}</b>")
+        if avg is not None and avg >= 0.300 and len(reasons) < 5:
+            reasons.append(f"📈 Hitting <b>{avg:.3f}</b> on the year")
+        if kpct is not None and kpct <= 16.0 and len(reasons) < 5:
+            reasons.append(f"🧠 K% <b>{kpct:.1f}</b> — rarely strikes out")
+        elif kpct is not None and kpct <= 20.0 and len(reasons) < 5:
+            reasons.append(f"🧠 K% <b>{kpct:.1f}</b>")
+
+        # 2. Lineup spot — opportunity is huge for hits
+        try:
+            sp = int(spot)
+            if sp <= 2 and len(reasons) < 5:
+                reasons.append(f"📋 <b>{sp}-hole</b> — extra PA upside")
+            elif 3 <= sp <= 5 and len(reasons) < 5:
+                reasons.append(f"📋 <b>{sp}-hole</b> — heart of the order")
+        except Exception:
+            pass
+
+        # 3. Matchup vs SP
+        opp_sp = row.get("Opp SP", "SP") or "SP"
+        if p_avg is not None and p_avg >= 0.270 and len(reasons) < 5:
+            reasons.append(f"🆚 {opp_sp} allows <b>{p_avg:.3f}</b> AVG")
+        elif p_xba is not None and p_xba >= 0.265 and len(reasons) < 5:
+            reasons.append(f"🆚 {opp_sp} allows <b>{p_xba:.3f}</b> xBA")
+        if p_k is not None and p_k <= 19.0 and len(reasons) < 5:
+            reasons.append(f"🪶 {opp_sp} K% <b>{p_k:.1f}</b> — contact-prone")
+        if p_hh is not None and p_hh >= 40.0 and len(reasons) < 5:
+            reasons.append(f"💥 SP HardHit% allowed <b>{p_hh:.1f}</b>")
+
+        # 4. Platoon edge
+        if plat is not None and plat >= 0.80 and bat and opp_h and len(reasons) < 5:
+            reasons.append(f"⚔️ Platoon edge — {bat}HB vs {opp_h}HP")
+        elif bat == "S" and len(reasons) < 5:
+            reasons.append(f"🔁 Switch hitter — neutralizes platoon")
+
+        # 5. Plate skill / line-drive context
+        if whiff is not None and whiff <= 18.0 and len(reasons) < 5:
+            reasons.append(f"👀 Whiff% <b>{whiff:.1f}</b> — barrels stuff up")
+        if ld is not None and ld >= 24.0 and len(reasons) < 5:
+            reasons.append(f"📐 LD% <b>{ld:.1f}</b> — squares up consistently")
+        if ss is not None and ss >= 36.0 and len(reasons) < 5:
+            reasons.append(f"🎯 SweetSpot% <b>{ss:.1f}</b>")
+        if bs is not None and bs >= 73.0 and len(reasons) < 5:
+            reasons.append(f"🏏 Bat Speed <b>{bs:.1f}</b> mph")
+
+        # 6. Environment — only mention when notably positive
+        if env is not None and env >= 60.0 and len(reasons) < 5:
+            reasons.append(f"🏟️ Park + weather lean <b>hitter-friendly</b>")
+        if xwoba is not None and xwoba >= 0.360 and len(reasons) < 5:
+            reasons.append(f"🔥 xwOBA <b>{xwoba:.3f}</b> — productive contact")
+
+        if not reasons:
+            reasons.append("🔢 Composite AI Hits Score above slate threshold")
+        return reasons[:5]
+
+    def _h_tier(score):
+        try: s = float(score)
+        except Exception: return ("ok", "Average")
+        if s >= 75: return ("elite",  "Elite")
+        if s >= 65: return ("strong", "Strong")
+        if s >= 55: return ("ok",     "Average")
+        return ("soft", "Soft")
+
+    def _h_fmt_or_dash(v, fmt):
+        try:
+            if v is None: return "—"
+            f = float(v)
+            if pd.isna(f): return "—"
+            return fmt.format(f)
+        except Exception:
+            return "—"
+
+    def _h_compact_stats_line(leg) -> str:
+        parts = []
+        x = leg.get("xBA")
+        if _h_fmt_or_dash(x, "{:.3f}") != "—":
+            parts.append(f"xBA <b>{_h_fmt_or_dash(x, '{:.3f}')}</b>")
+        a = leg.get("AVG")
+        if _h_fmt_or_dash(a, "{:.3f}") != "—":
+            parts.append(f"AVG <b>{_h_fmt_or_dash(a, '{:.3f}')}</b>")
+        k = leg.get("K%")
+        if _h_fmt_or_dash(k, "{:.1f}%") != "—":
+            parts.append(f"K <b>{_h_fmt_or_dash(k, '{:.1f}%')}</b>")
+        ld = leg.get("LD%")
+        if _h_fmt_or_dash(ld, "{:.1f}%") != "—":
+            parts.append(f"LD <b>{_h_fmt_or_dash(ld, '{:.1f}%')}</b>")
+        try:
+            sp = int(leg.get("Spot"))
+            if sp <= 9:
+                parts.append(f"<b>{sp}-hole</b>")
+        except Exception:
+            pass
+        return " · ".join(parts) if parts else "—"
+
+    def _h_bpw_for_leg(leg) -> dict:
+        """Resolve a Good/OK/Bad ballpark+weather indicator for one leg.
+        Mirrors AI HR Parlay's _bpw_for_leg with the same fallback chain."""
+        def _is_blank(v):
+            try:
+                if v is None: return True
+                if isinstance(v, float) and pd.isna(v): return True
+                if pd.isna(v): return True
+            except Exception:
+                pass
+            s = str(v).strip()
+            return s == "" or s.lower() in ("nan", "none")
+
+        label  = leg.get("BPW Label")
+        tier   = leg.get("BPW Tier")
+        icon   = leg.get("BPW Icon")
+        tip    = leg.get("BPW Tip")
+        hr_pct = leg.get("BPW HR%")
+        if any(_is_blank(x) for x in (label, tier, icon)):
+            fallback = _h_bpw_map.get(str(leg.get("Game", "")))
+            if fallback:
+                label  = label  if not _is_blank(label)  else fallback.get("label")
+                tier   = tier   if not _is_blank(tier)   else fallback.get("tier")
+                icon   = icon   if not _is_blank(icon)   else fallback.get("icon")
+                tip    = tip    if not _is_blank(tip)    else fallback.get("tooltip")
+                if _is_blank(hr_pct):
+                    hr_pct = fallback.get("hr_pct")
+        if _is_blank(label): label = "OK"
+        if _is_blank(tier):  tier  = "ok"
+        if _is_blank(icon):  icon  = "🟡"
+        if _is_blank(tip):   tip   = "Park/weather signal"
+        try:
+            hr_int = int(float(hr_pct))
+            hr_str = f"{hr_int:+d}%"
+        except Exception:
+            hr_str = ""
+        return {
+            "label": str(label), "tier": str(tier), "icon": str(icon),
+            "tooltip": str(tip).replace('"', "'"), "hr_str": hr_str,
+        }
+
+    def _h_render_card(title: str, legs: list, badge: str) -> str:
+        if not legs:
+            return (
+                f'<div class="aip-card aip-empty">'
+                f'<div class="aip-card-title">{title}</div>'
+                f'<div class="aip-card-sub">Not enough qualifying legs. '
+                f'Loosen the filters above.</div>'
+                f'</div>'
+            )
+        avg_score = sum(float(l.get("AI Hits Score", 0) or 0) for l in legs) / max(1, len(legs))
+        tier_cls, _ = _h_tier(avg_score)
+        leg_html = []
+        for i, leg in enumerate(legs, 1):
+            t_cls, t_lbl = _h_tier(leg.get("AI Hits Score"))
+            reasons = _h_reasons_for(leg)
+            reason_html = "".join(
+                f'<li style="margin:2px 0;">{r}</li>' for r in reasons
+            )
+            try:
+                ai_str = f"{float(leg.get('AI Hits Score', 0)):.1f}"
+            except Exception:
+                ai_str = "—"
+            stats_line = _h_compact_stats_line(leg)
+            bpw = _h_bpw_for_leg(leg)
+            bpw_line = (
+                f'<div class="aip-bpw-line aip-bpw-{bpw["tier"]}" '
+                f'title="{bpw["tooltip"]}">'
+                f'{bpw["icon"]} <b>{bpw["label"]} Ballpark Weather</b>'
+                + (f' <span class="aip-bpw-pct">({bpw["hr_str"]} HR)</span>'
+                   if bpw["hr_str"] else '')
+                + f'</div>'
+            )
+            leg_html.append(
+                f'<div class="aip-leg">'
+                f'  <div class="aip-leg-head">'
+                f'    <div class="aip-leg-num">Leg {i}</div>'
+                f'    <div class="aip-leg-name">{leg.get("Hitter","")}'
+                f'      <span class="aip-meta">· {leg.get("Team","")} · '
+                f'Bat {leg.get("Bat","") or "—"} · Spot {leg.get("Spot","")}</span>'
+                f'    </div>'
+                f'    <div class="aip-leg-score">'
+                f'      <span class="aip-score">{ai_str}</span>'
+                f'      <span class="hrs-pill {t_cls}">{t_lbl}</span>'
+                f'    </div>'
+                f'  </div>'
+                f'  <div class="aip-ctx">{leg.get("Game","")} '
+                f'<span style="color:#94a3b8;">·</span> vs '
+                f'<b>{leg.get("Opp SP","")}</b></div>'
+                f'  {bpw_line}'
+                f'  <div class="aip-stats">{stats_line}</div>'
+                f'  <ul class="aip-reasons">{reason_html}</ul>'
+                f'</div>'
+            )
+
+        return (
+            f'<div class="aip-card">'
+            f'  <div class="aip-card-head">'
+            f'    <div>'
+            f'      <div class="aip-card-title">{title}</div>'
+            f'      <div class="aip-card-sub">{len(legs)} legs · '
+            f'avg AI Hits Score <b>{avg_score:.1f}</b></div>'
+            f'    </div>'
+            f'    <span class="hrs-pill {tier_cls} aip-badge">{badge}</span>'
+            f'  </div>'
+            + "".join(leg_html) +
+            f'</div>'
+        )
+
+    # Reuse the AI HR Parlay card CSS — same .aip-* class names.
+    h_css = (
+        "<style>"
+        ".aip-card { background:#fff; border-radius:14px; padding:14px 14px 8px 14px; "
+        "  box-shadow:0 2px 12px rgba(15,23,42,.07); margin: 8px 0 16px 0; "
+        "  border-left:5px solid #0f3a2e; }"
+        ".aip-card.aip-empty { border-left-color:#cbd5e1; padding:14px; }"
+        ".aip-card-head { display:flex; align-items:center; justify-content:space-between; "
+        "  gap:10px; margin-bottom:6px; flex-wrap:wrap; }"
+        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#0f3a2e; "
+        "  letter-spacing:.01em; }"
+        ".aip-card-sub { color:#64748b; font-size:.82rem; margin-top:2px; }"
+        ".aip-badge { font-size:.74rem; }"
+        ".aip-leg { padding:10px 0; border-top:1px dashed #e2e8f0; }"
+        ".aip-leg:first-of-type { border-top:none; }"
+        ".aip-leg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }"
+        ".aip-leg-num { font-size:.72rem; font-weight:800; letter-spacing:.06em; "
+        "  text-transform:uppercase; color:#fcd34d; background:#0f3a2e; "
+        "  padding:3px 8px; border-radius:6px; }"
+        ".aip-leg-name { font-weight:800; color:#0f172a; flex:1 1 200px; "
+        "  font-size:.98rem; }"
+        ".aip-meta { color:#64748b; font-weight:500; font-size:.82rem; }"
+        ".aip-leg-score { display:flex; align-items:center; gap:6px; }"
+        ".aip-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 4px 0; }"
+        ".aip-bpw-line { display:block; margin: 4px 0 6px 0; padding:6px 10px; "
+        "  border-radius:8px; font-size:.86rem; font-weight:700; line-height:1.35; "
+        "  border:1px solid transparent; }"
+        ".aip-bpw-line b { font-weight:800; }"
+        ".aip-bpw-pct { font-weight:700; margin-left:4px; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".aip-bpw-good { background:#dcfce7; color:#065f46; border-color:#86efac; }"
+        ".aip-bpw-ok   { background:#fef9c3; color:#713f12; border-color:#fde68a; }"
+        ".aip-bpw-bad  { background:#fee2e2; color:#7f1d1d; border-color:#fecaca; }"
+        ".aip-stats { color:#0f172a; font-size:.84rem; margin: 0 0 4px 0; "
+        "  background:#f8fafc; border-radius:6px; padding:5px 8px; "
+        "  font-variant-numeric: tabular-nums; }"
+        ".aip-reasons { margin: 4px 0 2px 18px; padding:0; color:#0f172a; "
+        "  font-size:.88rem; }"
+        ".aip-reasons li { margin: 1px 0; line-height:1.35; }"
+        ".aip-disclaimer { color:#64748b; font-size:.78rem; margin: 6px 2px 12px 2px; "
+        "  font-style:italic; }"
+        "@media (max-width:520px) { .aip-leg-name { font-size:.92rem; } "
+        "  .aip-card-title { font-size:1rem; } .aip-reasons { font-size:.84rem; } "
+        "  .aip-stats { font-size:.80rem; } }"
+        "</style>"
+    )
+    st.markdown(h_css, unsafe_allow_html=True)
+
+    h_legs_2 = _h_pick_legs(h_pool, 2, _h_avoid_game, _h_avoid_team, seed=_h_seed)
+    h_legs_3 = _h_pick_legs(h_pool, 3, _h_avoid_game, _h_avoid_team, seed=_h_seed * 1000 + 7)
+    h_legs_4 = _h_pick_legs(h_pool, 4, _h_avoid_game, _h_avoid_team, seed=_h_seed * 1000 + 19)
+
+    h_badge_2 = f"{_h_risk} · 2-leg · #{_h_seed}"
+    h_badge_3 = f"{_h_risk} · 3-leg · #{_h_seed}"
+    h_badge_4 = f"{_h_risk} · 4-leg · #{_h_seed}"
+    st.markdown(_h_render_card("🥎 Recommended 2-Leg 1+ Hits Parlay", h_legs_2, h_badge_2),
+                unsafe_allow_html=True)
+    st.markdown(_h_render_card("🚀 Recommended 3-Leg 1+ Hits Parlay", h_legs_3, h_badge_3),
+                unsafe_allow_html=True)
+    st.markdown(_h_render_card("🎯 Recommended 4-Leg 1+ Hits Parlay", h_legs_4, h_badge_4),
+                unsafe_allow_html=True)
+
+    if _h_show_alts:
+        def _h_sig(legs_):
+            return tuple(sorted(str(l.get("Hitter", "")) for l in (legs_ or [])))
+        seen_2h = {_h_sig(h_legs_2)}
+        seen_3h = {_h_sig(h_legs_3)}
+        extra_seeds = [331, 433, 547, 659, 773, 887]
+        alt2 = [
+            _h_pick_legs(h_pool, 2, _h_avoid_game, _h_avoid_team, seed=_h_seed + s)
+            for s in extra_seeds
+        ]
+        alt3 = [
+            _h_pick_legs(h_pool, 3, _h_avoid_game, _h_avoid_team, seed=_h_seed * 1000 + s)
+            for s in extra_seeds
+        ]
+        chosen_2h, chosen_3h = [], []
+        for cand in alt2:
+            sig = _h_sig(cand)
+            if sig in seen_2h or not cand: continue
+            seen_2h.add(sig); chosen_2h.append(cand)
+            if len(chosen_2h) >= 2: break
+        for cand in alt3:
+            sig = _h_sig(cand)
+            if sig in seen_3h or not cand: continue
+            seen_3h.add(sig); chosen_3h.append(cand)
+            if len(chosen_3h) >= 2: break
+        if chosen_2h or chosen_3h:
+            st.markdown(
+                '<div class="section-title" style="font-size:1.08rem;margin-top:6px;">'
+                '🔁 Alternate Hits Tickets</div>',
+                unsafe_allow_html=True,
+            )
+        for i, cand in enumerate(chosen_2h, 1):
+            st.markdown(
+                _h_render_card(
+                    f"🥎 Alt 2-Leg Hits Parlay #{i}", cand,
+                    f"{_h_risk} · 2-leg · alt {i}"
+                ),
+                unsafe_allow_html=True,
+            )
+        for i, cand in enumerate(chosen_3h, 1):
+            st.markdown(
+                _h_render_card(
+                    f"🚀 Alt 3-Leg Hits Parlay #{i}", cand,
+                    f"{_h_risk} · 3-leg · alt {i}"
+                ),
+                unsafe_allow_html=True,
+            )
+
+    st.markdown(
+        render_source_chips([
+            "savant:batters", "savant:pitchers",
+            "statsapi:schedule", "statsapi:boxscore",
+            "rotogrinders:weather", "openmeteo:weather",
+        ]),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="aip-disclaimer">'
+        '⚠️ <b>Disclaimer:</b> Recommendations are model-driven analytics built '
+        'from public Statcast / StatsAPI / weather data — <b>not guaranteed outcomes</b>. '
+        'Verify lineups with your sportsbook before placing any bet. Bet responsibly.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("How the AI Hits Score works"):
+        st.markdown(
+            "**AI Hits Score (0-100)** — built from the ground up for **1+ hits**, "
+            "not HRs. Components:\n"
+            "- **35% Contact quality** — xBA (12), AVG (9), K%-inverse (7), "
+            "LD% (4), SweetSpot% (3)\n"
+            "- **15% Plate skill** — Whiff%-inverse (8), Bat speed (4), BB% (3)\n"
+            "- **20% Opportunity** — lineup-spot PA weight (1-hole highest, "
+            "9-hole lowest)\n"
+            "- **20% Matchup** — opposing SP AVG / xBA allowed (8), "
+            "SP K%-inverse (6), SP HardHit% allowed (4), platoon edge (2)\n"
+            "- **10% Environment** — park HR/runs factor + weather impact "
+            "(`compute_weather_impact`)\n\n"
+            "**Pool:** every eligible lineup hitter on upcoming/live games. "
+            "**Sleeper Hunt** boosts contact bats with strong xBA but lower "
+            "lineup spots so under-owned plays can win a slot.\n\n"
+            "**Selection:** weighted sampling by AI Hits Score with avoid-same-"
+            "game/team constraints. **Generate New Hits Parlays** rerolls within "
+            "the same eligible pool. Missing fields fall back to neutral values "
+            "rather than dropping the bat — so coverage stays high even when "
+            "Whiff% / Bat-speed / xBA aren't filled in for a player."
+        )
     st.stop()
 
 

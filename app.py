@@ -2719,7 +2719,8 @@ def _likely_label(matchup, ceiling):
     return "❌ Tough"
 
 def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_name,
-                                weather, park_factor):
+                                weather, park_factor,
+                                arsenal_b=None, arsenal_p=None, opp_pitcher_id=None):
     """Build the wide horizontal heat-map stat board for one team's lineup.
 
     Columns mirror the screenshot reference, with sensible fallbacks when a
@@ -2734,8 +2735,8 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
          step keeps every starting hitter from rendering as a long row of
          empty dashes when Savant simply hasn't published a value yet.
     """
-    cols = ["Spot", "Hitter", "Team", "Matchup", "Test Score", "Ceiling", "Zone Fit",
-            "HR Form", "kHR", "Pitches", "BIP", "ISO", "xwOBA", "xwOBAcon",
+    cols = ["Spot", "Hitter", "Team", "Crushes", "Matchup", "Test Score", "Ceiling",
+            "Zone Fit", "HR Form", "kHR", "Pitches", "BIP", "ISO", "xwOBA", "xwOBAcon",
             "SwStr%", "PulledBrl%", "Brl/BIP%", "SweetSpot%", "FB%", "GB%", "HH%",
             "LA", "Likely"]
     if lineup_df.empty:
@@ -2770,12 +2771,15 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         "LA":         _league_avg("LA",          12.0),
     }
     p_row = find_pitcher_row(pitchers_df, opp_pitcher_name)
+    opp_pitches = _build_pitcher_arsenal_set(arsenal_p, opp_pitcher_id)
     rows = []
     for _, r in lineup_df.iterrows():
         b_row = find_player_row(
             batters_df, r["name_key"], r["team"],
             player_id=r.get("player_id") if "player_id" in r.index else None,
         )
+        pid = r.get("player_id") if "player_id" in r.index else None
+        crushes = _crushes_cell(arsenal_b, pid, opp_pitches) if arsenal_b is not None else "—"
         opp_hand = r.get("opposing_pitch_hand", "")
         m   = matchup_score(b_row, p_row, r["lineup_spot"], weather, park_factor, r["bat_side"], opp_hand)
         ts  = test_score(b_row, p_row)
@@ -2858,6 +2862,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
             "Hitter": r["player_name"],
             "Team": norm_team(r["team"]),
+            "Crushes": crushes,
             "Matchup": m,
             "Test Score": ts,
             "Ceiling": cl,
@@ -2920,6 +2925,8 @@ def render_matchup_heatmap_html(df):
 .mhm-table tr:nth-child(even) td.mhm-col-hitter { background: #f8fafc; }
 .mhm-hitter-name { font-weight: 800; color: #0f172a; }
 .mhm-hitter-meta { font-size: 0.68rem; color: #64748b; font-weight: 700; margin-top: 1px; }
+.mhm-hitter-crushes { font-size: 0.68rem; color: #be185d; font-weight: 800; margin-top: 2px;
+  white-space: normal; line-height: 1.15; max-width: 220px; }
 .mhm-likely { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800;
   background: #f1f5f9; color: #0f172a; display: inline-block; }
 /* Missing/insufficient-sample cells: muted neutral background instead of bare
@@ -2949,14 +2956,23 @@ def render_matchup_heatmap_html(df):
             if c == "Hitter":
                 spot = r.get("Spot", "")
                 team = r.get("Team", "")
+                crushes = r.get("Crushes", "")
+                if crushes is None or (isinstance(crushes, float) and pd.isna(crushes)):
+                    crushes = ""
+                crushes_str = str(crushes).strip()
+                crushes_html = (
+                    f'<div class="mhm-hitter-crushes" title="Pitch types this hitter crushes (🔥 = in opposing pitcher arsenal)">'
+                    f'💥 {crushes_str}</div>'
+                ) if crushes_str and crushes_str != "—" else ""
                 cells.append(
                     f'<td class="mhm-col-hitter">'
                     f'<div class="mhm-hitter-name">{spot}. {v}</div>'
                     f'<div class="mhm-hitter-meta">{team}</div>'
+                    f'{crushes_html}'
                     f'</td>'
                 )
                 continue
-            if c == "Team":
+            if c == "Team" or c == "Crushes":
                 # Already rendered alongside Hitter — skip dedicated cell.
                 continue
             if c == "Likely":
@@ -2993,9 +3009,10 @@ def render_matchup_heatmap_html(df):
                 cells.append(f'<td style="{style}">{txt}</td>')
         body_rows.append(f'<tr>{"".join(cells)}</tr>')
 
-    # Filter out the "Team" column from header (Team is rendered with Hitter).
+    # Filter out the "Team" and "Crushes" columns from header (both are rendered
+    # in the Hitter cell as sub-lines so the table stays mobile-friendly).
     header_cells_filtered = [
-        h for h, c in zip(header_cells, display_cols) if c != "Team"
+        h for h, c in zip(header_cells, display_cols) if c not in ("Team", "Crushes")
     ]
     table_html = (
         f'{css}<div class="mhm-wrap"><table class="mhm-table">'
@@ -9418,10 +9435,14 @@ with tab_matchup:
     away_board = build_matchup_heatmap_board(
         ctx["away_lineup"], batters_df, pitchers_df,
         game_row["home_probable"], weather, game_row["park_factor"],
+        arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df,
+        opp_pitcher_id=game_row.get("home_probable_id"),
     )
     home_board = build_matchup_heatmap_board(
         ctx["home_lineup"], batters_df, pitchers_df,
         game_row["away_probable"], weather, game_row["park_factor"],
+        arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df,
+        opp_pitcher_id=game_row.get("away_probable_id"),
     )
     # Per-board widget keys so each game's away/home sort controls stay isolated
     # in Streamlit's session_state when the user switches between games.

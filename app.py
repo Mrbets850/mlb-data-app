@@ -5784,19 +5784,25 @@ if _view == "🤖 AI HR Parlay":
         st.warning("Batter CSV (`Data:savant_batters.csv.csv`) hasn’t loaded yet.")
         st.stop()
 
-    # ---- Filter out games that have already finished or whose start time
-    # has passed. We keep scheduled / pre-game / warmup / live games only,
-    # so the AI never recommends bats from games the user can no longer bet.
+    # ---- Filter out games that have already started, finished, or whose
+    # start time has passed. Once a game is underway the lineup is locked
+    # and props can't be reliably bet, so the AI must only recommend bats
+    # from pre-game (scheduled / projected / confirmed lineup) slates.
     _COMPLETED_TOKENS = (
         "final", "completed", "game over", "postponed", "cancelled",
         "canceled", "suspended", "forfeit", "if necessary",
     )
-    _LIVE_TOKENS = (
+    # Statuses that mean the game is already underway (or about to be):
+    # treated the same as completed for eligibility — exclude.
+    _STARTED_TOKENS = (
         "in progress", "live", "manager challenge", "review",
-        "delayed", "warmup", "warm-up", "warm up",
+        "delayed",
     )
+    # Pre-game-but-imminent statuses still allowed (lineups posted, but
+    # first pitch hasn't happened). We still gate these by start time.
     _PREGAME_TOKENS = (
         "scheduled", "pre-game", "pregame", "pre game",
+        "warmup", "warm-up", "warm up",
     )
 
     def _game_is_eligible(row) -> bool:
@@ -5804,9 +5810,10 @@ if _view == "🤖 AI HR Parlay":
         # Hard-exclude completed / canceled / postponed regardless of time.
         if any(tok in status for tok in _COMPLETED_TOKENS):
             return False
-        # Always allow live/in-progress games.
-        if any(tok in status for tok in _LIVE_TOKENS):
-            return True
+        # Hard-exclude games already underway: lineups are locked and
+        # in-game props (deep innings) are unreliable to recommend.
+        if any(tok in status for tok in _STARTED_TOKENS):
+            return False
         # For scheduled/pre-game games, also require the start time to be
         # in the future (UTC). If start time is missing, accept on status.
         gt = row.get("game_time_utc")
@@ -5819,11 +5826,12 @@ if _view == "🤖 AI HR Parlay":
         if any(tok in status for tok in _PREGAME_TOKENS):
             if pd.isna(start_utc):
                 return True
-            return start_utc >= now_utc
-        # Unknown status: fall back to start-time check.
+            return start_utc > now_utc
+        # Unknown status: fall back to start-time check; if the start time
+        # has already passed we treat the game as started and exclude it.
         if pd.isna(start_utc):
-            return True
-        return start_utc >= now_utc
+            return False
+        return start_utc > now_utc
 
     if schedule_df is None or schedule_df.empty:
         st.warning("No games on the slate. Pick a different date or check back later.")
@@ -5837,8 +5845,8 @@ if _view == "🤖 AI HR Parlay":
 
     if eligible_schedule_df.empty:
         st.warning(
-            f"All {_n_total} games on this slate have already finished or are no "
-            f"longer available. No upcoming/live games to build a parlay from."
+            f"All {_n_total} games on this slate have already started or finished. "
+            f"No pre-game matchups remain to build a parlay from."
         )
         st.stop()
 
@@ -5846,9 +5854,9 @@ if _view == "🤖 AI HR Parlay":
         f'<div style="margin:0 0 10px 0; padding:8px 12px; '
         f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
         f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
-        f'🕒 Using <b>{_n_elig}</b> upcoming/live game'
+        f'🕒 Using <b>{_n_elig}</b> pre-game matchup'
         f'{"s" if _n_elig != 1 else ""}; '
-        f'completed games excluded'
+        f'started &amp; completed games excluded'
         f'{f" ({_n_excl} hidden)" if _n_excl > 0 else ""}.'
         f'</div>',
         unsafe_allow_html=True,
@@ -6735,20 +6743,26 @@ if _view == "👑 HR Round Robin":
         st.stop()
 
     # ----- Eligibility filter (same logic as AI HR Parlay) -----------------
+    # Round Robin is a batter-pick generator, so we exclude any game that
+    # has already started — lineups are locked and in-game state is
+    # unreliable for picking HR plays.
     _RR_COMPLETED = (
         "final", "completed", "game over", "postponed", "cancelled",
         "canceled", "suspended", "forfeit", "if necessary",
     )
-    _RR_LIVE = (
+    _RR_STARTED = (
         "in progress", "live", "manager challenge", "review",
-        "delayed", "warmup", "warm-up", "warm up",
+        "delayed",
     )
-    _RR_PRE = ("scheduled", "pre-game", "pregame", "pre game")
+    _RR_PRE = (
+        "scheduled", "pre-game", "pregame", "pre game",
+        "warmup", "warm-up", "warm up",
+    )
 
     def _rr_eligible(row) -> bool:
         status = str(row.get("status") or "").strip().lower()
         if any(t in status for t in _RR_COMPLETED): return False
-        if any(t in status for t in _RR_LIVE):       return True
+        if any(t in status for t in _RR_STARTED):   return False
         gt = row.get("game_time_utc")
         try:    start_utc = pd.to_datetime(gt, utc=True)
         except Exception: start_utc = pd.NaT
@@ -6756,9 +6770,9 @@ if _view == "👑 HR Round Robin":
         now_utc = _now if _now.tzinfo is not None else _now.tz_localize("UTC")
         if any(t in status for t in _RR_PRE):
             if pd.isna(start_utc): return True
-            return start_utc >= now_utc
-        if pd.isna(start_utc): return True
-        return start_utc >= now_utc
+            return start_utc > now_utc
+        if pd.isna(start_utc): return False
+        return start_utc > now_utc
 
     if schedule_df is None or schedule_df.empty:
         st.warning("No games on the slate. Pick a different date or check back later.")
@@ -6766,8 +6780,13 @@ if _view == "👑 HR Round Robin":
 
     rr_elig_mask  = schedule_df.apply(_rr_eligible, axis=1)
     rr_schedule   = schedule_df[rr_elig_mask].reset_index(drop=True)
+    _rr_total = int(len(schedule_df))
+    _rr_excl  = _rr_total - int(len(rr_schedule))
     if rr_schedule.empty:
-        st.warning("All games on this slate have finished. Round Robin can't lock a ticket.")
+        st.warning(
+            "All games on this slate have already started or finished. "
+            "Round Robin can't lock a ticket from started games."
+        )
         st.stop()
 
     st.markdown(
@@ -6775,8 +6794,9 @@ if _view == "👑 HR Round Robin":
         f'border-left:3px solid #facc15; background:#fffbeb; '
         f'border-radius:6px; color:#713f12; font-size:0.88rem;">'
         f'🔒 Locked ticket for <b>{selected_date}</b> · '
-        f'using <b>{len(rr_schedule)}</b> upcoming/live game'
-        f'{"s" if len(rr_schedule) != 1 else ""}.'
+        f'using <b>{len(rr_schedule)}</b> pre-game matchup'
+        f'{"s" if len(rr_schedule) != 1 else ""}'
+        f'{f" · started/completed excluded ({_rr_excl} hidden)" if _rr_excl > 0 else ""}.'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -8472,24 +8492,28 @@ if _view == "🥎 AI 1+ Hits Parlay":
         st.stop()
 
     # ---- Eligibility filter (mirrors AI HR Parlay) ----------------------
+    # Hits parlays are batter picks: once a game has started, lineups are
+    # locked and in-game state (deep innings) is unreliable for prop
+    # recommendations. Only accept pre-game matchups.
     _COMPLETED_TOKENS_H = (
         "final", "completed", "game over", "postponed", "cancelled",
         "canceled", "suspended", "forfeit", "if necessary",
     )
-    _LIVE_TOKENS_H = (
+    _STARTED_TOKENS_H = (
         "in progress", "live", "manager challenge", "review",
-        "delayed", "warmup", "warm-up", "warm up",
+        "delayed",
     )
     _PREGAME_TOKENS_H = (
         "scheduled", "pre-game", "pregame", "pre game",
+        "warmup", "warm-up", "warm up",
     )
 
     def _hits_game_eligible(row) -> bool:
         status = str(row.get("status") or "").strip().lower()
         if any(tok in status for tok in _COMPLETED_TOKENS_H):
             return False
-        if any(tok in status for tok in _LIVE_TOKENS_H):
-            return True
+        if any(tok in status for tok in _STARTED_TOKENS_H):
+            return False
         gt = row.get("game_time_utc")
         try:
             start_utc = pd.to_datetime(gt, utc=True)
@@ -8500,10 +8524,10 @@ if _view == "🥎 AI 1+ Hits Parlay":
         if any(tok in status for tok in _PREGAME_TOKENS_H):
             if pd.isna(start_utc):
                 return True
-            return start_utc >= now_utc
+            return start_utc > now_utc
         if pd.isna(start_utc):
-            return True
-        return start_utc >= now_utc
+            return False
+        return start_utc > now_utc
 
     if schedule_df is None or schedule_df.empty:
         st.warning("No games on the slate. Pick a different date or check back later.")
@@ -8517,8 +8541,8 @@ if _view == "🥎 AI 1+ Hits Parlay":
 
     if eligible_h_df.empty:
         st.warning(
-            f"All {_h_total} games on this slate have already finished or are no "
-            f"longer available. No upcoming/live games to build a hits parlay from."
+            f"All {_h_total} games on this slate have already started or finished. "
+            f"No pre-game matchups remain to build a hits parlay from."
         )
         st.stop()
 
@@ -8526,9 +8550,9 @@ if _view == "🥎 AI 1+ Hits Parlay":
         f'<div style="margin:0 0 10px 0; padding:8px 12px; '
         f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
         f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
-        f'🕒 Using <b>{_h_elig}</b> upcoming/live game'
+        f'🕒 Using <b>{_h_elig}</b> pre-game matchup'
         f'{"s" if _h_elig != 1 else ""}; '
-        f'completed games excluded'
+        f'started &amp; completed games excluded'
         f'{f" ({_h_excl} hidden)" if _h_excl > 0 else ""}.'
         f'</div>',
         unsafe_allow_html=True,

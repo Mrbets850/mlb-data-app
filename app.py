@@ -2262,6 +2262,171 @@ def hitter_pitch_crush(arsenal_b: pd.DataFrame, player_id, top_n: int = 2,
         sub = sub.sort_values(["woba", "slg"], ascending=[False, False])
     return sub.head(top_n).reset_index(drop=True)
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_batter_game_log(player_id: int, season: int) -> pd.DataFrame:
+    """Pull a batter's per-game hitting log for one season from MLB StatsAPI.
+
+    Returns a DataFrame with one row per game (most recent last) and columns:
+      date, ab, h, bb, hbp, sf, k, pa, obp_num, obp_den.
+
+    Empty DataFrame on any failure or unrecognized payload — callers must
+    handle the empty case (offseason, missing player, API hiccup).
+    """
+    if not player_id:
+        return pd.DataFrame()
+    try:
+        pid = int(player_id)
+    except Exception:
+        return pd.DataFrame()
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{pid}/stats",
+            params={"stats": "gameLog", "group": "hitting",
+                    "season": int(season), "sportId": 1},
+            timeout=10,
+        )
+        r.raise_for_status()
+        payload = r.json() or {}
+    except Exception:
+        return pd.DataFrame()
+
+    splits = []
+    for s in (payload.get("stats") or []):
+        for sp in (s.get("splits") or []):
+            splits.append(sp)
+    if not splits:
+        return pd.DataFrame()
+
+    rows = []
+    for sp in splits:
+        stat = sp.get("stat") or {}
+        d = sp.get("date") or sp.get("game", {}).get("date")
+        try:
+            dt = pd.to_datetime(d).date() if d else None
+        except Exception:
+            dt = None
+        def _i(k):
+            try: return int(stat.get(k) or 0)
+            except Exception: return 0
+        ab = _i("atBats")
+        h  = _i("hits")
+        bb = _i("baseOnBalls")
+        hbp = _i("hitByPitch")
+        sf  = _i("sacFlies")
+        k   = _i("strikeOuts")
+        pa  = _i("plateAppearances") or (ab + bb + hbp + sf)
+        rows.append({
+            "date": dt, "ab": ab, "h": h, "bb": bb, "hbp": hbp,
+            "sf": sf, "k": k, "pa": pa,
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df = df.dropna(subset=["date"])
+    if df.empty:
+        return df
+    df = df.sort_values("date").reset_index(drop=True)
+    return df
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_batter_recent_form(player_id, end_date_iso: str) -> dict:
+    """Compute L5/L10/L30D recent-form snapshots for one batter.
+
+    Cache key includes player_id + end_date_iso + window logic so each slate
+    date gets its own snapshot — no leakage from yesterday's window.
+
+    Args:
+        player_id: MLB person ID.
+        end_date_iso: slate end date as 'YYYY-MM-DD' (UTC/date-aware caller
+            should pass the slate's selected_date).
+
+    Returns dict with keys 'L5', 'L10', 'L30D' each mapping to:
+      {'avg': float|None, 'obp': float|None, 'k_pct': float|None,
+       'games': int, 'pa': int}
+    Missing/empty windows return None for the rate fields. Never raises.
+    """
+    empty = {"avg": None, "obp": None, "k_pct": None, "games": 0, "pa": 0}
+    out = {"L5": dict(empty), "L10": dict(empty), "L30D": dict(empty)}
+    if not player_id:
+        return out
+    try:
+        end_dt = pd.to_datetime(end_date_iso).date()
+    except Exception:
+        end_dt = today_ct()
+
+    # Pull current-season log; fall back to prior season for early-spring slates
+    # when the current season has no games yet.
+    season = end_dt.year
+    log = _fetch_batter_game_log(player_id, season)
+    if log is None or log.empty:
+        log = _fetch_batter_game_log(player_id, season - 1)
+    if log is None or log.empty:
+        return out
+
+    # Only games strictly before the slate date (don't include today's PAs
+    # mid-game when this is called during a live slate).
+    log = log[pd.to_datetime(log["date"]).dt.date < end_dt].copy()
+    if log.empty:
+        return out
+
+    def _window_stats(window_df):
+        if window_df is None or window_df.empty:
+            return dict(empty)
+        ab  = int(window_df["ab"].sum())
+        h   = int(window_df["h"].sum())
+        bb  = int(window_df["bb"].sum())
+        hbp = int(window_df["hbp"].sum())
+        sf  = int(window_df["sf"].sum())
+        k   = int(window_df["k"].sum())
+        pa  = int(window_df["pa"].sum())
+        avg = (h / ab) if ab > 0 else None
+        obp_den = ab + bb + hbp + sf
+        obp = ((h + bb + hbp) / obp_den) if obp_den > 0 else None
+        k_pct = (100.0 * k / pa) if pa > 0 else None
+        return {
+            "avg": round(avg, 3) if avg is not None else None,
+            "obp": round(obp, 3) if obp is not None else None,
+            "k_pct": round(k_pct, 1) if k_pct is not None else None,
+            "games": int(len(window_df)),
+            "pa": pa,
+        }
+
+    out["L5"]  = _window_stats(log.tail(5))
+    out["L10"] = _window_stats(log.tail(10))
+    cutoff_30 = end_dt - timedelta(days=30)
+    last30 = log[pd.to_datetime(log["date"]).dt.date >= cutoff_30]
+    out["L30D"] = _window_stats(last30)
+    return out
+
+
+def _fmt_form_avg(v) -> str:
+    """Render an AVG value as '.333' or '—' when missing."""
+    if v is None:
+        return "—"
+    try:
+        f = float(v)
+    except Exception:
+        return "—"
+    if pd.isna(f):
+        return "—"
+    s = f"{f:.3f}"
+    return s[1:] if s.startswith("0.") else s
+
+
+def _form_blend_adjustment(l10: dict) -> float:
+    """Modest matchup-score nudge from L10 AVG. Capped at +/- 4 points so
+    recent form can break ties without overpowering Savant/park/pitcher signal."""
+    if not l10:
+        return 0.0
+    avg = l10.get("avg")
+    pa = l10.get("pa") or 0
+    if avg is None or pa < 10:
+        return 0.0
+    delta = float(avg) - 0.250  # league-ish average
+    return max(-4.0, min(4.0, delta * 40.0))
+
+
 def find_pitcher_row(df, pitcher_name, pitcher_id=None):
     """Locate a pitcher row in pitchers_df. ID-first when pitcher_id is provided
     (the slate's probable-pitcher id from the schedule), then fall back to
@@ -2739,7 +2904,8 @@ def _likely_label(matchup, ceiling):
 
 def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_name,
                                 weather, park_factor,
-                                arsenal_b=None, arsenal_p=None, opp_pitcher_id=None):
+                                arsenal_b=None, arsenal_p=None, opp_pitcher_id=None,
+                                slate_date=None):
     """Build the wide horizontal heat-map stat board for one team's lineup.
 
     Columns mirror the screenshot reference, with sensible fallbacks when a
@@ -2793,6 +2959,10 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
     # probable pitcher rather than any pitcher with the same display name.
     p_row = find_pitcher_row(pitchers_df, opp_pitcher_name, pitcher_id=opp_pitcher_id)
     opp_pitches = _build_pitcher_arsenal_set(arsenal_p, opp_pitcher_id)
+    try:
+        slate_iso = pd.to_datetime(slate_date).strftime("%Y-%m-%d") if slate_date else today_ct().strftime("%Y-%m-%d")
+    except Exception:
+        slate_iso = today_ct().strftime("%Y-%m-%d")
     rows = []
     for _, r in lineup_df.iterrows():
         b_row = find_player_row(
@@ -2801,8 +2971,16 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         )
         pid = r.get("player_id") if "player_id" in r.index else None
         crushes = _crushes_cell(arsenal_b, pid, opp_pitches) if arsenal_b is not None else "—"
+        try:
+            form = get_batter_recent_form(pid, slate_iso) if pid else {}
+        except Exception:
+            form = {}
+        l5 = form.get("L5", {}) if isinstance(form, dict) else {}
+        l10 = form.get("L10", {}) if isinstance(form, dict) else {}
+        l30 = form.get("L30D", {}) if isinstance(form, dict) else {}
+        form_blend = _form_blend_adjustment(l10)
         opp_hand = r.get("opposing_pitch_hand", "")
-        m   = matchup_score(b_row, p_row, r["lineup_spot"], weather, park_factor, r["bat_side"], opp_hand)
+        m   = matchup_score(b_row, p_row, r["lineup_spot"], weather, park_factor, r["bat_side"], opp_hand) + form_blend
         ts  = test_score(b_row, p_row)
         cl  = ceiling_score(b_row, weather, park_factor)
         zf  = zone_fit(b_row, p_row, r["bat_side"], opp_hand)
@@ -2879,11 +3057,20 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         hh      = _g("HardHit%", _LG["HardHit%"])
         la      = _g("LA", _LG["LA"])
 
+        form_line = (
+            f"L5 {_fmt_form_avg(l5.get('avg'))} | "
+            f"L10 {_fmt_form_avg(l10.get('avg'))} | "
+            f"30D {_fmt_form_avg(l30.get('avg'))}"
+        )
         rows.append({
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
             "Hitter": r["player_name"],
             "Team": norm_team(r["team"]),
             "Crushes": crushes,
+            "_Form": form_line,
+            "_FormL5_AVG": l5.get("avg"),
+            "_FormL10_AVG": l10.get("avg"),
+            "_FormL30_AVG": l30.get("avg"),
             "Matchup": m,
             "Test Score": ts,
             "Ceiling": cl,
@@ -2921,8 +3108,9 @@ def render_matchup_heatmap_html(df):
     # Numeric columns in display order (everything except identifiers/Likely).
     numeric_cols = [c for c in df.columns if c in HEATMAP_THRESHOLDS]
     # Spot collapses into row label; _HR Trend is carried alongside HR Form
-    # for arrow rendering and is not its own column.
-    display_cols = [c for c in df.columns if c not in ("Spot", "_HR Trend")]
+    # for arrow rendering; _Form / _Form*_AVG are rendered in the Hitter cell.
+    _hidden = ("Spot", "_HR Trend", "_Form", "_FormL5_AVG", "_FormL10_AVG", "_FormL30_AVG")
+    display_cols = [c for c in df.columns if c not in _hidden]
 
     css = """
 <style>
@@ -2947,6 +3135,8 @@ def render_matchup_heatmap_html(df):
 .mhm-hitter-name { font-weight: 800; color: #0f172a; }
 .mhm-hitter-meta { font-size: 0.68rem; color: #64748b; font-weight: 700; margin-top: 1px; }
 .mhm-hitter-crushes { font-size: 0.68rem; color: #be185d; font-weight: 800; margin-top: 2px;
+  white-space: normal; line-height: 1.15; max-width: 220px; }
+.mhm-hitter-form { font-size: 0.68rem; color: #1d4ed8; font-weight: 800; margin-top: 2px;
   white-space: normal; line-height: 1.15; max-width: 220px; }
 .mhm-likely { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800;
   background: #f1f5f9; color: #0f172a; display: inline-block; }
@@ -2985,11 +3175,20 @@ def render_matchup_heatmap_html(df):
                     f'<div class="mhm-hitter-crushes" title="Pitch types this hitter crushes (🔥 = in opposing pitcher arsenal)">'
                     f'💥 {crushes_str}</div>'
                 ) if crushes_str and crushes_str != "—" else ""
+                form_line = r.get("_Form", "")
+                if form_line is None or (isinstance(form_line, float) and pd.isna(form_line)):
+                    form_line = ""
+                form_line = str(form_line).strip()
+                form_html = (
+                    f'<div class="mhm-hitter-form" title="Recent batting AVG — L5 games / L10 games / last 30 days (MLB StatsAPI gameLog)">'
+                    f'📈 Form: {form_line}</div>'
+                ) if form_line else ""
                 cells.append(
                     f'<td class="mhm-col-hitter">'
                     f'<div class="mhm-hitter-name">{spot}. {v}</div>'
                     f'<div class="mhm-hitter-meta">{team}</div>'
                     f'{crushes_html}'
+                    f'{form_html}'
                     f'</td>'
                 )
                 continue
@@ -9436,10 +9635,11 @@ tab_matchup, tab_rolling, tab_hot, tab_cold, tab_injuries = st.tabs(
 with tab_matchup:
     # Make explicit that the board below recomputes against the selected
     # slate game's context, not a global/season ranking.
-    # TODO(PR #2): add L5/L10/L30 recency overlays keyed to the same context.
     st.caption(
         "Matchup scores are keyed to the selected slate game, opponent, "
-        "probable pitcher, lineup context, park/weather where available."
+        "probable pitcher, lineup context, park/weather where available. "
+        "Recent batting form (L5 / L10 games and last 30 days, MLB StatsAPI) "
+        "is shown under each hitter and modestly blended into the matchup score."
     )
     # ---- Per-game pitcher mini-cards (top of Matchup) ----
     try:
@@ -9465,12 +9665,14 @@ with tab_matchup:
         game_row["home_probable"], weather, game_row["park_factor"],
         arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df,
         opp_pitcher_id=game_row.get("home_probable_id"),
+        slate_date=selected_date,
     )
     home_board = build_matchup_heatmap_board(
         ctx["home_lineup"], batters_df, pitchers_df,
         game_row["away_probable"], weather, game_row["park_factor"],
         arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df,
         opp_pitcher_id=game_row.get("away_probable_id"),
+        slate_date=selected_date,
     )
     # Per-board widget keys so each game's away/home sort controls stay isolated
     # in Streamlit's session_state when the user switches between games.

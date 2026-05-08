@@ -9867,8 +9867,8 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
-tab_matchup, tab_rolling, tab_hot, tab_cold, tab_injuries = st.tabs(
-    ["📊 Matchup", "📈 Rolling", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
+tab_matchup, tab_hot, tab_cold, tab_injuries = st.tabs(
+    ["📊 Matchup", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
 )
 
 # ============== Matchup tab ==============
@@ -10074,19 +10074,6 @@ with tab_matchup:
         render_pitcher_panel(f"Home SP — {game_row['home_abbr']}", game_row["home_probable"],
                               ctx["home_pitch_hand"], find_pitcher_row(pitchers_df, game_row["home_probable"]),
                               pitch_mix_df=home_mix)
-
-# ============== Rolling tab ==============
-with tab_rolling:
-    win = st.radio("Window", ["7", "15", "30"], index=1, horizontal=True, format_func=lambda x: f"Last {x} days", key="roll_win")
-    away_roll = build_rolling_table(ctx["away_lineup"], batters_df, win)
-    home_roll = build_rolling_table(ctx["home_lineup"], batters_df, win)
-    render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"])
-    if away_roll.empty: st.info(f"{game_row['away_abbr']} lineup not posted yet.")
-    else: st.dataframe(style_rolling_table(away_roll), width='stretch', hide_index=True)
-    render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"])
-    if home_roll.empty: st.info(f"{game_row['home_abbr']} lineup not posted yet.")
-    else: st.dataframe(style_rolling_table(home_roll), width='stretch', hide_index=True)
-    st.caption("Rolling form is derived from full-season Baseball Savant aggregates with the selected window weighting recency emphasis.")
 
 # ============== Hot / Cold Batters tabs (slate-wide) ==============
 @st.cache_data(ttl=600, show_spinner=False)

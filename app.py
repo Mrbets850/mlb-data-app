@@ -2262,8 +2262,22 @@ def hitter_pitch_crush(arsenal_b: pd.DataFrame, player_id, top_n: int = 2,
         sub = sub.sort_values(["woba", "slg"], ascending=[False, False])
     return sub.head(top_n).reset_index(drop=True)
 
-def find_pitcher_row(df, pitcher_name):
-    if df.empty or not pitcher_name or pitcher_name == "TBD": return None
+def find_pitcher_row(df, pitcher_name, pitcher_id=None):
+    """Locate a pitcher row in pitchers_df. ID-first when pitcher_id is provided
+    (the slate's probable-pitcher id from the schedule), then fall back to
+    name_key, then a last-name "contains" match. ID-first matching keeps the
+    Matchup board keyed to the selected slate game's actual probable pitcher
+    even when two pitchers share a name in the season CSV."""
+    if df is None or df.empty: return None
+    if pitcher_id is not None and "player_id" in df.columns:
+        try:
+            pid = int(pitcher_id)
+            id_match = df[pd.to_numeric(df["player_id"], errors="coerce") == pid]
+            if not id_match.empty:
+                return id_match.iloc[0]
+        except (TypeError, ValueError):
+            pass
+    if not pitcher_name or pitcher_name == "TBD": return None
     key = clean_name(pitcher_name)
     exact = df[df["name_key"] == key]
     if not exact.empty: return exact.iloc[0]
@@ -2456,11 +2470,16 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
             "Ceiling", "Zone Fit", "Crushes", "HR Form", "kHR", "HR", "ISO", "Barrel%", "HardHit%"]
     if lineup_df.empty:
         return pd.DataFrame(columns=cols)
-    p_row = find_pitcher_row(pitchers_df, opp_pitcher_name)
+    # ID-first pitcher match keeps this row tied to the *selected slate game's*
+    # probable pitcher rather than any pitcher with the same display name.
+    p_row = find_pitcher_row(pitchers_df, opp_pitcher_name, pitcher_id=opp_pitcher_id)
     opp_pitches = _build_pitcher_arsenal_set(arsenal_p, opp_pitcher_id)
     rows = []
     for _, r in lineup_df.iterrows():
-        b_row = find_player_row(batters_df, r["name_key"], r["team"])
+        b_row = find_player_row(
+            batters_df, r["name_key"], r["team"],
+            player_id=r.get("player_id") if "player_id" in r.index else None,
+        )
         opp_hand = r.get("opposing_pitch_hand", "")
         m   = matchup_score(b_row, p_row, r["lineup_spot"], weather, park_factor, r["bat_side"], opp_hand)
         ts  = test_score(b_row, p_row)
@@ -2770,7 +2789,9 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         "HardHit%":   _league_avg("HardHit%",   38.0),
         "LA":         _league_avg("LA",          12.0),
     }
-    p_row = find_pitcher_row(pitchers_df, opp_pitcher_name)
+    # ID-first pitcher match keeps this row tied to the *selected slate game's*
+    # probable pitcher rather than any pitcher with the same display name.
+    p_row = find_pitcher_row(pitchers_df, opp_pitcher_name, pitcher_id=opp_pitcher_id)
     opp_pitches = _build_pitcher_arsenal_set(arsenal_p, opp_pitcher_id)
     rows = []
     for _, r in lineup_df.iterrows():
@@ -9413,6 +9434,13 @@ tab_matchup, tab_rolling, tab_hot, tab_cold, tab_injuries = st.tabs(
 
 # ============== Matchup tab ==============
 with tab_matchup:
+    # Make explicit that the board below recomputes against the selected
+    # slate game's context, not a global/season ranking.
+    # TODO(PR #2): add L5/L10/L30 recency overlays keyed to the same context.
+    st.caption(
+        "Matchup scores are keyed to the selected slate game, opponent, "
+        "probable pitcher, lineup context, park/weather where available."
+    )
     # ---- Per-game pitcher mini-cards (top of Matchup) ----
     try:
         if pitcher_stats_df is not None and not pitcher_stats_df.empty:

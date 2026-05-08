@@ -2130,6 +2130,61 @@ def build_game_context(game_row):
         "home_pitch_hand": home_pitch_hand, "away_pitch_hand": away_pitch_hand,
     }
 
+# ---------------------------------------------------------------------------
+# Shared batter-pick eligibility filter
+# ---------------------------------------------------------------------------
+# Once a game has started, lineups are locked and pre-game batter props
+# (HR / 2+ RBI / TB / HRR / parlays / hero strip) can no longer be
+# meaningfully recommended. Centralized here so every batter generator —
+# HR Sleepers, 2+ RBI, TB, HRR, AI HR Parlay, Round Robin, AI Hits Parlay,
+# the RBI hero strip — uses the exact same eligibility rule.
+_BATTER_PICK_COMPLETED_TOKENS = (
+    "final", "completed", "game over", "postponed", "cancelled",
+    "canceled", "suspended", "forfeit", "if necessary",
+)
+_BATTER_PICK_STARTED_TOKENS = (
+    "in progress", "live", "manager challenge", "review", "delayed",
+)
+_BATTER_PICK_PREGAME_TOKENS = (
+    "scheduled", "pre-game", "pregame", "pre game",
+    "warmup", "warm-up", "warm up",
+)
+
+
+def is_pre_game_for_batter_pick(row) -> bool:
+    """True if this game is still a pre-game matchup eligible for batter
+    recommendations. Anything in-progress, completed, postponed, or whose
+    start time has already passed is excluded."""
+    status = str(row.get("status") or "").strip().lower()
+    if any(tok in status for tok in _BATTER_PICK_COMPLETED_TOKENS):
+        return False
+    if any(tok in status for tok in _BATTER_PICK_STARTED_TOKENS):
+        return False
+    gt = row.get("game_time_utc")
+    try:
+        start_utc = pd.to_datetime(gt, utc=True)
+    except Exception:
+        start_utc = pd.NaT
+    _now = pd.Timestamp.now('UTC')
+    now_utc = _now if _now.tzinfo is not None else _now.tz_localize("UTC")
+    if any(tok in status for tok in _BATTER_PICK_PREGAME_TOKENS):
+        if pd.isna(start_utc):
+            return True
+        return start_utc > now_utc
+    if pd.isna(start_utc):
+        return False
+    return start_utc > now_utc
+
+
+def filter_pre_game_schedule(schedule_df) -> pd.DataFrame:
+    """Return only the rows of schedule_df whose game has not yet started.
+    Empty-safe — returns an empty DataFrame if the input is empty or None."""
+    if schedule_df is None or len(schedule_df) == 0:
+        return schedule_df if schedule_df is not None else pd.DataFrame()
+    mask = schedule_df.apply(is_pre_game_for_batter_pick, axis=1)
+    return schedule_df[mask].reset_index(drop=True)
+
+
 def find_player_row(df, name_key, team, player_id=None):
     """Locate a hitter row in batters_df. ID-first when player_id is provided
     (lineups always carry it), then fall back to (name_key, team), then
@@ -4032,9 +4087,16 @@ def park_weather_indicator(weather: dict, park_factor, home_abbr: str) -> dict:
     return {"label": label, "tier": tier, "hr_pct": hr_pct,
             "icon": icon, "tooltip": tip}
 
-def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df):
+def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df,
+                             slate_date_iso: str = ""):
     """Score every posted-lineup batter for HR sleeper potential and return a
-    sorted DataFrame ready for rendering."""
+    sorted DataFrame ready for rendering.
+
+    slate_date_iso (YYYY-MM-DD) is the selected slate date — used to anchor
+    the L5/L10/30D recent-form snapshot per batter so the score reflects
+    today's opponent / probable pitcher / park / weather AND each batter's
+    latest form (via _form_blend_adjustment). Falls back gracefully when
+    recent form is unavailable."""
     rows = []
     for _, g in _schedule_df.iterrows():
         try:
@@ -4044,15 +4106,19 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df):
         bpw = park_weather_indicator(
             cc.get("weather", {}), g.get("park_factor"), g.get("home_abbr", "")
         )
-        for side, lineup_df, opp_pitcher in (
-            ("away", cc["away_lineup"], g["home_probable"]),
-            ("home", cc["home_lineup"], g["away_probable"]),
+        for side, lineup_df, opp_pitcher, opp_pid in (
+            ("away", cc["away_lineup"], g["home_probable"], g.get("home_probable_id")),
+            ("home", cc["home_lineup"], g["away_probable"], g.get("away_probable_id")),
         ):
             if lineup_df is None or lineup_df.empty:
                 continue
-            p_row = find_pitcher_row(_pitchers_df, opp_pitcher)
+            # ID-first pitcher match (mirrors PR #21) so the same-name
+            # pitcher in the season CSV doesn't shadow tonight's actual
+            # probable pitcher.
+            p_row = find_pitcher_row(_pitchers_df, opp_pitcher, pitcher_id=opp_pid)
             for _, r in lineup_df.iterrows():
-                b = find_player_row(_batters_df, r["name_key"], r["team"])
+                b = find_player_row(_batters_df, r["name_key"], r["team"],
+                                    player_id=r.get("player_id"))
                 if b is None:
                     continue
                 opp_hand = r.get("opposing_pitch_hand", "")
@@ -4060,6 +4126,17 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df):
                 # consistent with the per-game model.
                 m_score = matchup_score(b, p_row, r["lineup_spot"], cc["weather"],
                                          g["park_factor"], r["bat_side"], opp_hand)
+                # Recent-form blend: nudge matchup score by L10 AVG vs league.
+                # Uses the slate date so the snapshot is locked to the
+                # selected slate and never leaks across days.
+                form = None
+                if slate_date_iso and r.get("player_id") is not None:
+                    try:
+                        form = get_batter_recent_form(int(r["player_id"]), slate_date_iso)
+                    except Exception:
+                        form = None
+                if form:
+                    m_score = float(m_score) + _form_blend_adjustment(form.get("L10") or {})
                 c_score = ceiling_score(b, cc["weather"], g["park_factor"])
                 khr     = k_adj_hr(b, p_row, c_score)
 
@@ -4295,31 +4372,51 @@ def _summarize_weather_short(weather: dict) -> str:
     return " · ".join(bits)
 
 
-def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb"):
+def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb",
+                         slate_date_iso: str = ""):
     """Build a target-prop sleeper table for either:
-       mode="tb"  -> Over 1.5 Total Bases
-       mode="hrr" -> Over 1.5 Hits+Runs+RBI
-    Returns a sorted DataFrame ready for rendering."""
+       mode="tb"   -> Over 1.5 Total Bases
+       mode="hrr"  -> Over 1.5 Hits+Runs+RBI
+       mode="rbi2" -> 2+ RBI
+    Returns a sorted DataFrame ready for rendering.
+
+    slate_date_iso (YYYY-MM-DD) is the selected slate date. When provided
+    and a per-batter player_id is present, the matchup score is nudged by
+    each batter's L10 AVG vs league (same _form_blend_adjustment used in
+    Matchup Data). The snapshot is keyed by (player_id, slate date) so it
+    never leaks across days or opponents."""
     rows = []
     for _, g in _schedule_df.iterrows():
         try:
             cc = build_game_context(g)
         except Exception:
             continue
-        for side, lineup_df, opp_pitcher in (
-            ("away", cc["away_lineup"], g["home_probable"]),
-            ("home", cc["home_lineup"], g["away_probable"]),
+        for side, lineup_df, opp_pitcher, opp_pid in (
+            ("away", cc["away_lineup"], g["home_probable"], g.get("home_probable_id")),
+            ("home", cc["home_lineup"], g["away_probable"], g.get("away_probable_id")),
         ):
             if lineup_df is None or lineup_df.empty:
                 continue
-            p_row = find_pitcher_row(_pitchers_df, opp_pitcher)
+            # ID-first pitcher match: keeps the score tied to tonight's
+            # actual probable pitcher even when names collide.
+            p_row = find_pitcher_row(_pitchers_df, opp_pitcher, pitcher_id=opp_pid)
             for _, r in lineup_df.iterrows():
-                b = find_player_row(_batters_df, r["name_key"], r["team"])
+                b = find_player_row(_batters_df, r["name_key"], r["team"],
+                                    player_id=r.get("player_id"))
                 if b is None:
                     continue
                 opp_hand = r.get("opposing_pitch_hand", "")
                 m_score = matchup_score(b, p_row, r["lineup_spot"], cc["weather"],
                                          g["park_factor"], r["bat_side"], opp_hand)
+                # Recent-form blend, same anchor as Matchup Data / HR Sleepers.
+                form = None
+                if slate_date_iso and r.get("player_id") is not None:
+                    try:
+                        form = get_batter_recent_form(int(r["player_id"]), slate_date_iso)
+                    except Exception:
+                        form = None
+                if form:
+                    m_score = float(m_score) + _form_blend_adjustment(form.get("L10") or {})
                 c_score = ceiling_score(b, cc["weather"], g["park_factor"])
 
                 # Pull all source metrics with NaN-safe defaults
@@ -5318,8 +5415,22 @@ _render_freshness_banner()
 def _render_rbi_hero_strip():
     if batters_df is None or batters_df.empty:
         return
+    # Hero strip is a *recommendation* surface, so it must use the same
+    # pre-game eligibility rule as the parlay generators — once a game has
+    # started its lineup is locked and we can't recommend props from it.
     try:
-        _hero_df = build_targets_table(schedule_df, batters_df, pitchers_df, mode="rbi2")
+        _hero_sched = filter_pre_game_schedule(schedule_df)
+    except Exception:
+        _hero_sched = schedule_df
+    if _hero_sched is None or _hero_sched.empty:
+        return
+    try:
+        _slate_iso = pd.to_datetime(selected_date).strftime("%Y-%m-%d")
+    except Exception:
+        _slate_iso = ""
+    try:
+        _hero_df = build_targets_table(_hero_sched, batters_df, pitchers_df,
+                                        mode="rbi2", slate_date_iso=_slate_iso)
     except Exception:
         return
     if _hero_df is None or _hero_df.empty:
@@ -5390,7 +5501,10 @@ def _render_rbi_hero_strip():
         '<div class="rbi-hero">'
         '<div class="rbi-hero-title">🔥 Top 15 — 2+ RBI Plays Tonight</div>'
         '<div class="rbi-hero-sub">Heart-of-order power bats with the best '
-        'RBI matchup — swipe to see all 15. Open the <b>🔥 2+ RBI</b> tab for filters &amp; full table.</div>'
+        'RBI matchup — swipe to see all 15. Refreshes by slate date and blends '
+        "today's opponent / probable pitcher / lineup spot / park &amp; weather "
+        'with each hitter\'s L10 form when available. Started games are '
+        'excluded. Open the <b>🔥 2+ RBI</b> tab for filters &amp; full table.</div>'
         '<div class="rbi-hero-rail">' + "".join(cards_html) + '</div>'
         '</div>'
     )
@@ -5658,8 +5772,37 @@ if _view == "💎 HR Sleepers":
         )
         st.stop()
 
+    # HR Sleepers is a batter-pick recommendation, so apply the same
+    # started-game eligibility rule used by the parlay generators.
+    _hrs_sched = filter_pre_game_schedule(schedule_df)
+    _hrs_total = int(len(schedule_df))
+    _hrs_elig  = int(len(_hrs_sched))
+    _hrs_excl  = _hrs_total - _hrs_elig
+    if _hrs_sched is None or _hrs_sched.empty:
+        st.warning(
+            f"All {_hrs_total} games on this slate have already started or "
+            "finished. No pre-game matchups remain to score sleepers from."
+        )
+        st.stop()
+    if _hrs_excl > 0:
+        st.markdown(
+            f'<div style="margin:0 0 10px 0; padding:8px 12px; '
+            f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+            f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
+            f'🕒 Using <b>{_hrs_elig}</b> pre-game matchup'
+            f'{"s" if _hrs_elig != 1 else ""}; '
+            f'started &amp; completed games excluded ({_hrs_excl} hidden).'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    try:
+        _slate_iso_hrs = pd.to_datetime(selected_date).strftime("%Y-%m-%d")
+    except Exception:
+        _slate_iso_hrs = ""
     with st.spinner("Scoring sleeper candidates across the slate…"):
-        hrs_df = build_hr_sleepers_table(schedule_df, batters_df, pitchers_df)
+        hrs_df = build_hr_sleepers_table(_hrs_sched, batters_df, pitchers_df,
+                                          slate_date_iso=_slate_iso_hrs)
 
     if hrs_df.empty:
         st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
@@ -5704,7 +5847,9 @@ if _view == "💎 HR Sleepers":
         st.markdown(
             '<div style="margin: 6px 0 4px 0; color:#64748b; font-size:.82rem;">'
             'Scoring weights — Power 60% (Barrel% 22 · HardHit% 14 · ISO 10 · FB% 7 · Pull% 7) · '
-            'Matchup 25% (Matchup 10 · Ceiling 8 · kHR 7) · Sleeper bonus 15% (low HR total + lower spot).'
+            'Matchup 25% (Matchup 10 · Ceiling 8 · kHR 7) · Sleeper bonus 15% (low HR total + lower spot). '
+            "Scores refresh by slate date and blend today's opponent / probable pitcher, "
+            'lineup spot, park &amp; weather, and L10 form when available; started games are excluded.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -5740,8 +5885,33 @@ if _view == "📊 Total Bases 1.5+":
         st.warning("Batter CSV hasn’t loaded yet.")
         st.stop()
 
+    _tb_sched = filter_pre_game_schedule(schedule_df)
+    _tb_total = int(len(schedule_df)); _tb_elig = int(len(_tb_sched))
+    _tb_excl  = _tb_total - _tb_elig
+    if _tb_sched is None or _tb_sched.empty:
+        st.warning(
+            f"All {_tb_total} games on this slate have already started or "
+            "finished. No pre-game matchups remain to score TB targets from."
+        )
+        st.stop()
+    if _tb_excl > 0:
+        st.markdown(
+            f'<div style="margin:0 0 10px 0; padding:8px 12px; '
+            f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+            f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
+            f'🕒 Using <b>{_tb_elig}</b> pre-game matchup'
+            f'{"s" if _tb_elig != 1 else ""}; '
+            f'started &amp; completed games excluded ({_tb_excl} hidden).'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    try:
+        _slate_iso_tb = pd.to_datetime(selected_date).strftime("%Y-%m-%d")
+    except Exception:
+        _slate_iso_tb = ""
     with st.spinner("Scoring TB targets across the slate…"):
-        tb_df = build_targets_table(schedule_df, batters_df, pitchers_df, mode="tb")
+        tb_df = build_targets_table(_tb_sched, batters_df, pitchers_df,
+                                     mode="tb", slate_date_iso=_slate_iso_tb)
 
     if tb_df.empty:
         st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
@@ -5795,7 +5965,9 @@ if _view == "📊 Total Bases 1.5+":
             'Sort: TB Score ↓. '
             'Pills next to a hitter: <b>CONF</b> = MLB has posted the lineup, '
             '<b>PROJ</b> = inferred from recent games, <b>TBD</b> = not yet known. '
-            '★ marks a platoon edge (LHB vs RHP / RHB vs LHP).'
+            '★ marks a platoon edge (LHB vs RHP / RHB vs LHP). '
+            "Scores refresh by slate date and blend today's opponent / probable pitcher, "
+            'park &amp; weather, lineup spot, and L10 form when available; started games are excluded.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -5831,8 +6003,33 @@ if _view == "🎯 HRR 1.5+":
         st.warning("Batter CSV hasn’t loaded yet.")
         st.stop()
 
+    _hrr_sched = filter_pre_game_schedule(schedule_df)
+    _hrr_total = int(len(schedule_df)); _hrr_elig = int(len(_hrr_sched))
+    _hrr_excl  = _hrr_total - _hrr_elig
+    if _hrr_sched is None or _hrr_sched.empty:
+        st.warning(
+            f"All {_hrr_total} games on this slate have already started or "
+            "finished. No pre-game matchups remain to score HRR targets from."
+        )
+        st.stop()
+    if _hrr_excl > 0:
+        st.markdown(
+            f'<div style="margin:0 0 10px 0; padding:8px 12px; '
+            f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+            f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
+            f'🕒 Using <b>{_hrr_elig}</b> pre-game matchup'
+            f'{"s" if _hrr_elig != 1 else ""}; '
+            f'started &amp; completed games excluded ({_hrr_excl} hidden).'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    try:
+        _slate_iso_hrr = pd.to_datetime(selected_date).strftime("%Y-%m-%d")
+    except Exception:
+        _slate_iso_hrr = ""
     with st.spinner("Scoring HRR targets across the slate…"):
-        hrr_df = build_targets_table(schedule_df, batters_df, pitchers_df, mode="hrr")
+        hrr_df = build_targets_table(_hrr_sched, batters_df, pitchers_df,
+                                      mode="hrr", slate_date_iso=_slate_iso_hrr)
 
     if hrr_df.empty:
         st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
@@ -5885,7 +6082,9 @@ if _view == "🎯 HRR 1.5+":
             'Tiers — Elite ≥75 · Strong ≥65 · Average ≥55 · Soft <55. '
             'Sort: HRR Score ↓. '
             'Pills: <b>CONF</b>/<b>PROJ</b>/<b>TBD</b> for lineup status. '
-            '★ = platoon edge.'
+            '★ = platoon edge. '
+            "Scores refresh by slate date and blend today's opponent / probable pitcher, "
+            'park &amp; weather, lineup spot, and L10 form when available; started games are excluded.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -5921,8 +6120,33 @@ if _view == "🔥 2+ RBI":
         st.warning("Batter CSV hasn’t loaded yet.")
         st.stop()
 
+    _rbi_sched = filter_pre_game_schedule(schedule_df)
+    _rbi_total = int(len(schedule_df)); _rbi_elig = int(len(_rbi_sched))
+    _rbi_excl  = _rbi_total - _rbi_elig
+    if _rbi_sched is None or _rbi_sched.empty:
+        st.warning(
+            f"All {_rbi_total} games on this slate have already started or "
+            "finished. No pre-game matchups remain to score 2+ RBI targets from."
+        )
+        st.stop()
+    if _rbi_excl > 0:
+        st.markdown(
+            f'<div style="margin:0 0 10px 0; padding:8px 12px; '
+            f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+            f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
+            f'🕒 Using <b>{_rbi_elig}</b> pre-game matchup'
+            f'{"s" if _rbi_elig != 1 else ""}; '
+            f'started &amp; completed games excluded ({_rbi_excl} hidden).'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    try:
+        _slate_iso_rbi = pd.to_datetime(selected_date).strftime("%Y-%m-%d")
+    except Exception:
+        _slate_iso_rbi = ""
     with st.spinner("Scoring 2+ RBI targets across the slate…"):
-        rbi_df = build_targets_table(schedule_df, batters_df, pitchers_df, mode="rbi2")
+        rbi_df = build_targets_table(_rbi_sched, batters_df, pitchers_df,
+                                      mode="rbi2", slate_date_iso=_slate_iso_rbi)
 
     if rbi_df.empty:
         st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
@@ -5975,7 +6199,9 @@ if _view == "🔥 2+ RBI":
             'Tiers — Elite ≥75 · Strong ≥65 · Average ≥55 · Soft <55. '
             'Sort: RBI Score ↓. '
             'Pills: <b>CONF</b>/<b>PROJ</b>/<b>TBD</b> for lineup status. '
-            '★ = platoon edge.'
+            '★ = platoon edge. '
+            "Scores refresh by slate date and blend today's opponent / probable pitcher, "
+            'park &amp; weather, lineup spot, and L10 form when available; started games are excluded.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -6099,8 +6325,13 @@ if _view == "🤖 AI HR Parlay":
         unsafe_allow_html=True,
     )
 
+    try:
+        _slate_iso_aip = pd.to_datetime(selected_date).strftime("%Y-%m-%d")
+    except Exception:
+        _slate_iso_aip = ""
     with st.spinner("Scoring HR candidates across the slate…"):
-        ai_pool_df = build_hr_sleepers_table(eligible_schedule_df, batters_df, pitchers_df)
+        ai_pool_df = build_hr_sleepers_table(eligible_schedule_df, batters_df, pitchers_df,
+                                              slate_date_iso=_slate_iso_aip)
 
     if ai_pool_df is None or ai_pool_df.empty:
         st.info("No lineups posted yet for the upcoming/live games. Check back closer to first pitch.")
@@ -7038,8 +7269,13 @@ if _view == "👑 HR Round Robin":
         unsafe_allow_html=True,
     )
 
+    try:
+        _slate_iso_rr = pd.to_datetime(selected_date).strftime("%Y-%m-%d")
+    except Exception:
+        _slate_iso_rr = ""
     with st.spinner("Scoring HR candidates across every available metric…"):
-        rr_pool_df = build_hr_sleepers_table(rr_schedule, batters_df, pitchers_df)
+        rr_pool_df = build_hr_sleepers_table(rr_schedule, batters_df, pitchers_df,
+                                              slate_date_iso=_slate_iso_rr)
 
     if rr_pool_df is None or rr_pool_df.empty:
         st.info("No lineups posted yet. Check back closer to first pitch.")
@@ -8980,13 +9216,16 @@ if _view == "🥎 AI 1+ Hits Parlay":
             except Exception:
                 continue
             wx = cc.get("weather", {}) if isinstance(cc, dict) else {}
-            for side, lineup_df, opp_pitcher in (
-                ("away", cc.get("away_lineup"), g.get("home_probable")),
-                ("home", cc.get("home_lineup"), g.get("away_probable")),
+            for side, lineup_df, opp_pitcher, opp_pid in (
+                ("away", cc.get("away_lineup"), g.get("home_probable"),
+                 g.get("home_probable_id")),
+                ("home", cc.get("home_lineup"), g.get("away_probable"),
+                 g.get("away_probable_id")),
             ):
                 if lineup_df is None or lineup_df.empty:
                     continue
-                p_row = find_pitcher_row(pitchers_df, opp_pitcher)
+                p_row = find_pitcher_row(pitchers_df, opp_pitcher,
+                                          pitcher_id=opp_pid)
                 opp_p_hand = (cc.get("home_pitch_hand") if side == "away"
                               else cc.get("away_pitch_hand")) or ""
                 lineup_status = (cc.get("away_status") if side == "away"
@@ -8996,7 +9235,8 @@ if _view == "🥎 AI 1+ Hits Parlay":
                     "icon":"🟡","tooltip":"Park/weather signal"
                 })
                 for _, r in lineup_df.iterrows():
-                    b = find_player_row(batters_df, r["name_key"], r["team"])
+                    b = find_player_row(batters_df, r["name_key"], r["team"],
+                                         player_id=r.get("player_id"))
                     bat_side = r.get("bat_side") or ""
                     spot = r.get("lineup_spot")
                     score, sig = _ai_hits_score(

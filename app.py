@@ -10116,6 +10116,9 @@ with tab_matchup:
         if (not away_matchup.empty or not home_matchup.empty) else pd.DataFrame()
     if not combined_for_ranking.empty and "Matchup" in combined_for_ranking.columns:
         top3 = combined_for_ranking.sort_values("Matchup", ascending=False).head(3).reset_index(drop=True)
+        _power_combo_img = os.path.join(ASSETS_DIR, "homerun_power_combo.jpeg")
+        if os.path.exists(_power_combo_img):
+            st.image(_power_combo_img, use_container_width=True)
         st.markdown('<div class="section-title" style="margin-top:18px;">🔥 Top 3 Hitters — This Game</div>', unsafe_allow_html=True)
         st.markdown(
             '<style>'

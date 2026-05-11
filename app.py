@@ -2874,24 +2874,36 @@ def style_rolling_table(df):
 HEATMAP_THRESHOLDS = {
     # name           low      high    reverse  fmt
     "Matchup":      (95.0,    150.0,  False, "{:.1f}"),
-    "Test Score":   (35.0,    85.0,   False, "{:.0f}"),
-    "Ceiling":      (35.0,    85.0,   False, "{:.0f}"),
-    "Zone Fit":     (0.030,   0.090,  False, "{:.3f}"),
-    "HR Form":      (25.0,    75.0,   False, "{:.0f}%"),
-    "kHR":          (25.0,    75.0,   False, "{:.1f}"),
-    "Pitches":      (200.0,   1800.0, False, "{:.0f}"),
-    "BIP":          (40.0,    320.0,  False, "{:.0f}"),
     "ISO":          (0.130,   0.250,  False, "{:.3f}"),
-    "xwOBA":        (0.290,   0.380,  False, "{:.3f}"),
-    "xwOBAcon":     (0.330,   0.470,  False, "{:.3f}"),
-    "SwStr%":       (8.0,     16.0,   True,  "{:.1f}%"),
-    "PulledBrl%":   (3.0,     14.0,   False, "{:.1f}%"),
     "Brl/BIP%":     (4.0,     14.0,   False, "{:.1f}%"),
-    "SweetSpot%":   (28.0,    40.0,   False, "{:.1f}%"),
     "FB%":          (28.0,    45.0,   False, "{:.1f}%"),
     "GB%":          (35.0,    50.0,   True,  "{:.1f}%"),
+    "EV":           (86.0,    93.0,   False, "{:.1f}"),
     "HH%":          (32.0,    48.0,   False, "{:.1f}%"),
+    "HR/FB%":       (8.0,     22.0,   False, "{:.1f}%"),
+    "PullAir%":     (10.0,    28.0,   False, "{:.1f}%"),
     "LA":           (None,    None,   False, "{:.1f}°"),  # optimal-range, custom
+    "xwOBA":        (0.290,   0.380,  False, "{:.3f}"),
+    "SweetSpot%":   (28.0,    40.0,   False, "{:.1f}%"),
+}
+
+# Friendly display headers for the Matchup heat-map board. Internal column
+# names stay short so the rest of the codebase keeps working; only the visible
+# <th> labels get the long human-readable text.
+MATCHUP_HEATMAP_DISPLAY_LABELS = {
+    "Matchup":     "Matchup",
+    "ISO":         "ISO",
+    "Brl/BIP%":    "BARREL%",
+    "FB%":         "FLYBALL%",
+    "GB%":         "Ground Ball %",
+    "EV":          "Exit Velocity",
+    "HH%":         "Hard hit %",
+    "HR/FB%":      "HR/FB%",
+    "PullAir%":    "PULL AIR%",
+    "LA":          "LAUNCH ANGLE",
+    "xwOBA":       "Xwoba %",
+    "SweetSpot%":  "Sweet Spot%",
+    "Likely":      "Likely",
 }
 
 def _heatmap_rgb(pct):
@@ -2975,10 +2987,9 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
          step keeps every starting hitter from rendering as a long row of
          empty dashes when Savant simply hasn't published a value yet.
     """
-    cols = ["Spot", "Hitter", "Team", "Crushes", "Matchup", "Test Score", "Ceiling",
-            "Zone Fit", "HR Form", "kHR", "Pitches", "BIP", "ISO", "xwOBA", "xwOBAcon",
-            "SwStr%", "PulledBrl%", "Brl/BIP%", "SweetSpot%", "FB%", "GB%", "HH%",
-            "LA", "Likely"]
+    cols = ["Spot", "Hitter", "Team", "Crushes", "Matchup", "ISO", "Brl/BIP%",
+            "FB%", "GB%", "EV", "HH%", "HR/FB%", "PullAir%", "LA", "xwOBA",
+            "SweetSpot%", "Likely"]
     if lineup_df.empty:
         return pd.DataFrame(columns=cols)
 
@@ -3008,6 +3019,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         "FB%":        _league_avg("FB%",         34.0),
         "GB%":        _league_avg("GB%",         44.0),
         "HardHit%":   _league_avg("HardHit%",   38.0),
+        "EV":         _league_avg("EV",          89.0),
         "LA":         _league_avg("LA",          12.0),
     }
     # ID-first pitcher match keeps this row tied to the *selected slate game's*
@@ -3081,36 +3093,35 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
 
         iso     = _g("ISO", _LG["ISO"])
         xwoba   = _g("xwOBA", _LG["xwOBA"])
-        xslg    = _g("xSLG", _LG["xSLG"]) or _LG["xSLG"]
-        xobp_v  = _g("xOBP", _LG["xOBP"]) or _LG["xOBP"]
-        # xwOBAcon proxy = xSLG/1.7 + xOBP/3 (scales typical Statcast values
-        # into the .330–.470 band shown on Savant's "xwOBA on contact" view).
-        xwobacon = round(xslg * 0.55 + xobp_v * 0.45, 3) if xslg and xobp_v else None
-
-        whiff   = _g("Whiff%", _LG["Whiff%"])
-        swing   = _g("Swing%", _LG["Swing%"])
-        # SwStr% = Whiff% × Swing% / 100 (rate of swinging strikes per pitch).
-        if whiff is not None and swing is not None:
-            swstr = round(whiff * swing / 100.0, 1)
-        elif whiff is not None:
-            # Whiff% alone is per-swing; approximate by multiplying league-avg swing rate.
-            swstr = round(whiff * 0.47, 1)
-        else:
-            swstr = round(_LG["Whiff%"] * _LG["Swing%"] / 100.0, 1)
 
         barrel  = _g("Barrel%", _LG["Barrel%"])
         pull    = _g("Pull%", _LG["Pull%"])
-        # PulledBrl% proxy = Barrel% × (Pull% / 100) — Savant doesn't expose
-        # the exact pulled-barrel rate in the public CSV, but pulled barrels
-        # are the most damaging contact type and this is a strong correlate.
-        pulledbrl = round(barrel * pull / 100.0, 1) if (barrel is not None and pull is not None) else None
         brl_bip = barrel  # Savant's barrel_batted_rate IS Brl/BIP%
 
         sweet   = _g("SweetSpot%", _LG["SweetSpot%"])
         fb      = _g("FB%", _LG["FB%"])
         gb      = _g("GB%", _LG["GB%"])
         hh      = _g("HardHit%", _LG["HardHit%"])
+        ev      = _g("EV", _LG["EV"])
         la      = _g("LA", _LG["LA"])
+
+        # HR/FB% = home runs per fly ball. HR comes from the Savant batter
+        # row; fly-ball count is estimated from FB% × BIP. Falls back to a
+        # league-typical ~13% when either input is missing so the cell isn't
+        # blank for low-PA hitters.
+        hr_total = _g("HR")
+        if hr_total is not None and fb and bip and fb > 0 and bip > 0:
+            fb_count = fb / 100.0 * bip
+            hr_fb = round(hr_total / fb_count * 100.0, 1) if fb_count > 0 else 13.0
+        else:
+            hr_fb = 13.0
+
+        # PullAir% proxy = Pull% × FB% / 100. Approximates the rate of balls
+        # pulled in the air — the swing path most predictive of HR power.
+        if pull is not None and fb is not None:
+            pull_air = round(pull * fb / 100.0, 1)
+        else:
+            pull_air = None
 
         form_line = (
             f"L5 {_fmt_form_avg(l5.get('avg'))} | "
@@ -3127,25 +3138,17 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "_FormL10_AVG": l10.get("avg"),
             "_FormL30_AVG": l30.get("avg"),
             "Matchup": m,
-            "Test Score": ts,
-            "Ceiling": cl,
-            "Zone Fit": zf,
-            "HR Form": hrf,
-            "_HR Trend": hr_trend,
-            "kHR": khr,
-            "Pitches": round(pitches, 0) if pitches is not None else None,
-            "BIP": round(bip, 0) if bip is not None else None,
             "ISO": round(iso, 3) if iso is not None else None,
-            "xwOBA": round(xwoba, 3) if xwoba is not None else None,
-            "xwOBAcon": xwobacon,
-            "SwStr%": swstr,
-            "PulledBrl%": pulledbrl,
             "Brl/BIP%": round(brl_bip, 1) if brl_bip is not None else None,
-            "SweetSpot%": round(sweet, 1) if sweet is not None else None,
             "FB%": round(fb, 1) if fb is not None else None,
             "GB%": round(gb, 1) if gb is not None else None,
+            "EV": round(ev, 1) if ev is not None else None,
             "HH%": round(hh, 1) if hh is not None else None,
+            "HR/FB%": hr_fb,
+            "PullAir%": pull_air,
             "LA": round(la, 1) if la is not None else None,
+            "xwOBA": round(xwoba, 3) if xwoba is not None else None,
+            "SweetSpot%": round(sweet, 1) if sweet is not None else None,
             "Likely": _likely_label(m, cl),
         })
     df = pd.DataFrame(rows)
@@ -3207,11 +3210,13 @@ def render_matchup_heatmap_html(df):
 </style>
 """
 
-    # Build header row
+    # Build header row — use friendly display labels for stat columns
+    # (Matchup heat-map only; the underlying df keeps short internal names).
     header_cells = []
     for c in display_cols:
         cls = "mhm-col-hitter" if c == "Hitter" else ""
-        header_cells.append(f'<th class="{cls}">{c}</th>')
+        label = MATCHUP_HEATMAP_DISPLAY_LABELS.get(c, c)
+        header_cells.append(f'<th class="{cls}">{label}</th>')
 
     # Build body rows
     body_rows = []
@@ -3302,9 +3307,8 @@ def render_matchup_heatmap_html(df):
 # option so the existing default behavior is preserved.
 MATCHUP_SORTABLE_COLUMNS = [
     "Lineup Spot", "Hitter",
-    "Matchup", "Test Score", "Ceiling", "Zone Fit", "HR Form", "kHR",
-    "Pitches", "BIP", "ISO", "xwOBA", "xwOBAcon", "SwStr%", "PulledBrl%",
-    "Brl/BIP%", "SweetSpot%", "FB%", "GB%", "HH%", "LA", "Likely",
+    "Matchup", "ISO", "Brl/BIP%", "FB%", "GB%", "EV", "HH%", "HR/FB%",
+    "PullAir%", "LA", "xwOBA", "SweetSpot%", "Likely",
 ]
 
 def sort_matchup_board(df, sort_col, descending):
@@ -3348,6 +3352,7 @@ def render_matchup_board_with_sort(board_df, key_prefix, label):
             available,
             index=0,
             key=f"mhm_sort_col_{key_prefix}",
+            format_func=lambda c: MATCHUP_HEATMAP_DISPLAY_LABELS.get(c, c),
         )
     with c2:
         direction = st.radio(

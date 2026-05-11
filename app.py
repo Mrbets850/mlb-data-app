@@ -10158,15 +10158,14 @@ with tab_matchup:
             bat = r.get("_bat_side", "") or r.get("Bat", "")
             opp_pitcher = game_row["home_probable"] if team == game_row["away_abbr"] else game_row["away_probable"]
             matchup_v = r.get("Matchup", 0)
-            # Card stats now mirror the new HR-focused heat-map columns: the
-            # four most predictive of HR upside (ISO, Brl/BIP%, HR/FB%,
-            # PullAir%). No more Ceiling / Zone Fit / kHR / HR Form so the
-            # card lines up with the slate-wide leaderboard and the per-game
-            # heat-map board the user is now scanning.
-            iso_v     = r.get("ISO")
-            brl_v     = r.get("Brl/BIP%")
-            hrfb_v    = r.get("HR/FB%")
-            pullair_v = r.get("PullAir%")
+            # Card stats use the user's Power Combo profile: Barrel% 15+,
+            # FB% 45+, EV 93+ mph, HardHit% 50+, ISO .250+. Hitters meeting
+            # these together cluster strongly with HR upside.
+            brl_v = r.get("Brl/BIP%")
+            fb_v  = r.get("FB%")
+            ev_v  = r.get("EV")
+            hh_v  = r.get("HH%")
+            iso_v = r.get("ISO")
             def _fmt_card_num(v, fmt):
                 if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
                 try: return fmt.format(float(v))
@@ -10227,10 +10226,11 @@ with tab_matchup:
                 f'</div>'
                 f'</div>'
                 f'<div class="top3-stats" style="margin-top:12px;">'
-                f'<div class="top3-stat"><span class="lab">ISO</span><span class="val">{_fmt_card_num(iso_v, "{:.3f}")}</span></div>'
                 f'<div class="top3-stat"><span class="lab">Barrel%</span><span class="val">{_fmt_card_num(brl_v, "{:.1f}%")}</span></div>'
-                f'<div class="top3-stat"><span class="lab">HR/FB%</span><span class="val">{_fmt_card_num(hrfb_v, "{:.1f}%")}</span></div>'
-                f'<div class="top3-stat"><span class="lab">Pull Air%</span><span class="val">{_fmt_card_num(pullair_v, "{:.1f}%")}</span></div>'
+                f'<div class="top3-stat"><span class="lab">FB%</span><span class="val">{_fmt_card_num(fb_v, "{:.1f}%")}</span></div>'
+                f'<div class="top3-stat"><span class="lab">EV</span><span class="val">{_fmt_card_num(ev_v, "{:.1f}")}</span></div>'
+                f'<div class="top3-stat"><span class="lab">HardHit%</span><span class="val">{_fmt_card_num(hh_v, "{:.1f}%")}</span></div>'
+                f'<div class="top3-stat"><span class="lab">ISO</span><span class="val">{_fmt_card_num(iso_v, "{:.3f}")}</span></div>'
                 f'</div>'
                 f'{crush_html}'
                 f'</div>'

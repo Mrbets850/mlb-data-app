@@ -2683,17 +2683,130 @@ def _crushes_cell(arsenal_b, player_id, opp_pitches: set, top_n: int = 2, min_pa
         return "—"
     return " · ".join(parts)
 
+# Canonical HR-focused batter metric set. Every user-facing batter section
+# (Matchup heat-map, Top 3 Hitters card, Hot/Cold slate leaderboards) pulls
+# from this single source so display columns stay aligned and no section
+# can drift back to the retired Test Score / Ceiling / Zone Fit / HR Form /
+# kHR categories. Keys match the short internal column names used by the
+# heat-map board; MATCHUP_HEATMAP_DISPLAY_LABELS owns the friendly headers.
+HR_METRIC_KEYS = [
+    "ISO", "Brl/BIP%", "FB%", "GB%", "EV", "HH%",
+    "HR/FB%", "PullAir%", "LA", "xwOBA", "SweetSpot%",
+]
+
+def _league_avg_from(batters_df, col, default):
+    if batters_df is None or batters_df.empty or col not in batters_df.columns:
+        return default
+    s = pd.to_numeric(batters_df[col], errors="coerce").dropna()
+    if s.empty:
+        return default
+    return float(s.median())
+
+def _hr_league_table(batters_df):
+    """League-average fallbacks for every HR-focused metric, computed from
+    the qualified-batter slice so the proxies track the current season."""
+    return {
+        "K%":         _league_avg_from(batters_df, "K%",          22.0),
+        "BB%":        _league_avg_from(batters_df, "BB%",          8.0),
+        "ISO":        _league_avg_from(batters_df, "ISO",          0.155),
+        "xwOBA":      _league_avg_from(batters_df, "xwOBA",        0.318),
+        "Barrel%":    _league_avg_from(batters_df, "Barrel%",      8.0),
+        "Pull%":      _league_avg_from(batters_df, "Pull%",       40.0),
+        "SweetSpot%": _league_avg_from(batters_df, "SweetSpot%", 33.0),
+        "FB%":        _league_avg_from(batters_df, "FB%",         34.0),
+        "GB%":        _league_avg_from(batters_df, "GB%",         44.0),
+        "HardHit%":   _league_avg_from(batters_df, "HardHit%",   38.0),
+        "EV":         _league_avg_from(batters_df, "EV",          89.0),
+        "LA":         _league_avg_from(batters_df, "LA",          12.0),
+    }
+
+def compute_hr_metrics(b_row, lg):
+    """Compute the canonical HR-focused metric dict for one hitter.
+
+    Returns the same short keys used in HEATMAP_THRESHOLDS / the heat-map
+    board so every batter section can render identical values. Falls back
+    to the league-average table `lg` (built via _hr_league_table) when the
+    Savant row is missing a field. HR/FB% and PullAir% are derived; the
+    rest are direct Savant fields rounded for display.
+    """
+    def _g(key, default=None):
+        if b_row is None: return default
+        v = b_row.get(key)
+        try:
+            if v is None or pd.isna(v): return default
+            return float(v)
+        except Exception:
+            return default
+
+    iso     = _g("ISO", lg["ISO"])
+    xwoba   = _g("xwOBA", lg["xwOBA"])
+    barrel  = _g("Barrel%", lg["Barrel%"])
+    pull    = _g("Pull%", lg["Pull%"])
+    sweet   = _g("SweetSpot%", lg["SweetSpot%"])
+    fb      = _g("FB%", lg["FB%"])
+    gb      = _g("GB%", lg["GB%"])
+    hh      = _g("HardHit%", lg["HardHit%"])
+    ev      = _g("EV", lg["EV"])
+    la      = _g("LA", lg["LA"])
+
+    # BIP estimate for HR/FB% denominator: SwingsComp-derived if available,
+    # else PA × (1 - K%/100 - BB%/100), else a low-PA placeholder.
+    pa = _g("pa")
+    bip = _g("BIP")
+    if bip is None:
+        kp = _g("K%", lg["K%"]) or lg["K%"]
+        bbp = _g("BB%", lg["BB%"]) or lg["BB%"]
+        if pa is not None:
+            bip = max(0.0, pa * (1 - kp / 100.0 - bbp / 100.0))
+        else:
+            bip = 12.0
+
+    # HR/FB% = home runs per fly ball. Fall back to league-typical ~13%
+    # when HR/FB%/BIP not available so the cell isn't blank for low-PA.
+    hr_total = _g("HR")
+    if hr_total is not None and fb and bip and fb > 0 and bip > 0:
+        fb_count = fb / 100.0 * bip
+        hr_fb = round(hr_total / fb_count * 100.0, 1) if fb_count > 0 else 13.0
+    else:
+        hr_fb = 13.0
+
+    # PullAir% proxy = Pull% × FB% / 100 — rate of balls pulled in the air.
+    if pull is not None and fb is not None:
+        pull_air = round(pull * fb / 100.0, 1)
+    else:
+        pull_air = None
+
+    return {
+        "ISO":        round(iso, 3) if iso is not None else None,
+        "Brl/BIP%":   round(barrel, 1) if barrel is not None else None,
+        "FB%":        round(fb, 1) if fb is not None else None,
+        "GB%":        round(gb, 1) if gb is not None else None,
+        "EV":         round(ev, 1) if ev is not None else None,
+        "HH%":        round(hh, 1) if hh is not None else None,
+        "HR/FB%":     hr_fb,
+        "PullAir%":   pull_air,
+        "LA":         round(la, 1) if la is not None else None,
+        "xwOBA":      round(xwoba, 3) if xwoba is not None else None,
+        "SweetSpot%": round(sweet, 1) if sweet is not None else None,
+    }
+
+
 def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, weather, park_factor,
                        arsenal_b=None, arsenal_p=None, opp_pitcher_id=None):
-    """The main heatmap-ready dataframe — columns mirror your reference site."""
-    cols = ["Spot", "Hitter", "Team", "Matchup", "Test Score",
-            "Ceiling", "Zone Fit", "Crushes", "HR Form", "kHR", "HR", "ISO", "Barrel%", "HardHit%"]
+    """The main heatmap-ready dataframe powering the Top 3 Hitters card and
+    the Hot/Cold slate leaderboards. Display columns are aligned with the
+    Matchup heat-map board so every batter section sees the same numbers.
+    Ceiling / Zone Fit / kHR / HR Form / Test Score are still computed and
+    carried alongside as internal fields for the AI HR / Sleepers / parlay
+    scoring engines, but are not displayed in any batter-data section."""
+    cols = ["Spot", "Hitter", "Team", "Matchup", "Crushes"] + HR_METRIC_KEYS + ["Likely"]
     if lineup_df.empty:
         return pd.DataFrame(columns=cols)
     # ID-first pitcher match keeps this row tied to the *selected slate game's*
     # probable pitcher rather than any pitcher with the same display name.
     p_row = find_pitcher_row(pitchers_df, opp_pitcher_name, pitcher_id=opp_pitcher_id)
     opp_pitches = _build_pitcher_arsenal_set(arsenal_p, opp_pitcher_id)
+    lg = _hr_league_table(batters_df)
     rows = []
     for _, r in lineup_df.iterrows():
         b_row = find_player_row(
@@ -2709,26 +2822,33 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
         khr = k_adj_hr(b_row, p_row, cl)
         pid = r.get("player_id") if "player_id" in r.index else None
         crushes = _crushes_cell(arsenal_b, pid, opp_pitches) if arsenal_b is not None else "—"
-        rows.append({
+        hr_metrics = compute_hr_metrics(b_row, lg)
+        row = {
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
             "Hitter": r["player_name"],
             "Team": norm_team(r["team"]),
             "Matchup": m,
-            "Test Score": ts,
-            "Ceiling": cl,
-            "Zone Fit": zf,
             "Crushes": crushes,
-            "HR Form": f"{int(hrf)}% {arrow}",
-            "_HR Form Num": hrf,
-            "kHR": khr,
-            "HR": safe_float(b_row.get("HR") if b_row is not None else None, 0),
-            "ISO": safe_float(b_row.get("ISO") if b_row is not None else None, 0.170),
-            "Barrel%": safe_float(b_row.get("Barrel%") if b_row is not None else None, 8.0),
-            "HardHit%": safe_float(b_row.get("HardHit%") if b_row is not None else None, 38.0),
-            # carried-along (hidden) so the Top 3 cards can show MLB headshots / Bat side
+            "Likely": _likely_label(m, cl),
+            # Internal-only fields powering the AI HR / Sleepers / parlay engines.
+            # Underscore-prefixed so style_matchup_table / leaderboards hide them.
+            "_TestScore": ts,
+            "_Ceiling": cl,
+            "_ZoneFit": zf,
+            "_HRFormPct": hrf,
+            "_HRFormArrow": arrow,
+            "_kHR": khr,
+            "_HRSeason": safe_float(b_row.get("HR") if b_row is not None else None, 0),
+            "_Barrel%": safe_float(b_row.get("Barrel%") if b_row is not None else None, 8.0),
+            "_HardHit%": safe_float(b_row.get("HardHit%") if b_row is not None else None, 38.0),
+            "_Pull%": safe_float(b_row.get("Pull%") if b_row is not None else None, 40.0),
+            "_xISO": safe_float(b_row.get("xISO") if b_row is not None else None, 0.155),
+            "_PA": safe_float(b_row.get("pa") if b_row is not None else None, 0),
             "_player_id": pid,
             "_bat_side": r["bat_side"] or "",
-        })
+        }
+        row.update(hr_metrics)
+        rows.append(row)
     df = pd.DataFrame(rows)
     if not df.empty:
         df = df.sort_values("Spot").reset_index(drop=True)
@@ -2821,13 +2941,28 @@ def heat_hr_form_num(value):
     return heat_color(value, 25, 75)
 
 def style_matchup_table(df):
+    """Style the slate-wide leaderboard. Uses the canonical HR-focused metric
+    set: ISO, BARREL%, FLYBALL%, Ground Ball %, EV, Hard Hit %, HR/FB%,
+    PULL AIR%, LA, xwOBA, Sweet Spot% — matching the Matchup heat-map board.
+    Test Score / Ceiling / Zone Fit / kHR / HR Form / Barrel% / HardHit% /
+    raw HR columns are intentionally not displayed; they are carried on the
+    builder dataframe as underscore-prefixed internals for AI HR scoring.
+    """
     if df.empty: return df
-    # Hide internal columns from display
-    show_cols = [c for c in df.columns if c not in ("_HR Form Num", "_player_id", "_bat_side")]
+    show_cols = [c for c in df.columns if not str(c).startswith("_")]
     styler = df[show_cols].style.format({
-        "Matchup": "{:.3f}", "Test Score": "{:.3f}", "Ceiling": "{:.3f}",
-        "Zone Fit": "{:.3f}", "kHR": "{:.3f}",
-        "ISO": "{:.3f}", "Barrel%": "{:.1f}", "HardHit%": "{:.1f}", "HR": "{:.0f}",
+        "Matchup":    "{:.1f}",
+        "ISO":        "{:.3f}",
+        "Brl/BIP%":   "{:.1f}%",
+        "FB%":        "{:.1f}%",
+        "GB%":        "{:.1f}%",
+        "EV":         "{:.1f}",
+        "HH%":        "{:.1f}%",
+        "HR/FB%":     "{:.1f}%",
+        "PullAir%":   "{:.1f}%",
+        "LA":         "{:.1f}°",
+        "xwOBA":      "{:.3f}",
+        "SweetSpot%": "{:.1f}%",
     })
     base_text = [
         {"selector": "th", "props": [("color", "#0f172a"), ("font-size", "12px"),
@@ -2838,14 +2973,17 @@ def style_matchup_table(df):
                                      ("font-weight", "700"), ("padding", "6px 10px")]},
     ]
     styler = styler.set_table_styles(base_text)
-    if "Matchup"    in df.columns: styler = styler.map(heat_matchup,  subset=["Matchup"])
-    if "Test Score" in df.columns: styler = styler.map(heat_score,    subset=["Test Score"])
-    if "Ceiling"    in df.columns: styler = styler.map(heat_score,    subset=["Ceiling"])
-    if "Zone Fit"   in df.columns: styler = styler.map(heat_zone_fit, subset=["Zone Fit"])
-    if "kHR"        in df.columns: styler = styler.map(heat_score,    subset=["kHR"])
-    if "ISO"        in df.columns: styler = styler.map(heat_iso,      subset=["ISO"])
-    if "Barrel%"    in df.columns: styler = styler.map(heat_pct,      subset=["Barrel%"])
-    if "HardHit%"   in df.columns: styler = styler.map(heat_hardhit,  subset=["HardHit%"])
+    # Apply the same heat-map color ramp used by the Matchup heat-map board
+    # so the slate leaderboard and the per-game board read consistently.
+    def _ramp_styler(col):
+        def _f(v):
+            rgb, txt = _heatmap_color_for(col, v)
+            if rgb is None: return ""
+            return f"background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]}); color: {txt}; font-weight: 800;"
+        return _f
+    for col in df.columns:
+        if col in HEATMAP_THRESHOLDS and col in show_cols:
+            styler = styler.map(_ramp_styler(col), subset=[col])
     return styler
 
 def style_rolling_table(df):
@@ -4154,6 +4292,10 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df,
                 pull     = safe_float(b.get("Pull%"),    np.nan)
                 ev       = safe_float(b.get("EV"),       np.nan)
                 xiso     = safe_float(b.get("xISO"),     np.nan)
+                # Pull the canonical HR-focused metric set so the Sleepers
+                # display, the slate leaderboards, and the Matchup heat-map
+                # all show identical values for the same hitter.
+                _hr_metrics = compute_hr_metrics(b, _hr_league_table(_batters_df))
 
                 # Normalize each input to 0-100
                 n_barrel = _norm(barrel, 4.0, 18.0)
@@ -4198,6 +4340,16 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df,
                     "BPW HR%":    bpw["hr_pct"],
                     "BPW Icon":   bpw["icon"],
                     "BPW Tip":    bpw["tooltip"],
+                    # Canonical HR-focused metrics (same keys / values as the
+                    # Matchup heat-map board and the slate leaderboards).
+                    "Brl/BIP%":   _hr_metrics.get("Brl/BIP%"),
+                    "GB%":        _hr_metrics.get("GB%"),
+                    "HH%":        _hr_metrics.get("HH%"),
+                    "HR/FB%":     _hr_metrics.get("HR/FB%"),
+                    "PullAir%":   _hr_metrics.get("PullAir%"),
+                    "LA":         _hr_metrics.get("LA"),
+                    "xwOBA":      _hr_metrics.get("xwOBA"),
+                    "SweetSpot%": _hr_metrics.get("SweetSpot%"),
                 })
     df = pd.DataFrame(rows)
     if df.empty:
@@ -4256,6 +4408,11 @@ def render_hr_sleepers_html(df):
         try: return f"{float(v):.{n}f}"
         except: return "—"
 
+    def _fmt_deg(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+        try: return f"{float(v):.1f}°"
+        except: return "—"
+
     rows_html = []
     for i, r in df.iterrows():
         tier_cls, tier_label = _tier(r.get("Sleeper Score"))
@@ -4267,14 +4424,18 @@ def render_hr_sleepers_html(df):
             f'<td class="hrs-meta">{r.get("Game","")}<br/><span style="color:#475569;">vs {r.get("Opp SP","")}</span></td>'
             f'<td><span class="hrs-score">{r.get("Sleeper Score",0):.1f}</span> '
             f'<span class="hrs-pill {tier_cls}" style="margin-left:6px;">{tier_label}</span></td>'
-            f'<td class="hrs-num">{int(r.get("HR (Season)", 0))}</td>'
-            f'<td class="hrs-num">{_fmt_pct(r.get("Barrel%"))}</td>'
-            f'<td class="hrs-num">{_fmt_pct(r.get("HardHit%"))}</td>'
-            f'<td class="hrs-num">{_fmt_num(r.get("ISO"), 3)}</td>'
-            f'<td class="hrs-num">{_fmt_pct(r.get("FB%"))}</td>'
-            f'<td class="hrs-num">{_fmt_pct(r.get("Pull%"))}</td>'
             f'<td class="hrs-num">{_fmt_num(r.get("Matchup"), 1)}</td>'
-            f'<td class="hrs-num">{_fmt_num(r.get("kHR"), 2)}</td>'
+            f'<td class="hrs-num">{_fmt_num(r.get("ISO"), 3)}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("Brl/BIP%"))}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("FB%"))}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("GB%"))}</td>'
+            f'<td class="hrs-num">{_fmt_num(r.get("EV"), 1)}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("HH%"))}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("HR/FB%"))}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("PullAir%"))}</td>'
+            f'<td class="hrs-num">{_fmt_deg(r.get("LA"))}</td>'
+            f'<td class="hrs-num">{_fmt_num(r.get("xwOBA"), 3)}</td>'
+            f'<td class="hrs-num">{_fmt_pct(r.get("SweetSpot%"))}</td>'
             "</tr>"
         )
 
@@ -4282,8 +4443,9 @@ def render_hr_sleepers_html(df):
         '<div class="hrs-wrap"><table class="hrs-table">'
         '<thead><tr>'
         '<th>#</th><th>Hitter</th><th>Game</th><th>Sleeper</th>'
-        '<th>HR</th><th>Barrel%</th><th>HH%</th><th>ISO</th><th>FB%</th>'
-        '<th>Pull%</th><th>Matchup</th><th>kHR</th>'
+        '<th>Matchup</th><th>ISO</th><th>Barrel%</th><th>Flyball%</th>'
+        '<th>GB%</th><th>Exit Velo</th><th>Hard Hit%</th><th>HR/FB%</th>'
+        '<th>Pull Air%</th><th>Launch Angle</th><th>xwOBA</th><th>Sweet Spot%</th>'
         '</tr></thead><tbody>'
         + "".join(rows_html) +
         '</tbody></table></div>'
@@ -9996,10 +10158,19 @@ with tab_matchup:
             bat = r.get("_bat_side", "") or r.get("Bat", "")
             opp_pitcher = game_row["home_probable"] if team == game_row["away_abbr"] else game_row["away_probable"]
             matchup_v = r.get("Matchup", 0)
-            ceiling_v = r.get("Ceiling", 0)
-            zonefit_v = r.get("Zone Fit", 0)
-            khr_v     = r.get("kHR", 0)
-            hrform    = r.get("HR Form", "")
+            # Card stats now mirror the new HR-focused heat-map columns: the
+            # four most predictive of HR upside (ISO, Brl/BIP%, HR/FB%,
+            # PullAir%). No more Ceiling / Zone Fit / kHR / HR Form so the
+            # card lines up with the slate-wide leaderboard and the per-game
+            # heat-map board the user is now scanning.
+            iso_v     = r.get("ISO")
+            brl_v     = r.get("Brl/BIP%")
+            hrfb_v    = r.get("HR/FB%")
+            pullair_v = r.get("PullAir%")
+            def _fmt_card_num(v, fmt):
+                if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+                try: return fmt.format(float(v))
+                except Exception: return "—"
             # Player headshot from MLB CDN; fall back to initials disc when no id
             photo_url = player_headshot_url(r.get("_player_id"))
             if photo_url:
@@ -10056,10 +10227,10 @@ with tab_matchup:
                 f'</div>'
                 f'</div>'
                 f'<div class="top3-stats" style="margin-top:12px;">'
-                f'<div class="top3-stat"><span class="lab">Ceiling</span><span class="val">{ceiling_v:.1f}</span></div>'
-                f'<div class="top3-stat"><span class="lab">Zone Fit</span><span class="val">{zonefit_v:.3f}</span></div>'
-                f'<div class="top3-stat"><span class="lab">kHR</span><span class="val">{khr_v:.1f}</span></div>'
-                f'<div class="top3-stat"><span class="lab">HR Form</span><span class="val">{hrform}</span></div>'
+                f'<div class="top3-stat"><span class="lab">ISO</span><span class="val">{_fmt_card_num(iso_v, "{:.3f}")}</span></div>'
+                f'<div class="top3-stat"><span class="lab">Barrel%</span><span class="val">{_fmt_card_num(brl_v, "{:.1f}%")}</span></div>'
+                f'<div class="top3-stat"><span class="lab">HR/FB%</span><span class="val">{_fmt_card_num(hrfb_v, "{:.1f}%")}</span></div>'
+                f'<div class="top3-stat"><span class="lab">Pull Air%</span><span class="val">{_fmt_card_num(pullair_v, "{:.1f}%")}</span></div>'
                 f'</div>'
                 f'{crush_html}'
                 f'</div>'
@@ -10133,8 +10304,9 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
     ranked = df.sort_values(sort_col, ascending=not top).head(n).reset_index(drop=True)
     ranked.insert(0, "#", range(1, len(ranked) + 1))
     show_cols = [c for c in ["#", "Hitter", "Team", "Game", "Spot", "OppPitcher", "Crushes",
-                              "Matchup", "Test Score", "Ceiling", "Zone Fit", "HR Form", "kHR",
-                              "ISO", "Barrel%", "HardHit%"] if c in ranked.columns]
+                              "Matchup", "ISO", "Brl/BIP%", "FB%", "GB%", "EV", "HH%",
+                              "HR/FB%", "PullAir%", "LA", "xwOBA", "SweetSpot%", "Likely"]
+                 if c in ranked.columns]
     out = ranked[show_cols]
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
     st.dataframe(

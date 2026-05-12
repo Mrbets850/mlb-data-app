@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="MLB EDGE" />
+  <meta name="theme-color" content="#1a0a2e" />
+  <meta name="description" content="Premium MLB analytics and player prop betting intelligence." />
+
+  <title>THE MLB EDGE</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --purple-deep:  #1a0a2e;
+      --purple-mid:   #2d1557;
+      --purple-light: #7c3aed;
+      --gold:         #FFD700;
+      --gold-dim:     #c9a800;
+      --white:        #f5f5f5;
+    }
+
+    html, body {
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      background: var(--purple-deep);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    /* ── Splash screen ── */
+    #splash {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      background: var(--purple-deep);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      transition: opacity 0.5s ease;
+    }
+    #splash img {
+      width: 140px;
+      height: 140px;
+      border-radius: 28px;
+      box-shadow: 0 0 40px rgba(255,215,0,0.35);
+    }
+    #splash h1 {
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      color: var(--gold);
+      text-transform: uppercase;
+    }
+    #splash p {
+      font-size: 0.85rem;
+      color: rgba(255,215,0,0.55);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid rgba(255,215,0,0.2);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-top: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #splash.hidden { opacity: 0; pointer-events: none; }
+
+    /* ── Install banner ── */
+    #install-banner {
+      position: fixed;
+      bottom: 0;
+      left: 0; right: 0;
+      z-index: 998;
+      background: var(--purple-mid);
+      border-top: 1px solid rgba(255,215,0,0.25);
+      padding: 14px 20px;
+      display: none;
+      align-items: center;
+      gap: 14px;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
+    }
+    #install-banner.visible { display: flex; }
+    #install-banner img { width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0; }
+    #install-banner .text { flex: 1; }
+    #install-banner .text strong { display: block; color: var(--gold); font-size: 0.9rem; }
+    #install-banner .text span { color: rgba(255,255,255,0.6); font-size: 0.75rem; }
+    #install-btn {
+      background: var(--gold);
+      color: var(--purple-deep);
+      font-weight: 800;
+      font-size: 0.85rem;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    #dismiss-btn {
+      background: none;
+      border: none;
+      color: rgba(255,255,255,0.4);
+      font-size: 1.3rem;
+      cursor: pointer;
+      padding: 4px 6px;
+      flex-shrink: 0;
+    }
+
+    /* ── iOS install tip ── */
+    #ios-tip {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      z-index: 998;
+      background: var(--purple-mid);
+      border-top: 1px solid rgba(255,215,0,0.25);
+      padding: 16px 20px;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
+    }
+    #ios-tip.visible { display: flex; }
+    #ios-tip p { color: var(--white); font-size: 0.85rem; line-height: 1.5; }
+    #ios-tip p span { color: var(--gold); font-weight: 700; }
+    #ios-close {
+      align-self: flex-end;
+      background: none;
+      border: 1px solid rgba(255,215,0,0.3);
+      color: var(--gold);
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+
+    /* ── Main iframe ── */
+    #app-frame {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: var(--purple-deep);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Splash -->
+  <div id="splash">
+    <img src="icons/icon-192.png" alt="THE MLB EDGE logo" />
+    <h1>The MLB Edge</h1>
+    <p>Analytics &amp; Player Props</p>
+    <div class="spinner"></div>
+  </div>
+
+  <!-- Android install banner -->
+  <div id="install-banner">
+    <img src="icons/icon-192.png" alt="icon" />
+    <div class="text">
+      <strong>THE MLB EDGE</strong>
+      <span>Install for quick access</span>
+    </div>
+    <button id="install-btn">Install</button>
+    <button id="dismiss-btn" aria-label="Dismiss">✕</button>
+  </div>
+
+  <!-- iOS install tip -->
+  <div id="ios-tip">
+    <p>To install <span>THE MLB EDGE</span> on your iPhone:<br>
+    Tap the <span>Share ⬆</span> button in Safari, then choose <span>"Add to Home Screen"</span>.</p>
+    <button id="ios-close">Got it</button>
+  </div>
+
+  <!-- Streamlit app -->
+  <iframe
+    id="app-frame"
+    src="https://mrbets850.streamlit.app/?embed=true&embed_options=hide_loading_screen,show_colored_line"
+    title="THE MLB EDGE"
+    allow="fullscreen"
+    loading="eager"
+  ></iframe>
+
+  <script>
+    // ── Service worker ──
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./service-worker.js');
+    }
+
+    // ── Hide splash when iframe loads ──
+    const frame = document.getElementById('app-frame');
+    const splash = document.getElementById('splash');
+    frame.addEventListener('load', () => {
+      setTimeout(() => splash.classList.add('hidden'), 600);
+    });
+    // Fallback: hide splash after 6s regardless
+    setTimeout(() => splash.classList.add('hidden'), 6000);
+
+    // ── Install prompt (Android / Chrome) ──
+    let deferredPrompt;
+    const banner = document.getElementById('install-banner');
+    const installBtn = document.getElementById('install-btn');
+    const dismissBtn = document.getElementById('dismiss-btn');
+
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      deferredPrompt = e;
+      banner.classList.add('visible');
+    });
+
+    installBtn.addEventListener('click', async () => {
+      banner.classList.remove('visible');
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
+        deferredPrompt = null;
+      }
+    });
+
+    dismissBtn.addEventListener('click', () => banner.classList.remove('visible'));
+
+    // ── iOS tip (Safari) ──
+    const iosTip = document.getElementById('ios-tip');
+    const iosClose = document.getElementById('ios-close');
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isSafari = /safari/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent);
+    const isStandalone = window.navigator.standalone === true;
+
+    if (isIOS && isSafari && !isStandalone) {
+      setTimeout(() => iosTip.classList.add('visible'), 3000);
+    }
+    iosClose.addEventListener('click', () => iosTip.classList.remove('visible'));
+  </script>
+</body>
+</html>

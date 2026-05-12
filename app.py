@@ -3948,6 +3948,31 @@ def _fetch_pitcher_throws(player_id: int) -> str:
     except Exception:
         return ""
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_pitcher_throws_batch(player_ids: tuple) -> dict:
+    """Batch-fetch handedness for a tuple of pitcher IDs in a single MLB
+    StatsAPI /people call. Returns {player_id: 'L'|'R'|''}. Deduped and
+    cached as a frozen tuple key so the slate view never makes one request
+    per displayed hitter. Empty/zero IDs are filtered out."""
+    ids = sorted({int(p) for p in player_ids if p})
+    if not ids:
+        return {}
+    out: dict = {pid: "" for pid in ids}
+    try:
+        r = requests.get(
+            "https://statsapi.mlb.com/api/v1/people",
+            params={"personIds": ",".join(str(p) for p in ids)},
+            headers=HEADERS, timeout=20,
+        )
+        r.raise_for_status()
+        for person in r.json().get("people", []):
+            pid = person.get("id")
+            if pid in out:
+                out[pid] = person.get("pitchHand", {}).get("code", "") or ""
+    except Exception:
+        pass
+    return out
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _fetch_pitcher_season_stats(player_id: int, season: int) -> dict:
     """Fall back to MLB StatsAPI per-pitcher season pitching stats when the
@@ -11258,6 +11283,11 @@ with tab_day_night:
                 day_game_count = 0
                 night_game_count = 0
                 tbd_game_count = 0
+                # Side -> (own probable key, opp probable key, opp probable id key)
+                _side_pitcher_keys = {
+                    "away_abbr": ("home_probable", "home_probable_id"),
+                    "home_abbr": ("away_probable", "away_probable_id"),
+                }
                 for _, _g in _slate_dn_df.iterrows():
                     _dn = (_g.get("day_night") or "").lower()
                     if _dn == "day":
@@ -11271,13 +11301,34 @@ with tab_day_night:
                         _tm = _g.get(_side, "")
                         if not _tm:
                             continue
+                        _opp_p_name_key, _opp_p_id_key = _side_pitcher_keys[_side]
                         team_to_game[_tm] = {
                             "day_night": _dn,
                             "opp_abbr": _g.get(_opp, ""),
                             "game_time_ct": _g.get("time_short", ""),
                             "short_label": _g.get("short_label", ""),
                             "status": _g.get("status", ""),
+                            "opp_sp_name": _g.get(_opp_p_name_key, "") or "",
+                            "opp_sp_id": _g.get(_opp_p_id_key) or 0,
                         }
+
+                # Batch-fetch handedness for every distinct probable starter on
+                # the slate in a single MLB StatsAPI /people call. Avoids one
+                # request per displayed hitter and caches the result for an
+                # hour. Missing/TBD pitchers fall through as "".
+                _opp_pid_set = {
+                    int(g["opp_sp_id"]) for g in team_to_game.values()
+                    if g.get("opp_sp_id")
+                }
+                try:
+                    _opp_hand_map = _fetch_pitcher_throws_batch(
+                        tuple(sorted(_opp_pid_set))
+                    )
+                except Exception:
+                    _opp_hand_map = {}
+                for _tm, _info in team_to_game.items():
+                    _pid = int(_info.get("opp_sp_id") or 0)
+                    _info["opp_sp_hand"] = _opp_hand_map.get(_pid, "") if _pid else ""
 
                 # Slate-overview caption — instantly tells the handicapper
                 # whether to lean day or night before reading the table.
@@ -11288,13 +11339,30 @@ with tab_day_night:
                     _slate_summary_bits.append(f"🌙 {night_game_count} night")
                 if tbd_game_count:
                     _slate_summary_bits.append(f"⏳ {tbd_game_count} TBD")
+                # Count probable starters posted / TBD across the slate so
+                # the user can see at a glance how much of the matchup grid
+                # is grounded in real probables.
+                _sp_posted = sum(
+                    1 for _info in team_to_game.values()
+                    if _info.get("opp_sp_name") and _info["opp_sp_name"] != "TBD"
+                )
+                _sp_total = len(team_to_game)
+                _sp_tbd = _sp_total - _sp_posted
                 st.markdown(
                     f"<div style='color:#475569;font-size:0.9rem;margin:-2px 0 8px 0;'>"
                     f"<b>Slate {selected_date}</b> · {len(_slate_dn_df)} games · "
-                    f"{' · '.join(_slate_summary_bits) if _slate_summary_bits else 'no day/night data yet'}"
+                    f"{' · '.join(_slate_summary_bits) if _slate_summary_bits else 'no day/night data yet'} · "
+                    f"🎯 {_sp_posted}/{_sp_total} probable SPs posted"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
+                if _sp_tbd and _sp_posted < _sp_total:
+                    st.info(
+                        f"ℹ️ {_sp_tbd} of {_sp_total} matchups still show a "
+                        f"TBD opposing starter. Opp SP Hand will fill in as "
+                        f"MLB posts probables — usually 18–36 hours before "
+                        f"first pitch."
+                    )
 
                 # Optional slate-only day/night filter
                 _slate_dn_filter = st.radio(
@@ -11329,6 +11397,12 @@ with tab_day_night:
                     )
                     slate_view["game"] = slate_view["team_abbr"].map(
                         lambda t: team_to_game.get(t, {}).get("short_label", "")
+                    )
+                    slate_view["opp_sp_name"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("opp_sp_name", "")
+                    )
+                    slate_view["opp_sp_hand"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("opp_sp_hand", "")
                     )
 
                     if _slate_dn_filter == "Day games only":
@@ -11396,12 +11470,31 @@ with tab_day_night:
                             na_position="last",
                         ).head(int(dn_top_n))
 
+                        def _fmt_opp_sp(name: str) -> str:
+                            n = (name or "").strip()
+                            if not n or n.upper() == "TBD":
+                                return "TBD"
+                            return n
+
+                        def _fmt_matchup(hand: str) -> str:
+                            h = (hand or "").upper()
+                            if h == "R":
+                                return "vs RHP"
+                            if h == "L":
+                                return "vs LHP"
+                            return "TBD"
+
                         disp = pd.DataFrame({
                             "Player": qualified["player"],
                             "Team": qualified["team_abbr"],
                             "Opp": qualified["opp_abbr"].apply(
                                 lambda v: f"vs {v}" if v else "—"
                             ),
+                            "Opp SP": qualified["opp_sp_name"].apply(_fmt_opp_sp),
+                            "Opp SP Hand": qualified["opp_sp_hand"].apply(
+                                lambda h: (h or "").upper() if (h or "").upper() in ("L", "R") else "—"
+                            ),
+                            "Matchup": qualified["opp_sp_hand"].apply(_fmt_matchup),
                             "Game Time (CT)": qualified["game_time"].fillna("—"),
                             "Bucket": qualified["bucket"].map(
                                 {"day": "☀️ Day", "night": "🌙 Night"}
@@ -11416,6 +11509,52 @@ with tab_day_night:
                             ),
                         }).reset_index(drop=True)
                         disp.insert(0, "#", range(1, len(disp) + 1))
+
+                        # ----- Quick-look summary metrics -----
+                        # Surface the top overall target plus the best day-game
+                        # and best night-game target so the handicapper sees
+                        # the headline plays without scrolling the table.
+                        _top_overall = qualified.iloc[0] if len(qualified) else None
+                        _day_qual = qualified[qualified["bucket"] == "day"]
+                        _night_qual = qualified[qualified["bucket"] == "night"]
+                        _top_day = _day_qual.iloc[0] if len(_day_qual) else None
+                        _top_night = _night_qual.iloc[0] if len(_night_qual) else None
+
+                        def _fmt_top(row) -> str:
+                            if row is None:
+                                return "—"
+                            try:
+                                return (
+                                    f"{row['player']} ({row['team_abbr']}) · "
+                                    f"{float(row['target_score']):.2f}"
+                                )
+                            except Exception:
+                                return "—"
+
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric(
+                            "Qualified hitters",
+                            f"{len(qualified)}",
+                            help=(
+                                f"Hitters from {len(_slate_teams)} slate teams "
+                                f"clearing the {dn_min_pa}-PA bucket floor."
+                            ),
+                        )
+                        m2.metric(
+                            "🏆 Top target",
+                            _fmt_top(_top_overall),
+                            help="Highest Target Score across the filtered slate.",
+                        )
+                        m3.metric(
+                            "☀️ Top day target",
+                            _fmt_top(_top_day),
+                            help="Best target playing a day game today.",
+                        )
+                        m4.metric(
+                            "🌙 Top night target",
+                            _fmt_top(_top_night),
+                            help="Best target playing a night game today.",
+                        )
 
                         st.markdown(
                             '<div style="font-weight:800;color:#0f172a;margin:4px 0 6px 0;">'
@@ -11440,9 +11579,16 @@ with tab_day_night:
 
                         st.caption(
                             "**Target Score** = `HR/PA × 100 + OPS × 4 × min(1, PA/200)`. "
-                            "Bucket auto-locks to each game's MLB-official "
-                            "day/night classification. Hitters on TBD-bucket "
-                            "games are hidden until MLB posts the start time."
+                            "HR/PA is the backbone (the prop-friendly rate); "
+                            "OPS adds a small contact-quality nudge weighted by "
+                            "PA so tiny-sample sluggers don't outrank stable bats. "
+                            "**Opp SP / Opp SP Hand / Matchup** come from the "
+                            "MLB schedule's probable pitchers + the StatsAPI "
+                            "/people endpoint for throwing hand (batch-fetched "
+                            "and cached for an hour). Bucket auto-locks to each "
+                            "game's MLB-official day/night classification. "
+                            "Hitters on TBD-bucket games are hidden until MLB "
+                            "posts the start time; TBD pitchers show as `TBD`."
                         )
 
         else:  # "Biggest Splits"

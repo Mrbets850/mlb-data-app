@@ -10607,7 +10607,7 @@ with tab_matchup:
         top3 = combined_for_ranking.sort_values("Matchup", ascending=False).head(3).reset_index(drop=True)
         _power_combo_img = os.path.join(ASSETS_DIR, "homerun_power_combo.jpeg")
         if os.path.exists(_power_combo_img):
-            st.image(_power_combo_img, use_container_width=True)
+            st.image(_power_combo_img, width="stretch")
         st.markdown('<div class="section-title" style="margin-top:18px;">🔥 Top 3 Hitters — This Game</div>', unsafe_allow_html=True)
         st.markdown(
             '<style>'

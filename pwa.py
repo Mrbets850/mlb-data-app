@@ -21,7 +21,6 @@ serving service-worker.js at root scope).
 from __future__ import annotations
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 # Raw GitHub CDN base for all PWA static assets we commit under `static/`.
@@ -107,7 +106,8 @@ def inject_pwa_head_tags() -> None:
     </script>
     """
     # height=0 keeps the iframe invisible; it only exists to run the script.
-    components.html(html, height=0, width=0)
+    # st.iframe auto-detects an HTML string here (not a URL/path) and embeds it.
+    st.iframe(html, height=0, width=0)
 
 
 # ---------------------------------------------------------------------------

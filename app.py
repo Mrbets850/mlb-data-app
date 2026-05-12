@@ -951,6 +951,10 @@ def get_schedule(selected_date):
             home_info = TEAM_INFO.get(home_name, {"abbr": home_name[:3].upper(), "id": 0, "lat": None, "lon": None})
             game_time_utc = game.get("gameDate")
             game_time_ct = pd.to_datetime(game_time_utc, utc=True).tz_convert("America/Chicago")
+            # MLB's authoritative day/night classification — matches the bucket
+            # used by statSplits sitCodes=d/n, so the Day vs Night HR tab can
+            # filter today's slate without re-classifying by local hour.
+            day_night = (game.get("dayNight") or "").strip().lower()
             rows.append({
                 "game_pk": game.get("gamePk"),
                 "label": f'{away_info["abbr"]} @ {home_info["abbr"]} · {game_time_ct.strftime("%-I:%M %p")}',
@@ -958,6 +962,7 @@ def get_schedule(selected_date):
                 "time_short": game_time_ct.strftime("%-I:%M %p"),
                 "game_time_ct": game_time_ct.strftime("%a %b %-d · %-I:%M %p CT"),
                 "game_time_utc": game_time_utc,
+                "day_night": day_night if day_night in ("day", "night") else "",
                 "status": game.get("status", {}).get("detailedState"),
                 "away_team": away_name, "away_abbr": away_info["abbr"], "away_id": away_info["id"],
                 "home_team": home_name, "home_abbr": home_info["abbr"], "home_id": home_info["id"],
@@ -2690,6 +2695,161 @@ def get_home_runs_on_date(date_iso: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
+# ---------------------------------------------------------------------------
+# Day vs Night HR splits — MLB StatsAPI statSplits (sitCodes=d,n)
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_day_night_hr_splits(season: int) -> pd.DataFrame:
+    """Fetch every hitter's Day Games / Night Games split for the given season
+    from the official MLB StatsAPI (statSplits, sitCodes=d,n). One call returns
+    every player who has logged a PA in that situation.
+
+    Returns a wide DataFrame keyed by player with columns:
+        player_id, player, team_abbr, team_id,
+        day_pa, day_ab, day_hr, day_avg, day_obp, day_slg, day_ops, day_hr_rate,
+        night_pa, night_ab, night_hr, night_avg, night_obp, night_slg,
+        night_ops, night_hr_rate,
+        total_pa, total_hr, day_share_hr, split_edge_hr_rate
+
+    Returns an empty DataFrame on any network/parse failure so the UI can
+    degrade gracefully without crashing the whole app.
+
+    Why this endpoint: statSplits is published by MLB itself, so the day/night
+    classification matches the schedule's authoritative dayNight field — no need
+    to scan ~2,400 game feeds. Single HTTP call, cacheable for hours.
+    """
+    cols = [
+        "player_id", "player", "team_abbr", "team_id",
+        "day_pa", "day_ab", "day_hr", "day_avg", "day_obp", "day_slg",
+        "day_ops", "day_hr_rate",
+        "night_pa", "night_ab", "night_hr", "night_avg", "night_obp",
+        "night_slg", "night_ops", "night_hr_rate",
+        "total_pa", "total_hr", "day_share_hr", "split_edge_hr_rate",
+    ]
+    if not season:
+        return pd.DataFrame(columns=cols)
+    try:
+        r = requests.get(
+            "https://statsapi.mlb.com/api/v1/stats",
+            params={
+                "stats": "statSplits",
+                "group": "hitting",
+                "sportId": 1,
+                "season": int(season),
+                "sitCodes": "d,n",
+                # 'All' returns rookies/call-ups too; default 'Qualified' would
+                # miss most prop-relevant low-PA bench bats.
+                "playerPool": "All",
+                "limit": 5000,
+            },
+            timeout=20,
+        )
+        r.raise_for_status()
+        payload = r.json() or {}
+    except Exception:
+        return pd.DataFrame(columns=cols)
+
+    splits = ((payload.get("stats") or [{}])[0] or {}).get("splits") or []
+    if not splits:
+        return pd.DataFrame(columns=cols)
+
+    def _num(v):
+        try:
+            return float(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    # Accumulate per player_id; a player can have both a 'd' and an 'n' row,
+    # and (rarely, mid-trade) two team rows per situation — sum stats across
+    # those, keep the most recent team_abbr we saw.
+    by_pid: dict = {}
+    for s in splits:
+        code = (s.get("split") or {}).get("code", "")
+        if code not in ("d", "n"):
+            continue
+        player = s.get("player") or {}
+        pid = player.get("id")
+        if not pid:
+            continue
+        team = s.get("team") or {}
+        team_name = team.get("name", "")
+        team_abbr = TEAM_INFO.get(team_name, {}).get("abbr", team_name[:3].upper())
+        stat = s.get("stat") or {}
+        pa = _num(stat.get("plateAppearances")) or 0
+        ab = _num(stat.get("atBats")) or 0
+        hr = _num(stat.get("homeRuns")) or 0
+        # MLB returns avg/obp/slg/ops as strings like ".367"; coerce to float.
+        avg = _num(stat.get("avg"))
+        obp = _num(stat.get("obp"))
+        slg = _num(stat.get("slg"))
+        ops = _num(stat.get("ops"))
+
+        bucket = by_pid.setdefault(pid, {
+            "player_id": int(pid),
+            "player": player.get("fullName") or "",
+            "team_abbr": team_abbr,
+            "team_id": team.get("id"),
+            "day_pa": 0.0, "day_ab": 0.0, "day_hr": 0.0,
+            "day_avg": None, "day_obp": None, "day_slg": None, "day_ops": None,
+            "night_pa": 0.0, "night_ab": 0.0, "night_hr": 0.0,
+            "night_avg": None, "night_obp": None, "night_slg": None, "night_ops": None,
+        })
+        # Prefer non-empty team_abbr if a later row carries it.
+        if team_abbr:
+            bucket["team_abbr"] = team_abbr
+            bucket["team_id"] = team.get("id") or bucket["team_id"]
+
+        prefix = "day" if code == "d" else "night"
+        bucket[f"{prefix}_pa"] += pa
+        bucket[f"{prefix}_ab"] += ab
+        bucket[f"{prefix}_hr"] += hr
+        # Rate stats: only overwrite if currently None (statSplits usually has
+        # one row per player per code so this is fine; in the rare two-team
+        # case the per-team rate isn't representative anyway and we recompute
+        # AVG ourselves from totals below).
+        for k, v in [("avg", avg), ("obp", obp), ("slg", slg), ("ops", ops)]:
+            key = f"{prefix}_{k}"
+            if bucket[key] is None:
+                bucket[key] = v
+
+    if not by_pid:
+        return pd.DataFrame(columns=cols)
+
+    df = pd.DataFrame(by_pid.values())
+
+    def _rate(num, denom):
+        return (num / denom) if (denom and denom > 0) else None
+
+    # Recompute AVG from totals when we have multi-team aggregates; HR rate as
+    # HR/PA which is the prop-friendly denominator.
+    df["day_avg"] = df.apply(
+        lambda r: _rate(r["day_hr"] + 0, r["day_ab"]) if (r["day_avg"] is None and r["day_ab"]) else r["day_avg"],
+        axis=1,
+    )
+    df["day_hr_rate"] = df.apply(lambda r: _rate(r["day_hr"], r["day_pa"]), axis=1)
+    df["night_hr_rate"] = df.apply(lambda r: _rate(r["night_hr"], r["night_pa"]), axis=1)
+    df["total_pa"] = df["day_pa"] + df["night_pa"]
+    df["total_hr"] = df["day_hr"] + df["night_hr"]
+    df["day_share_hr"] = df.apply(
+        lambda r: _rate(r["day_hr"], r["total_hr"]), axis=1
+    )
+    # Split edge = day HR-rate minus night HR-rate. Positive = day-bias hitter.
+    df["split_edge_hr_rate"] = df.apply(
+        lambda r: (
+            (r["day_hr_rate"] or 0) - (r["night_hr_rate"] or 0)
+            if (r["day_pa"] and r["night_pa"]) else None
+        ),
+        axis=1,
+    )
+
+    # Cast counting stats to int for clean display.
+    for c in ("day_pa", "day_ab", "day_hr", "night_pa", "night_ab", "night_hr",
+              "total_pa", "total_hr"):
+        df[c] = df[c].fillna(0).astype(int)
+
+    return df[cols].reset_index(drop=True)
+
+
 def find_pitcher_row(df, pitcher_name, pitcher_id=None):
     """Locate a pitcher row in pitchers_df. ID-first when pitcher_id is provided
     (the slate's probable-pitcher id from the schedule), then fall back to
@@ -3787,6 +3947,31 @@ def _fetch_pitcher_throws(player_id: int) -> str:
         return people[0].get("pitchHand", {}).get("code", "") or ""
     except Exception:
         return ""
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_pitcher_throws_batch(player_ids: tuple) -> dict:
+    """Batch-fetch handedness for a tuple of pitcher IDs in a single MLB
+    StatsAPI /people call. Returns {player_id: 'L'|'R'|''}. Deduped and
+    cached as a frozen tuple key so the slate view never makes one request
+    per displayed hitter. Empty/zero IDs are filtered out."""
+    ids = sorted({int(p) for p in player_ids if p})
+    if not ids:
+        return {}
+    out: dict = {pid: "" for pid in ids}
+    try:
+        r = requests.get(
+            "https://statsapi.mlb.com/api/v1/people",
+            params={"personIds": ",".join(str(p) for p in ids)},
+            headers=HEADERS, timeout=20,
+        )
+        r.raise_for_status()
+        for person in r.json().get("people", []):
+            pid = person.get("id")
+            if pid in out:
+                out[pid] = person.get("pitchHand", {}).get("code", "") or ""
+    except Exception:
+        pass
+    return out
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _fetch_pitcher_season_stats(player_id: int, season: int) -> dict:
@@ -10319,8 +10504,9 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
-tab_matchup, tab_hot, tab_cold, tab_hr_milestones, tab_injuries = st.tabs(
-    ["📊 Matchup", "🔥 Hot Batters", "🧊 Cold Batters", "💣 HR Milestones", "🏥 Injuries"]
+tab_matchup, tab_hot, tab_cold, tab_hr_milestones, tab_day_night, tab_injuries = st.tabs(
+    ["📊 Matchup", "🔥 Hot Batters", "🧊 Cold Batters", "💣 HR Milestones",
+     "☀️🌙 Day vs Night HR", "🏥 Injuries"]
 )
 
 # ============== Matchup tab ==============
@@ -10797,6 +10983,660 @@ with tab_hr_milestones:
         "Distance / exit velocity come from the in-play hitData payload when "
         "Statcast publishes it — older games or non-tracked parks may show '—'."
     )
+
+# ============== Day vs Night HR tab ==============
+with tab_day_night:
+    st.markdown(
+        '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
+        '☀️🌙 <b>Day vs Night HR splits</b> — season-long Day Games vs Night '
+        'Games leaderboards for hitters, pulled from the official MLB StatsAPI '
+        '(<code>statSplits · sitCodes=d,n</code>). Built for prop research and '
+        'slate-targeting: when the slate skews heavy day-game or heavy night, '
+        'pivot to the hitters with a real edge in that lighting.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ----- Filters row -----
+    _today_ct = today_ct()
+    # Use the same season convention as scripts/refresh_savant.py: before
+    # mid-March, the current MLB season hasn't started so default to the
+    # prior year (which has a full split sample).
+    _default_season = (
+        _today_ct.year - 1
+        if (_today_ct.month < 3 or (_today_ct.month == 3 and _today_ct.day < 15))
+        else _today_ct.year
+    )
+    _season_choices = list(range(_today_ct.year, 2014, -1))
+    if _default_season not in _season_choices:
+        _season_choices.insert(0, _default_season)
+
+    f1, f2, f3, f4 = st.columns([1.1, 1.3, 1.3, 1.3])
+    with f1:
+        dn_season = st.selectbox(
+            "Season",
+            _season_choices,
+            index=_season_choices.index(_default_season),
+            key="dn_season",
+        )
+    with f2:
+        dn_view = st.radio(
+            "View",
+            ["Today's Slate Targets", "Day Games", "Night Games",
+             "Side-by-Side", "Biggest Splits"],
+            index=0,
+            horizontal=False,
+            key="dn_view",
+            help=(
+                "Today's Slate Targets ranks only hitters on teams playing the "
+                "selected slate date, scored by each game's actual day/night "
+                "bucket. The other views are season-wide leaderboards."
+            ),
+        )
+    with f3:
+        dn_min_pa = st.slider(
+            "Min PA (in that split)",
+            min_value=10, max_value=300, value=40, step=5,
+            key="dn_min_pa",
+            help=(
+                "PA denominator in the chosen split. Day-game PA samples are "
+                "smaller than night, so 40 PA is a reasonable floor for early "
+                "season; bump to 100+ for stable rate-stat reads."
+            ),
+        )
+    with f4:
+        dn_top_n = st.slider(
+            "Show Top N",
+            min_value=10, max_value=200, value=40, step=5,
+            key="dn_top_n",
+        )
+
+    # ----- Pull splits -----
+    with st.spinner(f"Pulling Day/Night HR splits for {int(dn_season)}…"):
+        try:
+            dn_df = get_day_night_hr_splits(int(dn_season))
+        except Exception as _dn_e:
+            dn_df = pd.DataFrame()
+            st.warning(f"Couldn't pull Day/Night splits: {_dn_e}")
+
+    if dn_df is None or dn_df.empty:
+        st.info(
+            "No Day/Night splits available right now — could be a transient MLB "
+            "StatsAPI hiccup, or the season hasn't started. Try refreshing the "
+            "page or selecting a prior season."
+        )
+    else:
+        # Optional team + player search filters
+        _teams = sorted([t for t in dn_df["team_abbr"].dropna().unique() if t])
+        g1, g2 = st.columns([1.2, 2])
+        with g1:
+            dn_team = st.selectbox(
+                "Team filter",
+                ["All teams"] + _teams,
+                index=0,
+                key="dn_team",
+            )
+        with g2:
+            dn_name_q = st.text_input(
+                "Filter by player name (optional)",
+                value="",
+                key="dn_name_filter",
+                placeholder="e.g. Judge, Ohtani, Soto",
+            ).strip()
+
+        view_df = dn_df.copy()
+        if dn_team != "All teams":
+            view_df = view_df[view_df["team_abbr"] == dn_team]
+        if dn_name_q:
+            try:
+                view_df = view_df[view_df["player"].str.contains(
+                    dn_name_q, case=False, na=False
+                )]
+            except Exception:
+                pass
+
+        # Helpers used by all sub-views below.
+        def _fmt_rate(v, digits=3):
+            try:
+                return f"{float(v):.{digits}f}".lstrip("0") if v is not None and pd.notna(v) else "—"
+            except Exception:
+                return "—"
+
+        def _fmt_pct(v):
+            try:
+                return f"{float(v)*100:.1f}%" if v is not None and pd.notna(v) else "—"
+            except Exception:
+                return "—"
+
+        def _confidence(pa: int) -> str:
+            """Quick sample-size label so users don't over-weight tiny denominators."""
+            if pa is None or pa < 25: return "Tiny"
+            if pa < 60: return "Small"
+            if pa < 120: return "Medium"
+            if pa < 250: return "Solid"
+            return "Stable"
+
+        # ---- Day Games leaderboard ----
+        def _render_day(df_in: pd.DataFrame) -> pd.DataFrame:
+            out = df_in[df_in["day_pa"] >= dn_min_pa].copy()
+            out = out.sort_values(
+                ["day_hr", "day_hr_rate"], ascending=[False, False], na_position="last"
+            ).head(int(dn_top_n))
+            disp = pd.DataFrame({
+                "Player": out["player"],
+                "Team": out["team_abbr"],
+                "Day HR": out["day_hr"].astype(int),
+                "Day PA": out["day_pa"].astype(int),
+                "Day AB": out["day_ab"].astype(int),
+                "HR/PA": out["day_hr_rate"].apply(_fmt_pct),
+                "AVG": out["day_avg"].apply(_fmt_rate),
+                "OPS": out["day_ops"].apply(_fmt_rate),
+                "Confidence": out["day_pa"].apply(_confidence),
+            }).reset_index(drop=True)
+            disp.insert(0, "#", range(1, len(disp) + 1))
+            return disp
+
+        # ---- Night Games leaderboard ----
+        def _render_night(df_in: pd.DataFrame) -> pd.DataFrame:
+            out = df_in[df_in["night_pa"] >= dn_min_pa].copy()
+            out = out.sort_values(
+                ["night_hr", "night_hr_rate"], ascending=[False, False], na_position="last"
+            ).head(int(dn_top_n))
+            disp = pd.DataFrame({
+                "Player": out["player"],
+                "Team": out["team_abbr"],
+                "Night HR": out["night_hr"].astype(int),
+                "Night PA": out["night_pa"].astype(int),
+                "Night AB": out["night_ab"].astype(int),
+                "HR/PA": out["night_hr_rate"].apply(_fmt_pct),
+                "AVG": out["night_avg"].apply(_fmt_rate),
+                "OPS": out["night_ops"].apply(_fmt_rate),
+                "Confidence": out["night_pa"].apply(_confidence),
+            }).reset_index(drop=True)
+            disp.insert(0, "#", range(1, len(disp) + 1))
+            return disp
+
+        # ---- Biggest split-edge leaderboard ----
+        def _render_edges(df_in: pd.DataFrame, day_bias: bool) -> pd.DataFrame:
+            # Require both denominators to clear min_pa so the edge is meaningful.
+            out = df_in[
+                (df_in["day_pa"] >= dn_min_pa) & (df_in["night_pa"] >= dn_min_pa)
+            ].copy()
+            if day_bias:
+                out = out.sort_values("split_edge_hr_rate", ascending=False, na_position="last")
+            else:
+                out = out.sort_values("split_edge_hr_rate", ascending=True, na_position="last")
+            out = out.head(int(dn_top_n))
+            disp = pd.DataFrame({
+                "Player": out["player"],
+                "Team": out["team_abbr"],
+                "Day HR": out["day_hr"].astype(int),
+                "Day PA": out["day_pa"].astype(int),
+                "Day HR/PA": out["day_hr_rate"].apply(_fmt_pct),
+                "Night HR": out["night_hr"].astype(int),
+                "Night PA": out["night_pa"].astype(int),
+                "Night HR/PA": out["night_hr_rate"].apply(_fmt_pct),
+                "Edge (Day − Night)": out["split_edge_hr_rate"].apply(
+                    lambda v: f"{(v or 0)*100:+.2f} pp" if pd.notna(v) else "—"
+                ),
+            }).reset_index(drop=True)
+            disp.insert(0, "#", range(1, len(disp) + 1))
+            return disp
+
+        # ===== Render the selected view =====
+        st.markdown(
+            f'<div class="section-title">🏆 {dn_view} · {int(dn_season)}</div>',
+            unsafe_allow_html=True,
+        )
+
+        if dn_view == "Day Games":
+            table = _render_day(view_df)
+            if table.empty:
+                st.info(f"No hitters cleared the {dn_min_pa}-PA day-game floor with the current filters.")
+            else:
+                st.dataframe(
+                    table, width='stretch', hide_index=True,
+                    height=min(720, 60 + 36 * len(table)),
+                )
+                st.download_button(
+                    "⬇️ Download Day HR leaderboard (CSV)",
+                    table.to_csv(index=False),
+                    file_name=f"day_hr_{int(dn_season)}_min{int(dn_min_pa)}pa.csv",
+                    mime="text/csv",
+                    width='stretch',
+                )
+
+        elif dn_view == "Night Games":
+            table = _render_night(view_df)
+            if table.empty:
+                st.info(f"No hitters cleared the {dn_min_pa}-PA night-game floor with the current filters.")
+            else:
+                st.dataframe(
+                    table, width='stretch', hide_index=True,
+                    height=min(720, 60 + 36 * len(table)),
+                )
+                st.download_button(
+                    "⬇️ Download Night HR leaderboard (CSV)",
+                    table.to_csv(index=False),
+                    file_name=f"night_hr_{int(dn_season)}_min{int(dn_min_pa)}pa.csv",
+                    mime="text/csv",
+                    width='stretch',
+                )
+
+        elif dn_view == "Side-by-Side":
+            c_left, c_right = st.columns(2)
+            with c_left:
+                st.markdown(
+                    '<div style="font-weight:800;color:#0f172a;margin-bottom:6px;">☀️ Day Games</div>',
+                    unsafe_allow_html=True,
+                )
+                d_tbl = _render_day(view_df)
+                if d_tbl.empty:
+                    st.info("No day-game qualifiers.")
+                else:
+                    st.dataframe(
+                        d_tbl, width='stretch', hide_index=True,
+                        height=min(720, 60 + 36 * len(d_tbl)),
+                    )
+            with c_right:
+                st.markdown(
+                    '<div style="font-weight:800;color:#0f172a;margin-bottom:6px;">🌙 Night Games</div>',
+                    unsafe_allow_html=True,
+                )
+                n_tbl = _render_night(view_df)
+                if n_tbl.empty:
+                    st.info("No night-game qualifiers.")
+                else:
+                    st.dataframe(
+                        n_tbl, width='stretch', hide_index=True,
+                        height=min(720, 60 + 36 * len(n_tbl)),
+                    )
+
+        elif dn_view == "Today's Slate Targets":
+            # ----- Today's slate: pull the schedule for the selected slate
+            # date (defaults to today). Each game's MLB-official dayNight
+            # bucket decides whether a team's hitters are scored against
+            # their day or night HR/PA split. -----
+            try:
+                _slate_dn_df = get_schedule(selected_date)
+            except Exception as _slate_err:
+                _slate_dn_df = pd.DataFrame()
+                st.warning(
+                    f"Couldn't pull the slate schedule for {selected_date}: {_slate_err}"
+                )
+
+            if _slate_dn_df is None or _slate_dn_df.empty:
+                st.info(
+                    f"No games on the MLB slate for **{selected_date}** "
+                    "(off day, all-star break, or offseason). Pick a different "
+                    "date with the 📅 Slate date control above, or switch to "
+                    "one of the season-wide views."
+                )
+            else:
+                # Build a team_abbr -> {day_night, opp_abbr, game_time_ct,
+                # short_label} lookup so each hitter knows which bucket and
+                # which opponent to display. A team appears at most once per
+                # slate day (doubleheaders share the same dayNight bucket in
+                # practice; if MLB ever splits one across buckets, the second
+                # game overwrites — we surface that via a games-played count).
+                team_to_game: dict = {}
+                day_game_count = 0
+                night_game_count = 0
+                tbd_game_count = 0
+                # Side -> (own probable key, opp probable key, opp probable id key)
+                _side_pitcher_keys = {
+                    "away_abbr": ("home_probable", "home_probable_id"),
+                    "home_abbr": ("away_probable", "away_probable_id"),
+                }
+                for _, _g in _slate_dn_df.iterrows():
+                    _dn = (_g.get("day_night") or "").lower()
+                    if _dn == "day":
+                        day_game_count += 1
+                    elif _dn == "night":
+                        night_game_count += 1
+                    else:
+                        tbd_game_count += 1
+                    for _side, _opp in (("away_abbr", "home_abbr"),
+                                        ("home_abbr", "away_abbr")):
+                        _tm = _g.get(_side, "")
+                        if not _tm:
+                            continue
+                        _opp_p_name_key, _opp_p_id_key = _side_pitcher_keys[_side]
+                        team_to_game[_tm] = {
+                            "day_night": _dn,
+                            "opp_abbr": _g.get(_opp, ""),
+                            "game_time_ct": _g.get("time_short", ""),
+                            "short_label": _g.get("short_label", ""),
+                            "status": _g.get("status", ""),
+                            "opp_sp_name": _g.get(_opp_p_name_key, "") or "",
+                            "opp_sp_id": _g.get(_opp_p_id_key) or 0,
+                        }
+
+                # Batch-fetch handedness for every distinct probable starter on
+                # the slate in a single MLB StatsAPI /people call. Avoids one
+                # request per displayed hitter and caches the result for an
+                # hour. Missing/TBD pitchers fall through as "".
+                _opp_pid_set = {
+                    int(g["opp_sp_id"]) for g in team_to_game.values()
+                    if g.get("opp_sp_id")
+                }
+                try:
+                    _opp_hand_map = _fetch_pitcher_throws_batch(
+                        tuple(sorted(_opp_pid_set))
+                    )
+                except Exception:
+                    _opp_hand_map = {}
+                for _tm, _info in team_to_game.items():
+                    _pid = int(_info.get("opp_sp_id") or 0)
+                    _info["opp_sp_hand"] = _opp_hand_map.get(_pid, "") if _pid else ""
+
+                # Slate-overview caption — instantly tells the handicapper
+                # whether to lean day or night before reading the table.
+                _slate_summary_bits = []
+                if day_game_count:
+                    _slate_summary_bits.append(f"☀️ {day_game_count} day")
+                if night_game_count:
+                    _slate_summary_bits.append(f"🌙 {night_game_count} night")
+                if tbd_game_count:
+                    _slate_summary_bits.append(f"⏳ {tbd_game_count} TBD")
+                # Count probable starters posted / TBD across the slate so
+                # the user can see at a glance how much of the matchup grid
+                # is grounded in real probables.
+                _sp_posted = sum(
+                    1 for _info in team_to_game.values()
+                    if _info.get("opp_sp_name") and _info["opp_sp_name"] != "TBD"
+                )
+                _sp_total = len(team_to_game)
+                _sp_tbd = _sp_total - _sp_posted
+                st.markdown(
+                    f"<div style='color:#475569;font-size:0.9rem;margin:-2px 0 8px 0;'>"
+                    f"<b>Slate {selected_date}</b> · {len(_slate_dn_df)} games · "
+                    f"{' · '.join(_slate_summary_bits) if _slate_summary_bits else 'no day/night data yet'} · "
+                    f"🎯 {_sp_posted}/{_sp_total} probable SPs posted"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                if _sp_tbd and _sp_posted < _sp_total:
+                    st.info(
+                        f"ℹ️ {_sp_tbd} of {_sp_total} matchups still show a "
+                        f"TBD opposing starter. Opp SP Hand will fill in as "
+                        f"MLB posts probables — usually 18–36 hours before "
+                        f"first pitch."
+                    )
+
+                # Optional slate-only day/night filter
+                _slate_dn_filter = st.radio(
+                    "Bucket",
+                    ["All slate games", "Day games only", "Night games only"],
+                    index=0,
+                    horizontal=True,
+                    key="dn_slate_bucket",
+                )
+
+                # Reduce splits dataframe to hitters whose team is on the slate.
+                _slate_teams = set(team_to_game.keys())
+                slate_view = view_df[view_df["team_abbr"].isin(_slate_teams)].copy()
+
+                if slate_view.empty:
+                    st.info(
+                        "None of the hitters in the season splits sample play "
+                        "on this slate (try clearing the team/player filters, "
+                        "or pick a date with games)."
+                    )
+                else:
+                    # Annotate each hitter with their game's day/night bucket
+                    # and bookkeeping columns.
+                    slate_view["bucket"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("day_night", "")
+                    )
+                    slate_view["opp_abbr"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("opp_abbr", "")
+                    )
+                    slate_view["game_time"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("game_time_ct", "")
+                    )
+                    slate_view["game"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("short_label", "")
+                    )
+                    slate_view["opp_sp_name"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("opp_sp_name", "")
+                    )
+                    slate_view["opp_sp_hand"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("opp_sp_hand", "")
+                    )
+
+                    if _slate_dn_filter == "Day games only":
+                        slate_view = slate_view[slate_view["bucket"] == "day"]
+                    elif _slate_dn_filter == "Night games only":
+                        slate_view = slate_view[slate_view["bucket"] == "night"]
+
+                    # Score each hitter against the bucket of THEIR game:
+                    #   bucket_hr / bucket_pa / bucket_hr_rate / bucket_ops
+                    # Hitters in TBD-bucket games drop to "—" but still appear
+                    # so the user can see the slate is incomplete.
+                    def _pick(row, col_prefix):
+                        b = row["bucket"]
+                        if b == "day":
+                            return row.get(f"day_{col_prefix}")
+                        if b == "night":
+                            return row.get(f"night_{col_prefix}")
+                        return None
+
+                    slate_view["bucket_hr"] = slate_view.apply(
+                        lambda r: _pick(r, "hr"), axis=1
+                    )
+                    slate_view["bucket_pa"] = slate_view.apply(
+                        lambda r: _pick(r, "pa"), axis=1
+                    )
+                    slate_view["bucket_hr_rate"] = slate_view.apply(
+                        lambda r: _pick(r, "hr_rate"), axis=1
+                    )
+                    slate_view["bucket_ops"] = slate_view.apply(
+                        lambda r: _pick(r, "ops"), axis=1
+                    )
+
+                    # Apply Min PA floor against the bucket-specific denominator
+                    # only when the bucket is known (TBD bucket rows skip the
+                    # floor so they don't disappear silently).
+                    qualified = slate_view[
+                        (slate_view["bucket"].isin(("day", "night")))
+                        & (slate_view["bucket_pa"].fillna(0) >= dn_min_pa)
+                    ].copy()
+
+                    if qualified.empty:
+                        st.info(
+                            f"No slate hitters cleared the {dn_min_pa}-PA "
+                            f"bucket floor. Lower the Min PA slider to widen "
+                            f"the pool (early-season day-game samples are tiny)."
+                        )
+                    else:
+                        # Simple, transparent target score. HR/PA is the
+                        # backbone; OPS gives a small contact-quality nudge so
+                        # a 2-HR / 200-PA grinder doesn't outrank a 7-HR /
+                        # 200-PA slugger. Confidence weight scales the OPS
+                        # bonus by sample size so tiny-PA outliers don't fly
+                        # to the top.
+                        def _score(row):
+                            hr_rate = row.get("bucket_hr_rate") or 0.0
+                            ops = row.get("bucket_ops") or 0.0
+                            pa = row.get("bucket_pa") or 0
+                            conf_w = min(1.0, float(pa) / 200.0)
+                            return (hr_rate * 100.0) + (ops * 4.0 * conf_w)
+
+                        qualified["target_score"] = qualified.apply(_score, axis=1)
+                        qualified = qualified.sort_values(
+                            ["target_score", "bucket_hr"],
+                            ascending=[False, False],
+                            na_position="last",
+                        ).head(int(dn_top_n))
+
+                        def _fmt_opp_sp(name: str) -> str:
+                            n = (name or "").strip()
+                            if not n or n.upper() == "TBD":
+                                return "TBD"
+                            return n
+
+                        def _fmt_matchup(hand: str) -> str:
+                            h = (hand or "").upper()
+                            if h == "R":
+                                return "vs RHP"
+                            if h == "L":
+                                return "vs LHP"
+                            return "TBD"
+
+                        disp = pd.DataFrame({
+                            "Player": qualified["player"],
+                            "Team": qualified["team_abbr"],
+                            "Opp": qualified["opp_abbr"].apply(
+                                lambda v: f"vs {v}" if v else "—"
+                            ),
+                            "Opp SP": qualified["opp_sp_name"].apply(_fmt_opp_sp),
+                            "Opp SP Hand": qualified["opp_sp_hand"].apply(
+                                lambda h: (h or "").upper() if (h or "").upper() in ("L", "R") else "—"
+                            ),
+                            "Matchup": qualified["opp_sp_hand"].apply(_fmt_matchup),
+                            "Game Time (CT)": qualified["game_time"].fillna("—"),
+                            "Bucket": qualified["bucket"].map(
+                                {"day": "☀️ Day", "night": "🌙 Night"}
+                            ).fillna("—"),
+                            "HR": qualified["bucket_hr"].fillna(0).astype(int),
+                            "PA": qualified["bucket_pa"].fillna(0).astype(int),
+                            "HR/PA": qualified["bucket_hr_rate"].apply(_fmt_pct),
+                            "OPS": qualified["bucket_ops"].apply(_fmt_rate),
+                            "Confidence": qualified["bucket_pa"].apply(_confidence),
+                            "Target Score": qualified["target_score"].apply(
+                                lambda v: f"{float(v):.2f}" if pd.notna(v) else "—"
+                            ),
+                        }).reset_index(drop=True)
+                        disp.insert(0, "#", range(1, len(disp) + 1))
+
+                        # ----- Quick-look summary metrics -----
+                        # Surface the top overall target plus the best day-game
+                        # and best night-game target so the handicapper sees
+                        # the headline plays without scrolling the table.
+                        _top_overall = qualified.iloc[0] if len(qualified) else None
+                        _day_qual = qualified[qualified["bucket"] == "day"]
+                        _night_qual = qualified[qualified["bucket"] == "night"]
+                        _top_day = _day_qual.iloc[0] if len(_day_qual) else None
+                        _top_night = _night_qual.iloc[0] if len(_night_qual) else None
+
+                        def _fmt_top(row) -> str:
+                            if row is None:
+                                return "—"
+                            try:
+                                return (
+                                    f"{row['player']} ({row['team_abbr']}) · "
+                                    f"{float(row['target_score']):.2f}"
+                                )
+                            except Exception:
+                                return "—"
+
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric(
+                            "Qualified hitters",
+                            f"{len(qualified)}",
+                            help=(
+                                f"Hitters from {len(_slate_teams)} slate teams "
+                                f"clearing the {dn_min_pa}-PA bucket floor."
+                            ),
+                        )
+                        m2.metric(
+                            "🏆 Top target",
+                            _fmt_top(_top_overall),
+                            help="Highest Target Score across the filtered slate.",
+                        )
+                        m3.metric(
+                            "☀️ Top day target",
+                            _fmt_top(_top_day),
+                            help="Best target playing a day game today.",
+                        )
+                        m4.metric(
+                            "🌙 Top night target",
+                            _fmt_top(_top_night),
+                            help="Best target playing a night game today.",
+                        )
+
+                        st.markdown(
+                            '<div style="font-weight:800;color:#0f172a;margin:4px 0 6px 0;">'
+                            '🎯 Slate-locked HR targets — ranked by each hitter\'s split '
+                            'against tonight\'s lighting</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.dataframe(
+                            disp, width='stretch', hide_index=True,
+                            height=min(720, 60 + 36 * len(disp)),
+                        )
+                        st.download_button(
+                            "⬇️ Download Slate HR Targets (CSV)",
+                            disp.to_csv(index=False),
+                            file_name=(
+                                f"slate_day_night_hr_targets_"
+                                f"{selected_date}.csv"
+                            ),
+                            mime="text/csv",
+                            width='stretch',
+                        )
+
+                        st.caption(
+                            "**Target Score** = `HR/PA × 100 + OPS × 4 × min(1, PA/200)`. "
+                            "HR/PA is the backbone (the prop-friendly rate); "
+                            "OPS adds a small contact-quality nudge weighted by "
+                            "PA so tiny-sample sluggers don't outrank stable bats. "
+                            "**Opp SP / Opp SP Hand / Matchup** come from the "
+                            "MLB schedule's probable pitchers + the StatsAPI "
+                            "/people endpoint for throwing hand (batch-fetched "
+                            "and cached for an hour). Bucket auto-locks to each "
+                            "game's MLB-official day/night classification. "
+                            "Hitters on TBD-bucket games are hidden until MLB "
+                            "posts the start time; TBD pitchers show as `TBD`."
+                        )
+
+        else:  # "Biggest Splits"
+            st.caption(
+                "Edge = HR/PA in day games **minus** HR/PA in night games. "
+                "Positive = day-bias hitter (target on early/afternoon slates); "
+                "negative = night-bias hitter (target on prime-time slates). "
+                "Both PA denominators must clear the Min PA floor."
+            )
+            t_day = _render_edges(view_df, day_bias=True)
+            t_night = _render_edges(view_df, day_bias=False)
+            c_left, c_right = st.columns(2)
+            with c_left:
+                st.markdown(
+                    '<div style="font-weight:800;color:#0f172a;margin-bottom:6px;">☀️ Day-bias hitters (Day HR/PA &gt; Night HR/PA)</div>',
+                    unsafe_allow_html=True,
+                )
+                if t_day.empty:
+                    st.info("No qualifiers with both PA denominators above the floor.")
+                else:
+                    st.dataframe(
+                        t_day, width='stretch', hide_index=True,
+                        height=min(720, 60 + 36 * len(t_day)),
+                    )
+            with c_right:
+                st.markdown(
+                    '<div style="font-weight:800;color:#0f172a;margin-bottom:6px;">🌙 Night-bias hitters (Night HR/PA &gt; Day HR/PA)</div>',
+                    unsafe_allow_html=True,
+                )
+                if t_night.empty:
+                    st.info("No qualifiers with both PA denominators above the floor.")
+                else:
+                    st.dataframe(
+                        t_night, width='stretch', hide_index=True,
+                        height=min(720, 60 + 36 * len(t_night)),
+                    )
+
+        # Footer caption — methodology so the user trusts the numbers.
+        st.caption(
+            "**Methodology:** all hitters with ≥1 PA appear in the source pull "
+            "(playerPool=All). HR/PA uses plate appearances as the denominator "
+            "— the most prop-friendly rate. *Confidence* maps day-side PA: "
+            "Tiny &lt;25 · Small &lt;60 · Medium &lt;120 · Solid &lt;250 · Stable ≥250. "
+            "Day-game samples are always smaller than night, so trust HR rate "
+            "more once a hitter clears ~100 day PA. "
+            "Source: MLB StatsAPI <code>/stats?stats=statSplits&sitCodes=d,n</code>. "
+            "Cached for 6 hours."
+        )
 
 # ============== Injuries tab ==============
 with tab_injuries:

@@ -105,9 +105,9 @@ def inject_pwa_head_tags() -> None:
     }})();
     </script>
     """
-    # height=0 keeps the iframe invisible; it only exists to run the script.
-    # st.iframe auto-detects an HTML string here (not a URL/path) and embeds it.
-    st.iframe(html, height=0, width=0)
+    # 1x1 px is the minimum st.iframe accepts; the iframe only exists to run
+    # the script that injects tags into the parent document.
+    st.iframe(html, height=1, width=1)
 
 
 # ---------------------------------------------------------------------------

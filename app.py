@@ -2378,9 +2378,10 @@ def _fetch_batter_game_log(player_id: int, season: int) -> pd.DataFrame:
         sf  = _i("sacFlies")
         k   = _i("strikeOuts")
         pa  = _i("plateAppearances") or (ab + bb + hbp + sf)
+        hr  = _i("homeRuns")
         rows.append({
             "date": dt, "ab": ab, "h": h, "bb": bb, "hbp": hbp,
-            "sf": sf, "k": k, "pa": pa,
+            "sf": sf, "k": k, "pa": pa, "hr": hr,
         })
     df = pd.DataFrame(rows)
     if df.empty:
@@ -2488,6 +2489,205 @@ def _form_blend_adjustment(l10: dict) -> float:
         return 0.0
     delta = float(avg) - 0.250  # league-ish average
     return max(-4.0, min(4.0, delta * 40.0))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_batter_hr_context(player_id, end_date_iso: str) -> dict:
+    """Compute HR-context snapshot for one batter, derived from MLB StatsAPI gameLog.
+
+    Returns dict with:
+      last_hr_date: ISO 'YYYY-MM-DD' of the most recent game with HR>=1, or None.
+      days_since_last_hr: int days between end_date_iso and last_hr_date, or None.
+      hr_last_10: total HR over the batter's last 10 played games strictly before
+        end_date_iso. None when no game log available.
+      games_in_last_10: number of games used (<= 10).
+      season_hr: season HR total from the same game log (so it matches the source).
+    """
+    out = {
+        "last_hr_date": None,
+        "days_since_last_hr": None,
+        "hr_last_10": None,
+        "games_in_last_10": 0,
+        "season_hr": None,
+    }
+    if not player_id:
+        return out
+    try:
+        end_dt = pd.to_datetime(end_date_iso).date()
+    except Exception:
+        end_dt = today_ct()
+
+    season = end_dt.year
+    log = _fetch_batter_game_log(player_id, season)
+    used_prev = False
+    if log is None or log.empty:
+        log = _fetch_batter_game_log(player_id, season - 1)
+        used_prev = True
+    if log is None or log.empty:
+        return out
+    if "hr" not in log.columns:
+        return out
+
+    log = log.copy()
+    log["date"] = pd.to_datetime(log["date"]).dt.date
+    log = log[log["date"] < end_dt]
+    if log.empty:
+        return out
+
+    try:
+        out["season_hr"] = int(log["hr"].sum())
+    except Exception:
+        out["season_hr"] = None
+
+    last10 = log.tail(10)
+    try:
+        out["hr_last_10"] = int(last10["hr"].sum())
+        out["games_in_last_10"] = int(len(last10))
+    except Exception:
+        out["hr_last_10"] = None
+        out["games_in_last_10"] = int(len(last10))
+
+    hr_games = log[log["hr"] >= 1]
+    if not hr_games.empty:
+        last_hr_dt = hr_games["date"].max()
+        out["last_hr_date"] = last_hr_dt.isoformat() if last_hr_dt else None
+        if last_hr_dt:
+            try:
+                out["days_since_last_hr"] = int((end_dt - last_hr_dt).days)
+            except Exception:
+                out["days_since_last_hr"] = None
+    return out
+
+
+def _fmt_last_hr(hr_ctx: dict) -> str:
+    """Render the last-HR date as '2026-05-08 (4d ago)' or '— none yet'."""
+    if not hr_ctx:
+        return "—"
+    d = hr_ctx.get("last_hr_date")
+    if not d:
+        return "— none yet"
+    days = hr_ctx.get("days_since_last_hr")
+    if days is None:
+        return str(d)
+    if days <= 0:
+        return f"{d} (today)"
+    return f"{d} ({days}d ago)"
+
+
+def _fmt_hr_last10(hr_ctx: dict) -> str:
+    """Render HR-in-last-10 as 'N HR / G games' or '—'."""
+    if not hr_ctx:
+        return "—"
+    n = hr_ctx.get("hr_last_10")
+    g = hr_ctx.get("games_in_last_10") or 0
+    if n is None:
+        return "—"
+    return f"{int(n)} HR / last {int(g)}G"
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_home_runs_on_date(date_iso: str) -> pd.DataFrame:
+    """Return every home run hit across MLB on the given date.
+
+    Pulls the slate via MLB StatsAPI /schedule then per-game iterates the live
+    feed's allPlays for result.eventType == "home_run". Robust to per-game
+    fetch failures (skips that game; never raises). Empty DataFrame on total
+    failure or when no games occurred / are completed yet.
+
+    Columns: date, game_pk, away_abbr, home_abbr, inning, half,
+             batter_id, batter, batter_team_abbr, pitcher, hr_distance,
+             launch_speed, description.
+    """
+    if not date_iso:
+        return pd.DataFrame()
+    cols = ["date", "game_pk", "away_abbr", "home_abbr", "inning", "half",
+            "batter_id", "batter", "batter_team_abbr", "pitcher",
+            "hr_distance", "launch_speed", "description"]
+    try:
+        sched_url = "https://statsapi.mlb.com/api/v1/schedule"
+        r = requests.get(
+            sched_url,
+            params={"sportId": 1, "date": date_iso, "hydrate": "team"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        sched = r.json() or {}
+    except Exception:
+        return pd.DataFrame(columns=cols)
+
+    games = []
+    for d in sched.get("dates", []) or []:
+        for g in d.get("games", []) or []:
+            games.append(g)
+    if not games:
+        return pd.DataFrame(columns=cols)
+
+    rows = []
+    for g in games:
+        gpk = g.get("gamePk")
+        if not gpk:
+            continue
+        # Skip games that haven't actually been played (scheduled / pre-game) —
+        # the live feed exists but allPlays is empty, so this is just a small
+        # efficiency win, not required for correctness.
+        state = (g.get("status") or {}).get("abstractGameState", "")
+        if state and state.lower() in ("preview",):
+            continue
+        away_name = (g.get("teams", {}).get("away", {}).get("team", {}) or {}).get("name", "")
+        home_name = (g.get("teams", {}).get("home", {}).get("team", {}) or {}).get("name", "")
+        away_abbr = TEAM_INFO.get(away_name, {}).get("abbr", away_name[:3].upper())
+        home_abbr = TEAM_INFO.get(home_name, {}).get("abbr", home_name[:3].upper())
+        try:
+            fr = requests.get(
+                f"https://statsapi.mlb.com/api/v1.1/game/{gpk}/feed/live",
+                timeout=20,
+            )
+            fr.raise_for_status()
+            feed = fr.json() or {}
+        except Exception:
+            continue
+        live = feed.get("liveData") or {}
+        plays = (live.get("plays") or {}).get("allPlays") or []
+        for play in plays:
+            result = play.get("result") or {}
+            ev = (result.get("eventType") or result.get("event") or "").lower()
+            if ev not in ("home_run", "home run"):
+                continue
+            matchup = play.get("matchup") or {}
+            about = play.get("about") or {}
+            half = (about.get("halfInning") or "").lower()
+            inning = about.get("inning")
+            batter = (matchup.get("batter") or {})
+            pitcher = (matchup.get("pitcher") or {})
+            batter_team = away_abbr if half == "top" else home_abbr
+            # Try to grab launch speed / hit distance from the playEvents (the
+            # final pitch usually carries the hitData payload). Missing data
+            # is fine — just leave as None.
+            hit_speed = None
+            hit_dist = None
+            for ev_p in (play.get("playEvents") or []):
+                hd = ev_p.get("hitData") or {}
+                if hd:
+                    hit_speed = hd.get("launchSpeed", hit_speed)
+                    hit_dist = hd.get("totalDistance", hit_dist)
+            rows.append({
+                "date": date_iso,
+                "game_pk": gpk,
+                "away_abbr": away_abbr,
+                "home_abbr": home_abbr,
+                "inning": inning,
+                "half": half,
+                "batter_id": batter.get("id"),
+                "batter": batter.get("fullName") or "",
+                "batter_team_abbr": batter_team,
+                "pitcher": pitcher.get("fullName") or "",
+                "hr_distance": hit_dist,
+                "launch_speed": hit_speed,
+                "description": result.get("description") or "",
+            })
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(rows, columns=cols)
 
 
 def find_pitcher_row(df, pitcher_name, pitcher_id=None):
@@ -2800,7 +3000,7 @@ def compute_hr_metrics(b_row, lg):
 
 
 def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, weather, park_factor,
-                       arsenal_b=None, arsenal_p=None, opp_pitcher_id=None):
+                       arsenal_b=None, arsenal_p=None, opp_pitcher_id=None, slate_date=None):
     """The main heatmap-ready dataframe powering the Top 3 Hitters card and
     the Hot/Cold slate leaderboards. Display columns are aligned with the
     Matchup heat-map board so every batter section sees the same numbers.
@@ -2815,6 +3015,10 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
     p_row = find_pitcher_row(pitchers_df, opp_pitcher_name, pitcher_id=opp_pitcher_id)
     opp_pitches = _build_pitcher_arsenal_set(arsenal_p, opp_pitcher_id)
     lg = _hr_league_table(batters_df)
+    try:
+        slate_iso = pd.to_datetime(slate_date).strftime("%Y-%m-%d") if slate_date else today_ct().strftime("%Y-%m-%d")
+    except Exception:
+        slate_iso = today_ct().strftime("%Y-%m-%d")
     rows = []
     for _, r in lineup_df.iterrows():
         b_row = find_player_row(
@@ -2831,6 +3035,10 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
         pid = r.get("player_id") if "player_id" in r.index else None
         crushes = _crushes_cell(arsenal_b, pid, opp_pitches) if arsenal_b is not None else "—"
         hr_metrics = compute_hr_metrics(b_row, lg)
+        try:
+            hr_ctx = get_batter_hr_context(pid, slate_iso) if pid else {}
+        except Exception:
+            hr_ctx = {}
         row = {
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
             "Hitter": r["player_name"],
@@ -2854,6 +3062,18 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
             "_PA": safe_float(b_row.get("pa") if b_row is not None else None, 0),
             "_player_id": pid,
             "_bat_side": r["bat_side"] or "",
+            # HR context (last HR date + HR over batter's last 10 games),
+            # populated from MLB StatsAPI gameLog. Carried as underscore-prefixed
+            # internal fields so existing styler/leaderboard helpers don't
+            # accidentally include them; the slate-builder lifts the public-
+            # display copies below into the visible leaderboard columns.
+            "_LastHRDate": hr_ctx.get("last_hr_date") if hr_ctx else None,
+            "_DaysSinceLastHR": hr_ctx.get("days_since_last_hr") if hr_ctx else None,
+            "_HRLast10": hr_ctx.get("hr_last_10") if hr_ctx else None,
+            "_HRLast10Games": hr_ctx.get("games_in_last_10") if hr_ctx else 0,
+            "_HRSeasonFromLog": hr_ctx.get("season_hr") if hr_ctx else None,
+            "Last HR": _fmt_last_hr(hr_ctx) if hr_ctx else "—",
+            "HR L10G": _fmt_hr_last10(hr_ctx) if hr_ctx else "—",
         }
         row.update(hr_metrics)
         rows.append(row)
@@ -3192,6 +3412,10 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         l10 = form.get("L10", {}) if isinstance(form, dict) else {}
         l30 = form.get("L30D", {}) if isinstance(form, dict) else {}
         form_blend = _form_blend_adjustment(l10)
+        try:
+            hr_ctx = get_batter_hr_context(pid, slate_iso) if pid else {}
+        except Exception:
+            hr_ctx = {}
         opp_hand = r.get("opposing_pitch_hand", "")
         m   = matchup_score(b_row, p_row, r["lineup_spot"], weather, park_factor, r["bat_side"], opp_hand) + form_blend
         ts  = test_score(b_row, p_row)
@@ -3274,6 +3498,8 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             f"L10 {_fmt_form_avg(l10.get('avg'))} | "
             f"30D {_fmt_form_avg(l30.get('avg'))}"
         )
+        hr_last_line = _fmt_last_hr(hr_ctx)
+        hr_l10_line = _fmt_hr_last10(hr_ctx)
         rows.append({
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
             "Hitter": r["player_name"],
@@ -3283,6 +3509,10 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "_FormL5_AVG": l5.get("avg"),
             "_FormL10_AVG": l10.get("avg"),
             "_FormL30_AVG": l30.get("avg"),
+            "_LastHR": hr_last_line,
+            "_HRLast10": hr_l10_line,
+            "_LastHRDate": hr_ctx.get("last_hr_date") if hr_ctx else None,
+            "_HRLast10N": hr_ctx.get("hr_last_10") if hr_ctx else None,
             "Matchup": m,
             "ISO": round(iso, 3) if iso is not None else None,
             "Brl/BIP%": round(brl_bip, 1) if brl_bip is not None else None,
@@ -3313,7 +3543,8 @@ def render_matchup_heatmap_html(df):
     numeric_cols = [c for c in df.columns if c in HEATMAP_THRESHOLDS]
     # Spot collapses into row label; _HR Trend is carried alongside HR Form
     # for arrow rendering; _Form / _Form*_AVG are rendered in the Hitter cell.
-    _hidden = ("Spot", "_HR Trend", "_Form", "_FormL5_AVG", "_FormL10_AVG", "_FormL30_AVG")
+    _hidden = ("Spot", "_HR Trend", "_Form", "_FormL5_AVG", "_FormL10_AVG", "_FormL30_AVG",
+               "_LastHR", "_HRLast10", "_LastHRDate", "_HRLast10N")
     display_cols = [c for c in df.columns if c not in _hidden]
 
     css = """
@@ -3341,6 +3572,8 @@ def render_matchup_heatmap_html(df):
 .mhm-hitter-crushes { font-size: 0.68rem; color: #be185d; font-weight: 800; margin-top: 2px;
   white-space: normal; line-height: 1.15; max-width: 220px; }
 .mhm-hitter-form { font-size: 0.68rem; color: #1d4ed8; font-weight: 800; margin-top: 2px;
+  white-space: normal; line-height: 1.15; max-width: 220px; }
+.mhm-hitter-hr { font-size: 0.68rem; color: #7c2d12; font-weight: 800; margin-top: 2px;
   white-space: normal; line-height: 1.15; max-width: 220px; }
 .mhm-likely { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800;
   background: #f1f5f9; color: #0f172a; display: inline-block; }
@@ -3389,12 +3622,30 @@ def render_matchup_heatmap_html(df):
                     f'<div class="mhm-hitter-form" title="Recent batting AVG — L5 games / L10 games / last 30 days (MLB StatsAPI gameLog)">'
                     f'📈 Form: {form_line}</div>'
                 ) if form_line else ""
+                last_hr = r.get("_LastHR", "")
+                if last_hr is None or (isinstance(last_hr, float) and pd.isna(last_hr)):
+                    last_hr = ""
+                last_hr = str(last_hr).strip()
+                hr_l10 = r.get("_HRLast10", "")
+                if hr_l10 is None or (isinstance(hr_l10, float) and pd.isna(hr_l10)):
+                    hr_l10 = ""
+                hr_l10 = str(hr_l10).strip()
+                hr_lines = []
+                if last_hr and last_hr != "—":
+                    hr_lines.append(f"💣 Last HR: {last_hr}")
+                if hr_l10 and hr_l10 != "—":
+                    hr_lines.append(f"🔟 {hr_l10}")
+                hr_html = (
+                    f'<div class="mhm-hitter-hr" title="Most recent home run date and HR over the batter\'s last 10 played games (MLB StatsAPI gameLog)">'
+                    + " · ".join(hr_lines) + '</div>'
+                ) if hr_lines else ""
                 cells.append(
                     f'<td class="mhm-col-hitter">'
                     f'<div class="mhm-hitter-name">{spot}. {v}</div>'
                     f'<div class="mhm-hitter-meta">{team}</div>'
                     f'{crushes_html}'
                     f'{form_html}'
+                    f'{hr_html}'
                     f'</td>'
                 )
                 continue
@@ -10026,9 +10277,11 @@ render_game_header(game_row, ctx, weather)
 
 # ----- Build all tables once -----
 away_matchup = build_matchup_table(ctx["away_lineup"], batters_df, pitchers_df, game_row["home_probable"], weather, game_row["park_factor"],
-                                   arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=game_row.get("home_probable_id"))
+                                   arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=game_row.get("home_probable_id"),
+                                   slate_date=selected_date)
 home_matchup = build_matchup_table(ctx["home_lineup"], batters_df, pitchers_df, game_row["away_probable"], weather, game_row["park_factor"],
-                                   arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=game_row.get("away_probable_id"))
+                                   arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=game_row.get("away_probable_id"),
+                                   slate_date=selected_date)
 
 # ----- Tabs -----
 # Tiny hint above the strip so mobile users know to swipe for more views
@@ -10042,8 +10295,8 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
-tab_matchup, tab_hot, tab_cold, tab_injuries = st.tabs(
-    ["📊 Matchup", "🔥 Hot Batters", "🧊 Cold Batters", "🏥 Injuries"]
+tab_matchup, tab_hot, tab_cold, tab_hr_milestones, tab_injuries = st.tabs(
+    ["📊 Matchup", "🔥 Hot Batters", "🧊 Cold Batters", "💣 HR Milestones", "🏥 Injuries"]
 )
 
 # ============== Matchup tab ==============
@@ -10264,7 +10517,7 @@ with tab_matchup:
 
 # ============== Hot / Cold Batters tabs (slate-wide) ==============
 @st.cache_data(ttl=600, show_spinner=False)
-def _build_slate_dataframe(_schedule_df, _batters_df, _pitchers_df, cache_key):
+def _build_slate_dataframe(_schedule_df, _batters_df, _pitchers_df, cache_key, slate_date=None):
     """Score every batter in every posted lineup across the slate. Returns a single DataFrame.
     cache_key is a string used to invalidate the cache when the slate or data changes."""
     rows = []
@@ -10272,9 +10525,11 @@ def _build_slate_dataframe(_schedule_df, _batters_df, _pitchers_df, cache_key):
         try:
             cc = build_game_context(g)
             a = build_matchup_table(cc["away_lineup"], _batters_df, _pitchers_df, g["home_probable"], cc["weather"], g["park_factor"],
-                                    arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=g.get("home_probable_id"))
+                                    arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=g.get("home_probable_id"),
+                                    slate_date=slate_date)
             h = build_matchup_table(cc["home_lineup"], _batters_df, _pitchers_df, g["away_probable"], cc["weather"], g["park_factor"],
-                                    arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=g.get("away_probable_id"))
+                                    arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df, opp_pitcher_id=g.get("away_probable_id"),
+                                    slate_date=slate_date)
             for _, r in a.iterrows():
                 d = r.to_dict(); d["Game"] = g["short_label"]; d["OppPitcher"] = g["home_probable"]; rows.append(d)
             for _, r in h.iterrows():
@@ -10284,6 +10539,18 @@ def _build_slate_dataframe(_schedule_df, _batters_df, _pitchers_df, cache_key):
     slate = pd.DataFrame(rows)
     if slate.empty:
         return slate
+    # Lift selected underscore-prefixed HR-context fields into public columns
+    # so the slate-wide leaderboards (Hot/Cold/HR Milestones) can show them.
+    if "_LastHRDate" in slate.columns:
+        slate["Last HR Date"] = slate["_LastHRDate"]
+    if "_HRLast10" in slate.columns:
+        slate["HR (L10G)"] = slate["_HRLast10"]
+    if "_HRSeasonFromLog" in slate.columns:
+        slate["Season HR"] = slate["_HRSeasonFromLog"]
+    if "_player_id" in slate.columns:
+        slate["player_id"] = slate["_player_id"]
+    if "_bat_side" in slate.columns:
+        slate["Bat"] = slate["_bat_side"]
     return slate.drop(columns=[c for c in slate.columns if c.startswith("_")], errors="ignore")
 
 # Cache key includes the lineup-confirmation state of every game on the
@@ -10303,7 +10570,7 @@ def _slate_lineup_signature(_schedule_df) -> str:
 
 _slate_lineup_sig = _slate_lineup_signature(schedule_df)
 _slate_cache_key = f"{selected_date}_{len(schedule_df)}_{_slate_lineup_sig}"
-_slate_df = _build_slate_dataframe(schedule_df, batters_df, pitchers_df, _slate_cache_key)
+_slate_df = _build_slate_dataframe(schedule_df, batters_df, pitchers_df, _slate_cache_key, slate_date=selected_date)
 
 def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
     if df.empty:
@@ -10316,7 +10583,8 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
     ranked.insert(0, "#", range(1, len(ranked) + 1))
     show_cols = [c for c in ["#", "Hitter", "Team", "Game", "Spot", "OppPitcher", "Crushes",
                               "Matchup", "ISO", "Brl/BIP%", "FB%", "GB%", "EV", "HH%",
-                              "HR/FB%", "PullAir%", "LA", "xwOBA", "SweetSpot%", "Likely"]
+                              "HR/FB%", "PullAir%", "LA", "xwOBA", "SweetSpot%",
+                              "Last HR Date", "HR (L10G)", "Likely"]
                  if c in ranked.columns]
     out = ranked[show_cols]
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
@@ -10350,6 +10618,161 @@ with tab_cold:
         'unders, and pitcher-side bets.'
         '</div>', unsafe_allow_html=True)
     _render_leaderboard(_slate_df, "🧊 Cold Batters — Bottom 15", top=False, n=15, sort_col="Matchup")
+
+# ============== HR Milestones tab ==============
+with tab_hr_milestones:
+    st.markdown(
+        '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
+        '💣 <b>HR Milestones</b> — season HR totals, most recent HR date, and HR over each batter\'s '
+        'last 10 played games (MLB StatsAPI gameLog). Use the date picker below to look up every '
+        'home run hit on a specific date.'
+        '</div>', unsafe_allow_html=True)
+
+    # --- Section 1: Slate batter HR milestones (season HR, last HR, HR L10G) ---
+    st.markdown('<div class="section-title">⚾ Today\'s Slate — Batter HR Milestones</div>',
+                unsafe_allow_html=True)
+    if _slate_df is None or _slate_df.empty:
+        st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
+    else:
+        wanted_cols = [c for c in ["Hitter", "Team", "Game", "Spot", "Bat", "OppPitcher",
+                                    "Season HR", "Last HR Date", "HR (L10G)", "Matchup", "Likely"]
+                       if c in _slate_df.columns]
+        slate_hr = _slate_df[wanted_cols].copy()
+        # Sort by Season HR (desc), with NaN at bottom — handles early-spring
+        # offseason gracefully when StatsAPI hasn't published a current log yet.
+        if "Season HR" in slate_hr.columns:
+            slate_hr["_sort_hr"] = pd.to_numeric(slate_hr["Season HR"], errors="coerce")
+            slate_hr = slate_hr.sort_values(
+                "_sort_hr", ascending=False, na_position="last"
+            ).drop(columns=["_sort_hr"]).reset_index(drop=True)
+        slate_hr.insert(0, "#", range(1, len(slate_hr) + 1))
+        st.dataframe(
+            slate_hr,
+            width='stretch',
+            hide_index=True,
+            height=min(640, 60 + 36 * len(slate_hr)),
+        )
+        st.download_button(
+            "⬇️ Download HR Milestones CSV",
+            slate_hr.to_csv(index=False),
+            file_name=f"{selected_date}_hr_milestones.csv",
+            mime="text/csv",
+            width='stretch',
+        )
+        st.caption(
+            "Season HR and Last HR Date are computed from each batter's MLB StatsAPI gameLog "
+            "(authoritative). HR (L10G) sums HR over the batter's most recent 10 played games. "
+            "Cells show '—' when the gameLog is unavailable (offseason / network hiccup)."
+        )
+
+    # --- Section 2: Date-based HR search across the league ---
+    st.markdown('<div class="section-title" style="margin-top:18px;">🔎 Find Home Runs by Date</div>',
+                unsafe_allow_html=True)
+    st.caption(
+        "Pick any date — we'll pull every home run hit across MLB that day from the official "
+        "live game feed (statsapi.mlb.com). Useful for checking yesterday's slate, parlay "
+        "review, or scouting recent power surges."
+    )
+    today_local = today_ct()
+    default_hr_date = today_local - timedelta(days=1)
+    # Anchor the upper bound to today (CT) so picking 'tomorrow' doesn't surface
+    # an empty result page.
+    hr_search_date = st.date_input(
+        "Search HR by date",
+        value=default_hr_date,
+        min_value=date(2015, 1, 1),
+        max_value=today_local,
+        key="hr_milestones_date",
+        help="Defaults to yesterday so completed slates show up immediately.",
+    )
+    try:
+        hr_date_iso = hr_search_date.strftime("%Y-%m-%d")
+    except Exception:
+        hr_date_iso = (today_local - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    with st.spinner(f"Pulling home runs hit on {hr_date_iso}…"):
+        try:
+            hr_on_date = get_home_runs_on_date(hr_date_iso)
+        except Exception as _hr_e:
+            hr_on_date = pd.DataFrame()
+            st.warning(f"Couldn't pull HRs for {hr_date_iso}: {_hr_e}")
+
+    if hr_on_date is None or hr_on_date.empty:
+        st.info(
+            f"No home runs found for {hr_date_iso}. Possible reasons: no completed MLB games on "
+            "that date, the live feed has not posted yet, or a transient network issue. Try a "
+            "different date or refresh the page."
+        )
+    else:
+        # Friendlier display: team chip "AWY @ HOM", inning, batter, distance, pitcher.
+        display = hr_on_date.copy()
+        display["Game"] = display["away_abbr"].fillna("") + " @ " + display["home_abbr"].fillna("")
+        display["Inning"] = display.apply(
+            lambda r: f'{"T" if str(r.get("half","")).lower().startswith("top") else "B"}{int(r["inning"])}'
+                       if pd.notna(r.get("inning")) else "—",
+            axis=1,
+        )
+        display["Distance (ft)"] = display["hr_distance"].apply(
+            lambda v: f"{int(v)}" if pd.notna(v) else "—"
+        )
+        display["Exit Velo (mph)"] = display["launch_speed"].apply(
+            lambda v: f"{float(v):.1f}" if pd.notna(v) else "—"
+        )
+        display = display.rename(columns={
+            "batter": "Batter",
+            "batter_team_abbr": "Team",
+            "pitcher": "Off Pitcher",
+            "description": "Play",
+        })
+        cols_show = ["Game", "Inning", "Batter", "Team", "Off Pitcher",
+                     "Distance (ft)", "Exit Velo (mph)", "Play"]
+        cols_show = [c for c in cols_show if c in display.columns]
+        out_hr = display[cols_show].reset_index(drop=True)
+        out_hr.insert(0, "#", range(1, len(out_hr) + 1))
+
+        # Optional in-tab name filter so a client can quickly narrow to a player.
+        name_q = st.text_input(
+            "Filter by batter name (optional)",
+            value="",
+            key="hr_milestones_name_filter",
+            placeholder="e.g. Judge, Ohtani, Soto",
+        ).strip()
+        if name_q:
+            try:
+                mask = out_hr["Batter"].str.contains(name_q, case=False, na=False)
+                out_hr = out_hr[mask].reset_index(drop=True)
+                if not out_hr.empty:
+                    out_hr["#"] = range(1, len(out_hr) + 1)
+            except Exception:
+                pass
+
+        if out_hr.empty:
+            st.info(f"No HRs match '{name_q}' on {hr_date_iso}.")
+        else:
+            st.markdown(
+                f'<div style="margin: 6px 0 10px 0; font-weight:800; color:#0f172a;">'
+                f'⚾ {len(out_hr)} home run{"s" if len(out_hr) != 1 else ""} on {hr_date_iso}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            st.dataframe(
+                out_hr,
+                width='stretch',
+                hide_index=True,
+                height=min(640, 60 + 34 * len(out_hr)),
+            )
+            st.download_button(
+                f"⬇️ Download HRs for {hr_date_iso} CSV",
+                out_hr.to_csv(index=False),
+                file_name=f"hrs_{hr_date_iso}.csv",
+                mime="text/csv",
+                width='stretch',
+            )
+    st.caption(
+        "Source: MLB StatsAPI live game feed (allPlays · eventType=home_run). "
+        "Distance / exit velocity come from the in-play hitData payload when "
+        "Statcast publishes it — older games or non-tracked parks may show '—'."
+    )
 
 # ============== Injuries tab ==============
 with tab_injuries:

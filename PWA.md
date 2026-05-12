@@ -3,6 +3,21 @@
 This repo bundles the assets needed to make the Streamlit app installable
 as a Progressive Web App (PWA) on iOS and Android home screens.
 
+## 🚀 Customer-facing installer URL
+
+**https://mrbets850.github.io/mlb-edge-pwa/** is the public installer
+page (GitHub Pages, hosted from a separate repo). It serves
+`static/index.html` + `manifest.json` + `service-worker.js` at root
+scope, so Chrome's install prompt and the branded MLB EDGE icon both
+work correctly.
+
+Share that URL with customers (Discord, etc.) — it's referenced from the
+in-app install expander (`pwa.py`) and from [`CUSTOMERS.md`](CUSTOMERS.md)
+as the recommended install path. The raw `https://mrbets850.streamlit.app/`
+URL still works as a fallback, but Streamlit Community Cloud can't register
+a service worker at root scope, so the install prompt is less reliable
+there.
+
 ## What ships in this repo
 
 | Path | Purpose |
@@ -50,11 +65,15 @@ What this means in practice:
   banner. Users can still install manually via **⋮ → Install app /
   Add to Home screen**. The in-app expander documents this clearly.
 
-### Workaround: standalone PWA shell
+### Standalone PWA shell (live at mrbets850.github.io/mlb-edge-pwa)
 
-For a full install-prompt experience, host `static/index.html` on
-**GitHub Pages** (or Netlify / Vercel / any static host) where you control
-the root scope. That page already:
+The standalone PWA shell that solves the service-worker-scope problem is
+already live at:
+
+**https://mrbets850.github.io/mlb-edge-pwa/**
+
+It's deployed from a separate GitHub Pages repo and serves the same
+`static/index.html` shell you see in this repo. That page:
 
 - Includes the manifest and meta tags directly in `<head>` (no injection
   needed).
@@ -62,15 +81,10 @@ the root scope. That page already:
 - Embeds the Streamlit app inside an iframe with a branded splash screen
   and Android install banner / iOS install tip.
 
-To enable GitHub Pages serving from this repo:
-
-1. Repo **Settings → Pages → Source: Deploy from a branch → `main` / `/static`**.
-2. The shell becomes available at `https://<user>.github.io/mlb-data-app/`.
-3. Share *that* URL with customers (instead of the raw streamlit.app URL)
-   for the best install experience.
-
-If you'd rather keep one canonical URL, the streamlit.app link still
-works for Safari add-to-home-screen and for manual Chrome installs.
+**This is the URL we share with customers** (see `CUSTOMERS.md` and the
+in-app expander rendered by `pwa.py`). The raw streamlit.app link still
+works for Safari add-to-home-screen and for manual Chrome installs, but
+it's documented as a fallback only.
 
 ## Local testing
 

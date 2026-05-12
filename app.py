@@ -3948,13 +3948,31 @@ def _fetch_pitcher_throws(player_id: int) -> str:
     except Exception:
         return ""
 
+def _safe_pid(value) -> int:
+    """Coerce a raw MLB player/pitcher id to int, returning 0 for anything
+    that isn't a real id. Sources include pandas Series (NaN), API rows
+    (None, ""), and slate dicts ("TBD"). Float-NaN is the common offender
+    because it's truthy in Python but blows up int()."""
+    if value is None:
+        return 0
+    try:
+        if pd.isna(value):
+            return 0
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_pitcher_throws_batch(player_ids: tuple) -> dict:
     """Batch-fetch handedness for a tuple of pitcher IDs in a single MLB
     StatsAPI /people call. Returns {player_id: 'L'|'R'|''}. Deduped and
     cached as a frozen tuple key so the slate view never makes one request
-    per displayed hitter. Empty/zero IDs are filtered out."""
-    ids = sorted({int(p) for p in player_ids if p})
+    per displayed hitter. Empty/zero/NaN IDs are filtered out."""
+    ids = sorted({_safe_pid(p) for p in player_ids})
+    ids = [i for i in ids if i]
     if not ids:
         return {}
     out: dict = {pid: "" for pid in ids}
@@ -11309,17 +11327,19 @@ with tab_day_night:
                             "short_label": _g.get("short_label", ""),
                             "status": _g.get("status", ""),
                             "opp_sp_name": _g.get(_opp_p_name_key, "") or "",
-                            "opp_sp_id": _g.get(_opp_p_id_key) or 0,
+                            "opp_sp_id": _safe_pid(_g.get(_opp_p_id_key)),
                         }
 
                 # Batch-fetch handedness for every distinct probable starter on
                 # the slate in a single MLB StatsAPI /people call. Avoids one
                 # request per displayed hitter and caches the result for an
-                # hour. Missing/TBD pitchers fall through as "".
-                _opp_pid_set = {
-                    int(g["opp_sp_id"]) for g in team_to_game.values()
-                    if g.get("opp_sp_id")
-                }
+                # hour. Missing/TBD pitchers fall through as "". IDs sourced
+                # from a DataFrame may be NaN/blank/str — _safe_pid normalizes.
+                _opp_pid_set = set()
+                for g in team_to_game.values():
+                    _pid_val = _safe_pid(g.get("opp_sp_id"))
+                    if _pid_val:
+                        _opp_pid_set.add(_pid_val)
                 try:
                     _opp_hand_map = _fetch_pitcher_throws_batch(
                         tuple(sorted(_opp_pid_set))
@@ -11327,7 +11347,7 @@ with tab_day_night:
                 except Exception:
                     _opp_hand_map = {}
                 for _tm, _info in team_to_game.items():
-                    _pid = int(_info.get("opp_sp_id") or 0)
+                    _pid = _safe_pid(_info.get("opp_sp_id"))
                     _info["opp_sp_hand"] = _opp_hand_map.get(_pid, "") if _pid else ""
 
                 # Slate-overview caption — instantly tells the handicapper

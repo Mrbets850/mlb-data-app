@@ -951,6 +951,10 @@ def get_schedule(selected_date):
             home_info = TEAM_INFO.get(home_name, {"abbr": home_name[:3].upper(), "id": 0, "lat": None, "lon": None})
             game_time_utc = game.get("gameDate")
             game_time_ct = pd.to_datetime(game_time_utc, utc=True).tz_convert("America/Chicago")
+            # MLB's authoritative day/night classification — matches the bucket
+            # used by statSplits sitCodes=d/n, so the Day vs Night HR tab can
+            # filter today's slate without re-classifying by local hour.
+            day_night = (game.get("dayNight") or "").strip().lower()
             rows.append({
                 "game_pk": game.get("gamePk"),
                 "label": f'{away_info["abbr"]} @ {home_info["abbr"]} · {game_time_ct.strftime("%-I:%M %p")}',
@@ -958,6 +962,7 @@ def get_schedule(selected_date):
                 "time_short": game_time_ct.strftime("%-I:%M %p"),
                 "game_time_ct": game_time_ct.strftime("%a %b %-d · %-I:%M %p CT"),
                 "game_time_utc": game_time_utc,
+                "day_night": day_night if day_night in ("day", "night") else "",
                 "status": game.get("status", {}).get("detailedState"),
                 "away_team": away_name, "away_abbr": away_info["abbr"], "away_id": away_info["id"],
                 "home_team": home_name, "home_abbr": home_info["abbr"], "home_id": home_info["id"],
@@ -10992,10 +10997,16 @@ with tab_day_night:
     with f2:
         dn_view = st.radio(
             "View",
-            ["Day Games", "Night Games", "Side-by-Side", "Biggest Splits"],
-            index=2,
+            ["Today's Slate Targets", "Day Games", "Night Games",
+             "Side-by-Side", "Biggest Splits"],
+            index=0,
             horizontal=False,
             key="dn_view",
+            help=(
+                "Today's Slate Targets ranks only hitters on teams playing the "
+                "selected slate date, scored by each game's actual day/night "
+                "bucket. The other views are season-wide leaderboards."
+            ),
         )
     with f3:
         dn_min_pa = st.slider(
@@ -11215,6 +11226,224 @@ with tab_day_night:
                         n_tbl, width='stretch', hide_index=True,
                         height=min(720, 60 + 36 * len(n_tbl)),
                     )
+
+        elif dn_view == "Today's Slate Targets":
+            # ----- Today's slate: pull the schedule for the selected slate
+            # date (defaults to today). Each game's MLB-official dayNight
+            # bucket decides whether a team's hitters are scored against
+            # their day or night HR/PA split. -----
+            try:
+                _slate_dn_df = get_schedule(selected_date)
+            except Exception as _slate_err:
+                _slate_dn_df = pd.DataFrame()
+                st.warning(
+                    f"Couldn't pull the slate schedule for {selected_date}: {_slate_err}"
+                )
+
+            if _slate_dn_df is None or _slate_dn_df.empty:
+                st.info(
+                    f"No games on the MLB slate for **{selected_date}** "
+                    "(off day, all-star break, or offseason). Pick a different "
+                    "date with the 📅 Slate date control above, or switch to "
+                    "one of the season-wide views."
+                )
+            else:
+                # Build a team_abbr -> {day_night, opp_abbr, game_time_ct,
+                # short_label} lookup so each hitter knows which bucket and
+                # which opponent to display. A team appears at most once per
+                # slate day (doubleheaders share the same dayNight bucket in
+                # practice; if MLB ever splits one across buckets, the second
+                # game overwrites — we surface that via a games-played count).
+                team_to_game: dict = {}
+                day_game_count = 0
+                night_game_count = 0
+                tbd_game_count = 0
+                for _, _g in _slate_dn_df.iterrows():
+                    _dn = (_g.get("day_night") or "").lower()
+                    if _dn == "day":
+                        day_game_count += 1
+                    elif _dn == "night":
+                        night_game_count += 1
+                    else:
+                        tbd_game_count += 1
+                    for _side, _opp in (("away_abbr", "home_abbr"),
+                                        ("home_abbr", "away_abbr")):
+                        _tm = _g.get(_side, "")
+                        if not _tm:
+                            continue
+                        team_to_game[_tm] = {
+                            "day_night": _dn,
+                            "opp_abbr": _g.get(_opp, ""),
+                            "game_time_ct": _g.get("time_short", ""),
+                            "short_label": _g.get("short_label", ""),
+                            "status": _g.get("status", ""),
+                        }
+
+                # Slate-overview caption — instantly tells the handicapper
+                # whether to lean day or night before reading the table.
+                _slate_summary_bits = []
+                if day_game_count:
+                    _slate_summary_bits.append(f"☀️ {day_game_count} day")
+                if night_game_count:
+                    _slate_summary_bits.append(f"🌙 {night_game_count} night")
+                if tbd_game_count:
+                    _slate_summary_bits.append(f"⏳ {tbd_game_count} TBD")
+                st.markdown(
+                    f"<div style='color:#475569;font-size:0.9rem;margin:-2px 0 8px 0;'>"
+                    f"<b>Slate {selected_date}</b> · {len(_slate_dn_df)} games · "
+                    f"{' · '.join(_slate_summary_bits) if _slate_summary_bits else 'no day/night data yet'}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+                # Optional slate-only day/night filter
+                _slate_dn_filter = st.radio(
+                    "Bucket",
+                    ["All slate games", "Day games only", "Night games only"],
+                    index=0,
+                    horizontal=True,
+                    key="dn_slate_bucket",
+                )
+
+                # Reduce splits dataframe to hitters whose team is on the slate.
+                _slate_teams = set(team_to_game.keys())
+                slate_view = view_df[view_df["team_abbr"].isin(_slate_teams)].copy()
+
+                if slate_view.empty:
+                    st.info(
+                        "None of the hitters in the season splits sample play "
+                        "on this slate (try clearing the team/player filters, "
+                        "or pick a date with games)."
+                    )
+                else:
+                    # Annotate each hitter with their game's day/night bucket
+                    # and bookkeeping columns.
+                    slate_view["bucket"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("day_night", "")
+                    )
+                    slate_view["opp_abbr"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("opp_abbr", "")
+                    )
+                    slate_view["game_time"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("game_time_ct", "")
+                    )
+                    slate_view["game"] = slate_view["team_abbr"].map(
+                        lambda t: team_to_game.get(t, {}).get("short_label", "")
+                    )
+
+                    if _slate_dn_filter == "Day games only":
+                        slate_view = slate_view[slate_view["bucket"] == "day"]
+                    elif _slate_dn_filter == "Night games only":
+                        slate_view = slate_view[slate_view["bucket"] == "night"]
+
+                    # Score each hitter against the bucket of THEIR game:
+                    #   bucket_hr / bucket_pa / bucket_hr_rate / bucket_ops
+                    # Hitters in TBD-bucket games drop to "—" but still appear
+                    # so the user can see the slate is incomplete.
+                    def _pick(row, col_prefix):
+                        b = row["bucket"]
+                        if b == "day":
+                            return row.get(f"day_{col_prefix}")
+                        if b == "night":
+                            return row.get(f"night_{col_prefix}")
+                        return None
+
+                    slate_view["bucket_hr"] = slate_view.apply(
+                        lambda r: _pick(r, "hr"), axis=1
+                    )
+                    slate_view["bucket_pa"] = slate_view.apply(
+                        lambda r: _pick(r, "pa"), axis=1
+                    )
+                    slate_view["bucket_hr_rate"] = slate_view.apply(
+                        lambda r: _pick(r, "hr_rate"), axis=1
+                    )
+                    slate_view["bucket_ops"] = slate_view.apply(
+                        lambda r: _pick(r, "ops"), axis=1
+                    )
+
+                    # Apply Min PA floor against the bucket-specific denominator
+                    # only when the bucket is known (TBD bucket rows skip the
+                    # floor so they don't disappear silently).
+                    qualified = slate_view[
+                        (slate_view["bucket"].isin(("day", "night")))
+                        & (slate_view["bucket_pa"].fillna(0) >= dn_min_pa)
+                    ].copy()
+
+                    if qualified.empty:
+                        st.info(
+                            f"No slate hitters cleared the {dn_min_pa}-PA "
+                            f"bucket floor. Lower the Min PA slider to widen "
+                            f"the pool (early-season day-game samples are tiny)."
+                        )
+                    else:
+                        # Simple, transparent target score. HR/PA is the
+                        # backbone; OPS gives a small contact-quality nudge so
+                        # a 2-HR / 200-PA grinder doesn't outrank a 7-HR /
+                        # 200-PA slugger. Confidence weight scales the OPS
+                        # bonus by sample size so tiny-PA outliers don't fly
+                        # to the top.
+                        def _score(row):
+                            hr_rate = row.get("bucket_hr_rate") or 0.0
+                            ops = row.get("bucket_ops") or 0.0
+                            pa = row.get("bucket_pa") or 0
+                            conf_w = min(1.0, float(pa) / 200.0)
+                            return (hr_rate * 100.0) + (ops * 4.0 * conf_w)
+
+                        qualified["target_score"] = qualified.apply(_score, axis=1)
+                        qualified = qualified.sort_values(
+                            ["target_score", "bucket_hr"],
+                            ascending=[False, False],
+                            na_position="last",
+                        ).head(int(dn_top_n))
+
+                        disp = pd.DataFrame({
+                            "Player": qualified["player"],
+                            "Team": qualified["team_abbr"],
+                            "Opp": qualified["opp_abbr"].apply(
+                                lambda v: f"vs {v}" if v else "—"
+                            ),
+                            "Game Time (CT)": qualified["game_time"].fillna("—"),
+                            "Bucket": qualified["bucket"].map(
+                                {"day": "☀️ Day", "night": "🌙 Night"}
+                            ).fillna("—"),
+                            "HR": qualified["bucket_hr"].fillna(0).astype(int),
+                            "PA": qualified["bucket_pa"].fillna(0).astype(int),
+                            "HR/PA": qualified["bucket_hr_rate"].apply(_fmt_pct),
+                            "OPS": qualified["bucket_ops"].apply(_fmt_rate),
+                            "Confidence": qualified["bucket_pa"].apply(_confidence),
+                            "Target Score": qualified["target_score"].apply(
+                                lambda v: f"{float(v):.2f}" if pd.notna(v) else "—"
+                            ),
+                        }).reset_index(drop=True)
+                        disp.insert(0, "#", range(1, len(disp) + 1))
+
+                        st.markdown(
+                            '<div style="font-weight:800;color:#0f172a;margin:4px 0 6px 0;">'
+                            '🎯 Slate-locked HR targets — ranked by each hitter\'s split '
+                            'against tonight\'s lighting</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.dataframe(
+                            disp, width='stretch', hide_index=True,
+                            height=min(720, 60 + 36 * len(disp)),
+                        )
+                        st.download_button(
+                            "⬇️ Download Slate HR Targets (CSV)",
+                            disp.to_csv(index=False),
+                            file_name=(
+                                f"slate_day_night_hr_targets_"
+                                f"{selected_date}.csv"
+                            ),
+                            mime="text/csv",
+                            width='stretch',
+                        )
+
+                        st.caption(
+                            "**Target Score** = `HR/PA × 100 + OPS × 4 × min(1, PA/200)`. "
+                            "Bucket auto-locks to each game's MLB-official "
+                            "day/night classification. Hitters on TBD-bucket "
+                            "games are hidden until MLB posts the start time."
+                        )
 
         else:  # "Biggest Splits"
             st.caption(

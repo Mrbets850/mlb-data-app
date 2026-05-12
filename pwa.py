@@ -114,14 +114,25 @@ def inject_pwa_head_tags() -> None:
 # In-app install help (rendered in a collapsed expander on the main page)
 # ---------------------------------------------------------------------------
 
-_INSTALL_HELP_MD = """\
+_INSTALLER_URL = "https://mrbets850.github.io/mlb-edge-pwa/"
+
+_INSTALL_HELP_MD = f"""\
 **📲 Install THE MLB EDGE on your phone**
 
-You can pin the app to your home screen so it opens like a normal app —
-no app store needed.
+The fastest, most reliable way to install — gives you the gold ⚾ MLB EDGE
+icon, a full-screen splash, and works offline-friendly via the bundled
+service worker.
+
+### 👉 Go to the installer page
+# [**{_INSTALLER_URL}**]({_INSTALLER_URL})
+
+Open that link on your phone and follow the on-screen prompt. That's it.
+
+---
 
 **iPhone / iPad (Safari)**
-1. Open this page in **Safari** (not Chrome / Discord's in-app browser).
+1. Open **[{_INSTALLER_URL}]({_INSTALLER_URL})** in **Safari**
+   (not Chrome / not Discord's in-app browser).
 2. Tap the **Share** button (square with the up-arrow at the bottom).
 3. Scroll down and tap **Add to Home Screen**.
 4. Tap **Add** in the top right.
@@ -131,9 +142,10 @@ no app store needed.
 > first.
 
 **Android (Chrome)**
-1. Open this page in **Chrome**.
-2. Tap the **⋮** menu in the top right.
-3. Tap **Add to Home screen** *(or* **Install app***)*.
+1. Open **[{_INSTALLER_URL}]({_INSTALLER_URL})** in **Chrome**.
+2. You should see an **Install app** banner — tap it.
+3. If you don't see the banner, tap the **⋮** menu in the top right and
+   choose **Add to Home screen** *(or* **Install app***)*.
 4. Confirm by tapping **Install**.
 
 > If you're tapping the link from inside Discord, tap **Open in browser**
@@ -141,6 +153,13 @@ no app store needed.
 
 Once installed, the icon launches the live MLB Edge dashboard in
 full-screen — no browser bars, no tabs.
+
+---
+
+**Prefer the raw dashboard?** The live Streamlit app is also reachable
+directly at <https://mrbets850.streamlit.app/>. Use the installer link
+above whenever possible — it's the version that uses the uploaded MLB
+EDGE logo and registers the service worker.
 """
 
 

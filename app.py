@@ -5936,7 +5936,11 @@ def _render_rbi_hero_strip():
     )
     st.markdown(html, unsafe_allow_html=True)
 
-_render_rbi_hero_strip()
+# NOTE: The Top 15 — 2+ RBI hero strip is intentionally not rendered at the
+# top of the page. Users still get the full 2+ RBI experience via the
+# "🔥 2+ RBI" tab in the Apps & Generators pill row below. Keeping the
+# function definition above so the underlying logic stays available if we
+# want to surface it elsewhere later.
 
 # ===========================================================================
 # Top-level tab switcher: "⚾ Games" vs "🥎 Slate Pitchers"
@@ -5974,12 +5978,17 @@ st.markdown(
     ".top-tab-strip::-webkit-scrollbar-thumb { background:#92400e; border-radius:3px; }"
     ".top-tab-strip::-webkit-scrollbar-track { background:transparent; }"
     ".top-tab-pill { scroll-snap-align:start; flex:0 0 auto; white-space:nowrap; "
-    "  background:#ffffff; padding:10px 18px; min-height:44px; "
+    "  background:#ffffff; padding:12px 22px; min-height:48px; min-width:128px; "
     "  border-radius:999px; border:2px solid #cbd5e1; cursor:pointer; "
-    "  font-weight:800; font-size:0.98rem; color:#0f172a; "
+    "  font-weight:800; font-size:1.02rem; color:#0f172a; "
     "  text-decoration:none; line-height:1.2; letter-spacing:.01em; "
     "  transition:all .18s ease; box-shadow:0 1px 3px rgba(15,23,42,.06); "
-    "  display:inline-flex; align-items:center; }"
+    "  display:inline-flex; align-items:center; justify-content:center; }"
+    ".apps-gen-header { display:flex; align-items:baseline; justify-content:space-between; "
+    "  margin: 6px 4px 4px; padding: 0 2px; gap: 10px; flex-wrap:wrap; }"
+    ".apps-gen-title { font-weight:900; font-size:1.18rem; color:#0f3a2e; "
+    "  letter-spacing:.01em; text-shadow:0 1px 0 rgba(255,255,255,.4); }"
+    ".apps-gen-sub { font-size:.8rem; color:#475569; font-weight:600; }"
     ".top-tab-pill:hover { border-color:#0f3a2e; transform:translateY(-1px); "
     "  box-shadow:0 4px 10px rgba(15,58,46,.12); color:#0f172a; "
     "  text-decoration:none; }"
@@ -5991,8 +6000,10 @@ st.markdown(
     ".top-tab-pill.active:hover { color:#facc15; }"
     "@media (max-width: 640px) { "
     "  .top-tab-row { padding:12px; } "
-    "  .top-tab-strip { gap:8px; } "
-    "  .top-tab-pill { padding:12px 14px; min-height:48px; font-size:1.0rem; } "
+    "  .top-tab-strip { gap:10px; } "
+    "  .top-tab-pill { padding:14px 20px; min-height:52px; min-width:140px; "
+    "    font-size:1.05rem; } "
+    "  .apps-gen-title { font-size:1.08rem; } "
     "}"
     ".sp-legend { color:#64748b; font-size:.78rem; margin: 4px 0 12px 0; }"
     ".sp-legend code { background:#f1f5f9; padding: 1px 6px; border-radius:6px; "
@@ -6080,6 +6091,10 @@ for _i, _opt in enumerate(_TOP_VIEW_OPTIONS):
         f'<a class="top-tab-pill{_active}" href="{_href}" target="_self">{_opt}</a>'
     )
 st.markdown(
+    '<div class="apps-gen-header">'
+    '<span class="apps-gen-title">🧰 Apps &amp; Generators</span>'
+    '<span class="apps-gen-sub">Tap a pill · swipe → for more</span>'
+    '</div>'
     '<div class="top-tab-row"><div class="top-tab-strip">'
     + "".join(_pills_html)
     + '</div></div>',
@@ -10284,14 +10299,23 @@ home_matchup = build_matchup_table(ctx["home_lineup"], batters_df, pitchers_df, 
                                    slate_date=selected_date)
 
 # ----- Tabs -----
-# Tiny hint above the strip so mobile users know to swipe for more views
+# Prominent header for the per-game views — these are the prime area now
+# that the Top 15 2+ RBI hero strip has been removed from the top of the
+# page. We promote the Matchup / Hot Batters tab carousel with a bigger,
+# higher-contrast banner so mobile users immediately see what's here.
 st.markdown(
-    "<div style='display:flex;align-items:center;gap:8px;margin:6px 2px 4px;"
-    "font-weight:800;font-size:0.95rem;color:#0f3a2e;'>"
+    "<div style='display:flex;align-items:center;gap:10px;"
+    "margin:12px 2px 8px;padding:10px 14px;"
+    "background:linear-gradient(110deg,#04130b 0%,#0f3a2e 60%,#1d5a3f 100%);"
+    "border:2px solid #facc15;border-radius:14px;"
+    "box-shadow:0 4px 14px rgba(5,20,12,.30);'>"
     "<span style='display:inline-flex;align-items:center;justify-content:center;"
-    "width:22px;height:22px;border-radius:50%;background:#facc15;color:#0f3a2e;"
-    "font-weight:900;'>☰</span>"
-    "Game views — tap a tab below (swipe → for more)"
+    "width:30px;height:30px;border-radius:50%;background:#facc15;color:#0f3a2e;"
+    "font-weight:900;font-size:1.05rem;'>☰</span>"
+    "<span style='font-weight:900;font-size:1.08rem;color:#facc15;"
+    "letter-spacing:.01em;'>Game views</span>"
+    "<span style='color:#fde68a;font-weight:600;font-size:.88rem;"
+    "margin-left:auto;'>tap a tab · swipe → for more</span>"
     "</div>",
     unsafe_allow_html=True,
 )

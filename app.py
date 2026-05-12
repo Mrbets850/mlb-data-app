@@ -113,6 +113,14 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ---------------------------------------------------------------------------
+# PWA: inject manifest link, theme color and apple-mobile meta tags so the
+# app is installable on iOS / Android home screens. See pwa.py and PWA.md
+# for Streamlit-specific caveats (no service worker at root scope).
+# ---------------------------------------------------------------------------
+from pwa import inject_pwa_head_tags, render_install_help_expander
+inject_pwa_head_tags()
+
 # ===========================================================================
 # Team data (id used to fetch logos from MLB CDN)
 # ===========================================================================
@@ -10433,6 +10441,8 @@ def _render_data_status_table() -> str:
         f'<tbody>{"".join(rows_html)}</tbody></table>'
     )
 
+
+render_install_help_expander(expanded=False)
 
 with st.expander("📊 Data status & sources", expanded=False):
     c1, c2, c3 = st.columns(3)

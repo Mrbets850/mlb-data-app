@@ -6746,9 +6746,20 @@ if _view == "🎯 HRR 1.5+":
 
 # ============== RBI Edge Model view ==============
 # Replaces the legacy "🔥 2+ RBI" tab. The new model is implemented in
-# rbi_model.py and exposes render_rbi_model_page().
+# rbi_model.py and exposes render_rbi_model_page(). We pass the app's
+# already-cached schedule + lineup/weather helpers so the module can use
+# Confirmed lineups when posted and fall back to Projected lineups
+# (most-used 9 over recent games) before its own demo slate.
 if _view == "⚾ RBI Edge Model":
-    render_rbi_model_page()
+    _rbi_sched = filter_pre_game_schedule(schedule_df) if schedule_df is not None else schedule_df
+    render_rbi_model_page(
+        schedule_df=_rbi_sched,
+        batters_df=batters_df,
+        pitchers_df=pitchers_df,
+        build_game_context_fn=build_game_context,
+        clean_name_fn=clean_name,
+        norm_team_fn=norm_team,
+    )
     st.stop()
 
 # ============== AI HR Parlay view ==============

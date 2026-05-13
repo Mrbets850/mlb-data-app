@@ -1,9 +1,19 @@
 """RBI Edge Model — daily RBI prop targets, parlays, and player deep dive.
 
 Exposes ``render_rbi_model_page()`` so the main Streamlit app can wire this in
-as a top-level tab. The page is designed to never crash: every external data
-source is wrapped in a try/except, and a deterministic demo slate is used as
-a fallback so the UI is always verifiable.
+as a top-level tab.
+
+Slate cascade (in order):
+  1. **Confirmed lineups** — pulled live from the main app's boxscore helpers.
+  2. **Projected lineups** — derived from each team's most-used 9 over recent
+     completed games (via the app's ``get_projected_lineup`` helper). Used
+     automatically for any game whose lineup has not yet been posted.
+  3. **Demo fallback** — a deterministic 12-player slate used **only** when
+     no live or projected rows can be assembled at all (e.g. offline /
+     dependencies missing).
+
+Every row carries a ``lineup_status`` of ``Confirmed`` / ``Projected`` / ``Demo``
+so consumers (UI + downstream filters) can tell them apart.
 """
 
 from __future__ import annotations
@@ -432,6 +442,7 @@ def _demo_slate() -> pd.DataFrame:
     ]
     df = pd.DataFrame(demo)
     df["matchup"] = df["game"]
+    df["lineup_status"] = "Demo"
     return df
 
 
@@ -439,8 +450,207 @@ def _demo_slate() -> pd.DataFrame:
 # Build today's slate (live → fallback)
 # ---------------------------------------------------------------------------
 
+def _row_from_app_batter(name: str, team: str, lineup_spot: int, b_row: Any,
+                          p_row: Any, game_row: Any, weather_temp: float,
+                          bat_side: str, pitch_hand: str) -> Dict[str, Any]:
+    """Build a scoring row from the app's pre-loaded batters_df / pitchers_df.
+
+    Missing values use the same defaults the score function expects, so any
+    gap in the CSV degrades gracefully instead of crashing.
+    """
+    def _f(v, default):
+        try:
+            if v is None:
+                return float(default)
+            fv = float(v)
+            if pd.isna(fv):
+                return float(default)
+            return fv
+        except (TypeError, ValueError):
+            return float(default)
+
+    if b_row is not None:
+        xwoba = _f(b_row.get("xwOBA"), 0.320)
+        xslg = _f(b_row.get("xSLG"), 0.400)
+        slg = _f(b_row.get("SLG"), 0.400)
+        barrel = _f(b_row.get("Barrel%"), 8.0)
+        hard = _f(b_row.get("HardHit%"), 38.0)
+        kpct = _f(b_row.get("K%"), 22.0)
+        iso = _f(b_row.get("ISO"), 0.150)
+    else:
+        xwoba, xslg, slg, barrel, hard, kpct, iso = 0.320, 0.400, 0.400, 8.0, 38.0, 22.0, 0.150
+
+    sp_whip = _f(p_row.get("WHIP") if p_row is not None else None, 1.30)
+    sp_era = _f(p_row.get("ERA") if p_row is not None else None, 4.00)
+    sp_bb9 = _f(p_row.get("BB/9") if p_row is not None else
+                (p_row.get("BB9") if p_row is not None else None), 3.0)
+
+    home_park_factor = 1.0
+    try:
+        pf = float(game_row.get("park_factor", 100))
+        # The app stores park factor as 100-centered ints (e.g. 105). Scale to ~1.0.
+        home_park_factor = pf / 100.0 if pf > 5 else pf
+    except Exception:
+        pass
+
+    # Platoon: hitter L vs RHP or hitter R vs LHP is an advantage.
+    bs = (bat_side or "").upper()[:1]
+    ph = (pitch_hand or "").upper()[:1]
+    platoon = (bs == "L" and ph == "R") or (bs == "R" and ph == "L")
+
+    return {
+        "player": name,
+        "team": team,
+        "opp": "",  # filled by caller
+        "game": "",  # filled by caller
+        "matchup": "",  # filled by caller
+        "lineup_slot": int(lineup_spot) if lineup_spot else 5,
+        "team_obp_l14": 0.320,
+        "sp_whip": sp_whip,
+        "sp_bb9": sp_bb9,
+        "game_total": 8.5,
+        "bullpen_era_l10": sp_era,  # use SP ERA as a rough proxy when bullpen unknown
+        "xwoba_l15": xwoba,
+        "xslg": xslg,
+        "slg": slg,
+        "barrel_pct": barrel,
+        "hard_hit_pct": hard,
+        "k_pct": kpct,
+        "iso_l15": iso,
+        "risp_avg": 0.260,
+        "platoon_advantage": platoon,
+        "park_run_factor": home_park_factor,
+        "temp_f": float(weather_temp) if weather_temp else 72.0,
+        "team_runs_l7": 4.5,
+        "lineup_stable": True,
+    }
+
+
+def _build_slate_from_app(
+    schedule_df: pd.DataFrame,
+    batters_df: pd.DataFrame,
+    pitchers_df: pd.DataFrame,
+    build_game_context_fn,
+    clean_name_fn,
+    norm_team_fn,
+) -> Tuple[pd.DataFrame, List[str]]:
+    """Preferred path: use the host app's already-cached schedule/lineup/weather.
+
+    Returns ``(df, notices)``. Each row's ``lineup_status`` is set to
+    ``"Confirmed"`` or ``"Projected"``. Side is silently skipped if the
+    app reports it as ``"Not Posted"``.
+    """
+    notices: List[str] = []
+    if schedule_df is None or len(schedule_df) == 0:
+        return pd.DataFrame(), ["Slate schedule is empty for today."]
+
+    # Pre-index batters and pitchers by name_key for O(1) lookup.
+    batters_idx: Dict[str, Any] = {}
+    if isinstance(batters_df, pd.DataFrame) and not batters_df.empty and "name_key" in batters_df.columns:
+        batters_idx = {str(k): v for k, v in batters_df.set_index("name_key").to_dict("index").items()}
+    pitchers_idx: Dict[str, Any] = {}
+    if isinstance(pitchers_df, pd.DataFrame) and not pitchers_df.empty and "name_key" in pitchers_df.columns:
+        pitchers_idx = {str(k): v for k, v in pitchers_df.set_index("name_key").to_dict("index").items()}
+
+    n_confirmed_sides = 0
+    n_projected_sides = 0
+    n_not_posted_sides = 0
+    rows: List[Dict[str, Any]] = []
+
+    for _, game in schedule_df.iterrows():
+        try:
+            ctx = build_game_context_fn(game)
+        except Exception:
+            ctx = None
+        if not isinstance(ctx, dict):
+            continue
+
+        weather = ctx.get("weather") or {}
+        try:
+            temp = float(weather.get("temp_f") or weather.get("temperature") or 72.0)
+        except (TypeError, ValueError):
+            temp = 72.0
+
+        for side in ("away", "home"):
+            status = ctx.get(f"{side}_status") or ""
+            if status == "Not Posted":
+                n_not_posted_sides += 1
+                continue
+            if status == "Confirmed":
+                n_confirmed_sides += 1
+            elif status == "Projected":
+                n_projected_sides += 1
+            else:
+                continue
+
+            lineup = ctx.get(f"{side}_lineup")
+            if not isinstance(lineup, pd.DataFrame) or lineup.empty:
+                continue
+
+            team_abbr = norm_team_fn(game.get(f"{side}_abbr", "")) or ""
+            opp_side = "home" if side == "away" else "away"
+            opp_abbr = norm_team_fn(game.get(f"{opp_side}_abbr", "")) or ""
+            opp_pitcher = game.get(f"{opp_side}_probable", "TBD")
+            game_label = f"{game.get('away_abbr', '')} @ {game.get('home_abbr', '')}"
+
+            p_row = None
+            if opp_pitcher and opp_pitcher != "TBD":
+                p_key = clean_name_fn(opp_pitcher) if clean_name_fn else str(opp_pitcher).lower()
+                p_row = pitchers_idx.get(p_key)
+
+            for _, hitter in lineup.iterrows():
+                name = hitter.get("player_name") or hitter.get("name") or ""
+                if not name:
+                    continue
+                spot_val = hitter.get("lineup_spot")
+                try:
+                    slot = int(float(spot_val)) if spot_val is not None and not pd.isna(spot_val) else 5
+                except (TypeError, ValueError):
+                    slot = 5
+
+                name_key = clean_name_fn(name) if clean_name_fn else str(name).lower()
+                b_row = batters_idx.get(name_key)
+                bat_side = hitter.get("bat_side") or (b_row.get("bat_side") if b_row else "")
+                pitch_hand = hitter.get("opposing_pitch_hand") or ""
+
+                row = _row_from_app_batter(
+                    name=name, team=team_abbr, lineup_spot=slot,
+                    b_row=b_row, p_row=p_row, game_row=game,
+                    weather_temp=temp, bat_side=bat_side, pitch_hand=pitch_hand,
+                )
+                row["opp"] = opp_abbr
+                row["game"] = game_label
+                row["matchup"] = game_label
+                row["lineup_status"] = "Confirmed" if status == "Confirmed" else "Projected"
+                row["lineup_stable"] = status == "Confirmed"
+                rows.append(row)
+
+    if rows:
+        if n_confirmed_sides and n_projected_sides:
+            notices.append(
+                f"Using **{n_confirmed_sides} confirmed** + **{n_projected_sides} projected** lineups "
+                f"({n_not_posted_sides} side(s) skipped — not posted)."
+            )
+        elif n_projected_sides:
+            notices.append(
+                f"No confirmed lineups posted yet — using **{n_projected_sides} projected lineup(s)** "
+                "derived from each team's most-used 9 over recent games. "
+                "Confirmed lineups typically post 2–4 hours before first pitch."
+            )
+        elif n_confirmed_sides:
+            notices.append(f"All **{n_confirmed_sides}** lineups confirmed.")
+        return pd.DataFrame(rows), notices
+
+    return pd.DataFrame(), notices
+
+
 def _build_live_slate(date_iso: str, season: int) -> Tuple[pd.DataFrame, List[str]]:
-    """Best-effort live data assembly. Returns (df, notices)."""
+    """Standalone fallback (no app helpers): direct statsapi/pybaseball pulls.
+
+    Used only if ``render_rbi_model_page`` is called without injected
+    dependencies. Returns confirmed-lineup rows only — no projected fallback
+    in this mode since we don't have access to the app's recent-games cache.
+    """
     notices: List[str] = []
     games = _fetch_schedule(date_iso)
     if not games:
@@ -510,6 +720,7 @@ def _build_live_slate(date_iso: str, season: int) -> Tuple[pd.DataFrame, List[st
                     "temp_f": 72.0,
                     "team_runs_l7": 4.5,
                     "lineup_stable": True,
+                    "lineup_status": "Confirmed",
                 })
 
     if not rows:
@@ -589,6 +800,8 @@ def _score_slate(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     out = df.copy()
+    if "lineup_status" not in out.columns:
+        out["lineup_status"] = "Confirmed"
     out["score"] = out.apply(lambda r: score_player(r.to_dict()), axis=1)
     out["label"] = out["score"].apply(score_to_label)
     out["prob"] = out["score"].apply(score_to_prob)
@@ -596,6 +809,13 @@ def _score_slate(df: pd.DataFrame) -> pd.DataFrame:
     flags = []
     for _, r in out.iterrows():
         f = []
+        status = str(r.get("lineup_status", "Confirmed"))
+        if status == "Projected":
+            f.append("📋 Projected")
+        elif status == "Demo":
+            f.append("🧪 Demo")
+        else:
+            f.append("✅ Confirmed")
         if r.get("platoon_advantage"):
             f.append("★ Platoon")
         if float(r.get("park_run_factor", 1.0)) >= 1.05:
@@ -627,12 +847,19 @@ def _render_leaderboard(scored: pd.DataFrame) -> None:
     st.markdown("### 🏆 Leaderboard — Today's RBI Edge Targets")
 
     games = sorted(scored["game"].unique().tolist())
+    has_projected = bool((scored.get("lineup_status") == "Projected").any()) if "lineup_status" in scored.columns else False
     with st.sidebar:
         st.markdown("#### RBI Edge filters")
         min_score = st.slider("Min RBI Edge Score", 0.30, 0.95, 0.65, 0.01, key="rbi_edge_min_score")
         sel_games = st.multiselect("Game filter", games, default=games, key="rbi_edge_games")
         only_platoon = st.checkbox("Platoon advantage only", value=False, key="rbi_edge_platoon")
         only_hitter_park = st.checkbox("Hitter park only (≥1.05)", value=False, key="rbi_edge_park")
+        only_confirmed = False
+        if has_projected:
+            only_confirmed = st.checkbox(
+                "Confirmed lineups only", value=False, key="rbi_edge_confirmed_only",
+                help="Hide rows from projected (not-yet-posted) lineups.",
+            )
 
     f = scored[scored["score"] >= float(min_score)]
     if sel_games:
@@ -641,13 +868,22 @@ def _render_leaderboard(scored: pd.DataFrame) -> None:
         f = f[f["platoon_advantage"] == True]  # noqa: E712
     if only_hitter_park:
         f = f[f["park_run_factor"].astype(float) >= 1.05]
+    if has_projected and only_confirmed:
+        f = f[f["lineup_status"] == "Confirmed"]
 
     if f.empty:
         st.info("No hitters match the current filters. Try lowering the score threshold.")
         return
 
-    show = f[["player", "team", "lineup_slot", "matchup", "score", "label", "prob", "flags"]].copy()
-    show.columns = ["Player", "Team", "Slot", "Matchup", "RBI Edge", "Tier", "Est. Prob", "Key Flags"]
+    cols = ["player", "team", "lineup_slot", "matchup", "lineup_status", "score", "label", "prob", "flags"]
+    cols = [c for c in cols if c in f.columns]
+    show = f[cols].copy()
+    rename_map = {
+        "player": "Player", "team": "Team", "lineup_slot": "Slot", "matchup": "Matchup",
+        "lineup_status": "Lineup", "score": "RBI Edge", "label": "Tier",
+        "prob": "Est. Prob", "flags": "Key Flags",
+    }
+    show.columns = [rename_map.get(c, c) for c in show.columns]
     show["RBI Edge"] = show["RBI Edge"].astype(float).round(2)
 
     def _row_style(row: pd.Series) -> List[str]:
@@ -785,8 +1021,21 @@ def _render_deep_dive(scored: pd.DataFrame) -> None:
 # Public entrypoint
 # ---------------------------------------------------------------------------
 
-def render_rbi_model_page() -> None:
-    """Render the RBI Edge Model page inside the main Streamlit app."""
+def render_rbi_model_page(
+    schedule_df: pd.DataFrame | None = None,
+    batters_df: pd.DataFrame | None = None,
+    pitchers_df: pd.DataFrame | None = None,
+    build_game_context_fn=None,
+    clean_name_fn=None,
+    norm_team_fn=None,
+) -> None:
+    """Render the RBI Edge Model page inside the main Streamlit app.
+
+    When called with the host app's pre-loaded ``schedule_df`` and helpers
+    (``build_game_context_fn``, ``clean_name_fn``, ``norm_team_fn``), the
+    cascade is **confirmed → projected → demo**. Without those helpers,
+    falls back to direct ``statsapi``/``pybaseball`` pulls and then demo.
+    """
     st.markdown(
         '<div class="section-title" style="font-size:1.45rem;margin-top:8px;">'
         '⚾ RBI Edge Model — Daily Prop Targets</div>',
@@ -816,13 +1065,37 @@ def render_rbi_model_page() -> None:
         ts = _dt.datetime.now().strftime("%b %d %Y %I:%M %p CT")
         st.caption(f"Last updated: {ts}")
 
-    # --- Build slate (live → fallback) ---
+    # --- Build slate: confirmed → projected → demo ---
     today = _dt.date.today()
     date_iso = today.strftime("%Y-%m-%d")
     season = today.year
 
+    notices: List[str] = []
+    live_df = pd.DataFrame()
+
     with st.spinner("Building today's RBI Edge slate…"):
-        live_df, notices = _build_live_slate(date_iso, season)
+        # Preferred path: host app injected schedule + helpers (covers
+        # confirmed AND projected lineups via build_game_context).
+        if schedule_df is not None and build_game_context_fn is not None:
+            try:
+                live_df, app_notices = _build_slate_from_app(
+                    schedule_df=schedule_df,
+                    batters_df=batters_df if batters_df is not None else pd.DataFrame(),
+                    pitchers_df=pitchers_df if pitchers_df is not None else pd.DataFrame(),
+                    build_game_context_fn=build_game_context_fn,
+                    clean_name_fn=clean_name_fn or (lambda s: str(s).lower()),
+                    norm_team_fn=norm_team_fn or (lambda s: str(s)),
+                )
+                notices.extend(app_notices)
+            except Exception as exc:
+                notices.append(f"App-injected slate builder failed: {exc}. Trying standalone pull…")
+                live_df = pd.DataFrame()
+
+        # Standalone fallback (no app helpers, or app path returned empty).
+        if live_df.empty:
+            standalone_df, sa_notices = _build_live_slate(date_iso, season)
+            notices.extend(sa_notices)
+            live_df = standalone_df
 
     fallback_used = False
     if live_df.empty:
@@ -831,14 +1104,32 @@ def render_rbi_model_page() -> None:
 
     scored = _score_slate(live_df)
 
-    for n in notices:
-        st.info(n)
-    if fallback_used:
+    # --- Surface lineup-status banner (always visible, always accurate) ---
+    if not fallback_used and "lineup_status" in scored.columns:
+        n_conf = int((scored["lineup_status"] == "Confirmed").sum())
+        n_proj = int((scored["lineup_status"] == "Projected").sum())
+        if n_conf and not n_proj:
+            st.success(f"✅ **Confirmed lineups** — scoring {n_conf} hitters across today's slate.")
+        elif n_proj and not n_conf:
+            st.warning(
+                f"📋 **Projected lineups** — confirmed lineups have not posted yet. "
+                f"Scoring {n_proj} hitters using each team's most-used 9 from recent games. "
+                "Refresh after confirmed lineups drop (typically 2–4 hours before first pitch)."
+            )
+        elif n_conf and n_proj:
+            st.info(
+                f"✅ {n_conf} confirmed · 📋 {n_proj} projected — mixed slate. "
+                "Projected rows are flagged in the Key Flags column."
+            )
+    elif fallback_used:
         st.warning(
-            "Live data unavailable — showing a verifiable demo slate. "
-            "On a live slate day with `statsapi` + `pybaseball` installed and lineups confirmed, "
-            "this page will fill in with real hitters."
+            "🧪 **Demo fallback** — live + projected data unavailable (no network, missing dependencies, "
+            "or no recent games to project from). Showing a deterministic demo slate so the UI remains usable. "
+            "On a live slate day this page will auto-fill with confirmed or projected lineups."
         )
+
+    for n in notices:
+        st.caption(n)
 
     tab1, tab2, tab3, tab4 = st.tabs([
         "🏆 Leaderboard",

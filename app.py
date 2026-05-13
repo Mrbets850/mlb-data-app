@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+from rbi_model import render_rbi_model_page
 import re
 import unicodedata
 import urllib.parse
@@ -6133,7 +6134,7 @@ def _render_rbi_hero_strip():
         'RBI matchup — swipe to see all 15. Refreshes by slate date and blends '
         "today's opponent / probable pitcher / lineup spot / park &amp; weather "
         'with each hitter\'s L10 form when available. Started games are '
-        'excluded. Open the <b>🔥 2+ RBI</b> tab for filters &amp; full table.</div>'
+        'excluded. Open the <b>⚾ RBI Edge Model</b> tab for filters &amp; full table.</div>'
         '<div class="rbi-hero-rail">' + "".join(cards_html) + '</div>'
         '</div>'
     )
@@ -6156,7 +6157,7 @@ _TOP_VIEW_OPTIONS = [
     "💎 HR Sleepers",
     "📊 Total Bases 1.5+",
     "🎯 HRR 1.5+",
-    "🔥 2+ RBI",
+    "⚾ RBI Edge Model",
     "🤖 AI HR Parlay",
     "👑 HR Round Robin",
     "🎯 AI K Generator",
@@ -6743,121 +6744,22 @@ if _view == "🎯 HRR 1.5+":
         )
     st.stop()
 
-# ============== 2+ RBI view ==============
-if _view == "🔥 2+ RBI":
-    st.markdown(
-        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
-        '🔥 2+ RBI Plays — Top Targets</div>',
-        unsafe_allow_html=True,
+# ============== RBI Edge Model view ==============
+# Replaces the legacy "🔥 2+ RBI" tab. The new model is implemented in
+# rbi_model.py and exposes render_rbi_model_page(). We pass the app's
+# already-cached schedule + lineup/weather helpers so the module can use
+# Confirmed lineups when posted and fall back to Projected lineups
+# (most-used 9 over recent games) before its own demo slate.
+if _view == "⚾ RBI Edge Model":
+    _rbi_sched = filter_pre_game_schedule(schedule_df) if schedule_df is not None else schedule_df
+    render_rbi_model_page(
+        schedule_df=_rbi_sched,
+        batters_df=batters_df,
+        pitchers_df=pitchers_df,
+        build_game_context_fn=build_game_context,
+        clean_name_fn=clean_name,
+        norm_team_fn=norm_team,
     )
-    st.markdown(
-        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
-        'Best plays for clearing 2+ RBI tonight. RBI Score (0-100) blends '
-        '<b>Power</b> 40% (xSLG, ISO, Barrel%, HardHit%) · <b>Lineup spot</b> 30% '
-        '(spots 3-5 dominate — they bat with runners on most often) · '
-        '<b>Tonight’s matchup</b> 20% (opp SP, park, weather, ceiling) · '
-        '<b>Contact</b> 10% (xBA — must put it in play).'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    if batters_df.empty:
-        st.warning("Batter CSV hasn’t loaded yet.")
-        st.stop()
-
-    _rbi_sched = filter_pre_game_schedule(schedule_df)
-    _rbi_total = int(len(schedule_df)); _rbi_elig = int(len(_rbi_sched))
-    _rbi_excl  = _rbi_total - _rbi_elig
-    if _rbi_sched is None or _rbi_sched.empty:
-        st.warning(
-            f"All {_rbi_total} games on this slate have already started or "
-            "finished. No pre-game matchups remain to score 2+ RBI targets from."
-        )
-        st.stop()
-    if _rbi_excl > 0:
-        st.markdown(
-            f'<div style="margin:0 0 10px 0; padding:8px 12px; '
-            f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
-            f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
-            f'🕒 Using <b>{_rbi_elig}</b> pre-game matchup'
-            f'{"s" if _rbi_elig != 1 else ""}; '
-            f'started &amp; completed games excluded ({_rbi_excl} hidden).'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-    try:
-        _slate_iso_rbi = pd.to_datetime(selected_date).strftime("%Y-%m-%d")
-    except Exception:
-        _slate_iso_rbi = ""
-    with st.spinner("Scoring 2+ RBI targets across the slate…"):
-        rbi_df = build_targets_table(_rbi_sched, batters_df, pitchers_df,
-                                      mode="rbi2", slate_date_iso=_slate_iso_rbi)
-
-    if rbi_df.empty:
-        st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
-        st.stop()
-
-    # Filters
-    f_cols = st.columns([1.0, 1.0, 1.0, 1.0, 1.6])
-    with f_cols[0]:
-        _max_spot = st.number_input("Max lineup spot", min_value=1, max_value=9, value=6, step=1,
-                                    key="rbi_max_spot",
-                                    help="Bottom-of-order bats rarely come up with runners on.")
-    with f_cols[1]:
-        _min_iso = st.number_input("Min ISO", min_value=0.000, max_value=0.400, value=0.150, step=0.005,
-                                   format="%.3f", key="rbi_min_iso",
-                                   help="Floor for power — RBIs usually need an XBH or HR.")
-    with f_cols[2]:
-        _min_barrel = st.number_input("Min Barrel%", min_value=0.0, max_value=20.0, value=6.0, step=0.5,
-                                      key="rbi_min_barrel",
-                                      help="Power profile floor. League average is ~7%.")
-    with f_cols[3]:
-        _min_pa = st.number_input("Min PA", min_value=0, max_value=700, value=80, step=10,
-                                  key="rbi_min_pa")
-    with f_cols[4]:
-        _topn = st.slider("Show top N", min_value=10, max_value=30, value=15, step=5, key="rbi_topn")
-
-    fdf = rbi_df.copy()
-    fdf = fdf[fdf["Spot"] <= int(_max_spot)]
-    if _min_iso and _min_iso > 0:
-        fdf = fdf[fdf["ISO"].fillna(-1) >= float(_min_iso)]
-    if _min_barrel and _min_barrel > 0:
-        fdf = fdf[fdf["Barrel%"].fillna(-1) >= float(_min_barrel)]
-    if _min_pa and _min_pa > 0:
-        fdf = fdf[fdf["PA"].fillna(0).astype(float) >= float(_min_pa)]
-    fdf = fdf.head(int(_topn)).reset_index(drop=True)
-
-    if fdf.empty:
-        st.info("No targets match the current filters. Try lowering Min ISO or Min Barrel%.")
-    else:
-        st.markdown(render_targets_html(fdf, mode="rbi2"), unsafe_allow_html=True)
-        st.markdown(
-            render_source_chips([
-                "savant:batters", "savant:pitchers",
-                "statsapi:schedule", "statsapi:boxscore",
-                "rotogrinders:weather", "openmeteo:weather",
-            ]),
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<div style="margin: 6px 0 4px 0; color:#64748b; font-size:.82rem;">'
-            'Tiers — Elite ≥75 · Strong ≥65 · Average ≥55 · Soft <55. '
-            'Sort: RBI Score ↓. '
-            'Pills: <b>CONF</b>/<b>PROJ</b>/<b>TBD</b> for lineup status. '
-            '★ = platoon edge. '
-            "Scores refresh by slate date and blend today's opponent / probable pitcher, "
-            'park &amp; weather, lineup spot, and L10 form when available; started games are excluded.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-        dl_cols = [c for c in fdf.columns if not c.startswith("_")]
-        csv_bytes = fdf[dl_cols].to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "⬇️ Download 2+ RBI Targets (CSV)",
-            data=csv_bytes,
-            file_name=f"rbi_targets_{selected_date}.csv",
-            mime="text/csv",
-            width='content',
-        )
     st.stop()
 
 # ============== AI HR Parlay view ==============

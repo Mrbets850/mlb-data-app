@@ -1,5 +1,7 @@
 pandas
+numpy
 pybaseball
+MLB-StatsAPI
 lxml
 html5lib
 beautifulsoup4

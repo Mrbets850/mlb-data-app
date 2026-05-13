@@ -3,17 +3,15 @@
 Exposes ``render_rbi_model_page()`` so the main Streamlit app can wire this in
 as a top-level tab.
 
-Slate cascade (in order):
-  1. **Confirmed lineups** — pulled live from the main app's boxscore helpers.
+Slate sources (in order, no fake/demo data):
+  1. **Confirmed lineups** — from the host app's boxscore helpers.
   2. **Projected lineups** — derived from each team's most-used 9 over recent
      completed games (via the app's ``get_projected_lineup`` helper). Used
      automatically for any game whose lineup has not yet been posted.
-  3. **Demo fallback** — a deterministic 12-player slate used **only** when
-     no live or projected rows can be assembled at all (e.g. offline /
-     dependencies missing).
 
-Every row carries a ``lineup_status`` of ``Confirmed`` / ``Projected`` / ``Demo``
-so consumers (UI + downstream filters) can tell them apart.
+Every row carries a ``lineup_status`` of ``Confirmed`` or ``Projected``. If
+neither is available we render a polished empty state explaining what is
+missing, matching the other generators in the app.
 """
 
 from __future__ import annotations
@@ -361,93 +359,7 @@ def _fetch_weather(team_abbr: str) -> Tuple[float, str]:
 
 
 # ---------------------------------------------------------------------------
-# Demo fallback slate
-# ---------------------------------------------------------------------------
-
-def _demo_slate() -> pd.DataFrame:
-    """Deterministic demo slate so the UI is always verifiable."""
-    demo: List[Dict[str, Any]] = [
-        dict(player="Aaron Judge", team="NYY", opp="BOS", game="NYY @ BOS",
-             lineup_slot=2, team_obp_l14=0.348, sp_whip=1.42, sp_bb9=3.6,
-             game_total=9.5, bullpen_era_l10=4.10, xwoba_l15=0.438, xslg=0.612,
-             slg=0.560, barrel_pct=22.4, hard_hit_pct=58.1, k_pct=27.0,
-             iso_l15=0.290, risp_avg=0.310, platoon_advantage=True,
-             park_run_factor=1.07, temp_f=74, team_runs_l7=5.4, lineup_stable=True),
-        dict(player="Shohei Ohtani", team="LAD", opp="SDP", game="LAD @ SDP",
-             lineup_slot=3, team_obp_l14=0.339, sp_whip=1.18, sp_bb9=2.9,
-             game_total=8.5, bullpen_era_l10=3.85, xwoba_l15=0.421, xslg=0.604,
-             slg=0.555, barrel_pct=19.8, hard_hit_pct=55.2, k_pct=24.1,
-             iso_l15=0.286, risp_avg=0.290, platoon_advantage=True,
-             park_run_factor=0.96, temp_f=70, team_runs_l7=5.1, lineup_stable=True),
-        dict(player="Juan Soto", team="NYM", opp="PHI", game="NYM @ PHI",
-             lineup_slot=2, team_obp_l14=0.341, sp_whip=1.31, sp_bb9=3.2,
-             game_total=9.0, bullpen_era_l10=4.30, xwoba_l15=0.412, xslg=0.581,
-             slg=0.540, barrel_pct=17.5, hard_hit_pct=53.7, k_pct=20.2,
-             iso_l15=0.252, risp_avg=0.304, platoon_advantage=True,
-             park_run_factor=1.04, temp_f=78, team_runs_l7=5.0, lineup_stable=True),
-        dict(player="Bobby Witt Jr.", team="KCR", opp="MIN", game="KCR @ MIN",
-             lineup_slot=2, team_obp_l14=0.327, sp_whip=1.27, sp_bb9=3.1,
-             game_total=8.5, bullpen_era_l10=4.05, xwoba_l15=0.391, xslg=0.555,
-             slg=0.515, barrel_pct=13.6, hard_hit_pct=50.8, k_pct=18.4,
-             iso_l15=0.235, risp_avg=0.288, platoon_advantage=False,
-             park_run_factor=1.01, temp_f=68, team_runs_l7=4.8, lineup_stable=True),
-        dict(player="Yordan Alvarez", team="HOU", opp="TEX", game="HOU @ TEX",
-             lineup_slot=3, team_obp_l14=0.335, sp_whip=1.36, sp_bb9=3.4,
-             game_total=9.5, bullpen_era_l10=4.50, xwoba_l15=0.418, xslg=0.598,
-             slg=0.548, barrel_pct=18.3, hard_hit_pct=54.4, k_pct=22.8,
-             iso_l15=0.272, risp_avg=0.298, platoon_advantage=True,
-             park_run_factor=1.06, temp_f=82, team_runs_l7=5.2, lineup_stable=True),
-        dict(player="Mookie Betts", team="LAD", opp="SDP", game="LAD @ SDP",
-             lineup_slot=1, team_obp_l14=0.339, sp_whip=1.18, sp_bb9=2.9,
-             game_total=8.5, bullpen_era_l10=3.85, xwoba_l15=0.376, xslg=0.520,
-             slg=0.490, barrel_pct=10.4, hard_hit_pct=46.7, k_pct=15.6,
-             iso_l15=0.205, risp_avg=0.295, platoon_advantage=False,
-             park_run_factor=0.96, temp_f=70, team_runs_l7=5.1, lineup_stable=True),
-        dict(player="José Ramírez", team="CLE", opp="DET", game="CLE @ DET",
-             lineup_slot=3, team_obp_l14=0.330, sp_whip=1.40, sp_bb9=3.5,
-             game_total=8.0, bullpen_era_l10=4.20, xwoba_l15=0.385, xslg=0.548,
-             slg=0.510, barrel_pct=12.8, hard_hit_pct=48.3, k_pct=12.5,
-             iso_l15=0.240, risp_avg=0.300, platoon_advantage=True,
-             park_run_factor=0.99, temp_f=66, team_runs_l7=4.6, lineup_stable=True),
-        dict(player="Vladimir Guerrero Jr.", team="TOR", opp="BAL", game="TOR @ BAL",
-             lineup_slot=4, team_obp_l14=0.332, sp_whip=1.29, sp_bb9=3.0,
-             game_total=9.0, bullpen_era_l10=4.10, xwoba_l15=0.402, xslg=0.572,
-             slg=0.525, barrel_pct=14.7, hard_hit_pct=52.6, k_pct=17.3,
-             iso_l15=0.245, risp_avg=0.296, platoon_advantage=True,
-             park_run_factor=1.05, temp_f=73, team_runs_l7=4.9, lineup_stable=True),
-        dict(player="Corey Seager", team="TEX", opp="HOU", game="HOU @ TEX",
-             lineup_slot=2, team_obp_l14=0.336, sp_whip=1.22, sp_bb9=2.8,
-             game_total=9.5, bullpen_era_l10=3.95, xwoba_l15=0.395, xslg=0.560,
-             slg=0.520, barrel_pct=15.0, hard_hit_pct=51.0, k_pct=20.5,
-             iso_l15=0.250, risp_avg=0.282, platoon_advantage=True,
-             park_run_factor=1.08, temp_f=82, team_runs_l7=5.0, lineup_stable=True),
-        dict(player="Pete Alonso", team="NYM", opp="PHI", game="NYM @ PHI",
-             lineup_slot=4, team_obp_l14=0.341, sp_whip=1.31, sp_bb9=3.2,
-             game_total=9.0, bullpen_era_l10=4.30, xwoba_l15=0.358, xslg=0.520,
-             slg=0.490, barrel_pct=15.6, hard_hit_pct=50.1, k_pct=24.5,
-             iso_l15=0.232, risp_avg=0.260, platoon_advantage=False,
-             park_run_factor=1.04, temp_f=78, team_runs_l7=5.0, lineup_stable=True),
-        dict(player="Adolis García", team="TEX", opp="HOU", game="HOU @ TEX",
-             lineup_slot=5, team_obp_l14=0.336, sp_whip=1.22, sp_bb9=2.8,
-             game_total=9.5, bullpen_era_l10=3.95, xwoba_l15=0.341, xslg=0.495,
-             slg=0.470, barrel_pct=12.3, hard_hit_pct=47.5, k_pct=29.6,
-             iso_l15=0.220, risp_avg=0.245, platoon_advantage=False,
-             park_run_factor=1.08, temp_f=82, team_runs_l7=5.0, lineup_stable=True),
-        dict(player="Marcus Semien", team="TEX", opp="HOU", game="HOU @ TEX",
-             lineup_slot=1, team_obp_l14=0.336, sp_whip=1.22, sp_bb9=2.8,
-             game_total=9.5, bullpen_era_l10=3.95, xwoba_l15=0.336, xslg=0.470,
-             slg=0.445, barrel_pct=8.4, hard_hit_pct=41.5, k_pct=18.0,
-             iso_l15=0.180, risp_avg=0.255, platoon_advantage=True,
-             park_run_factor=1.08, temp_f=82, team_runs_l7=5.0, lineup_stable=True),
-    ]
-    df = pd.DataFrame(demo)
-    df["matchup"] = df["game"]
-    df["lineup_status"] = "Demo"
-    return df
-
-
-# ---------------------------------------------------------------------------
-# Build today's slate (live → fallback)
+# Build today's slate (confirmed → projected)
 # ---------------------------------------------------------------------------
 
 def _row_from_app_batter(name: str, team: str, lineup_spot: int, b_row: Any,
@@ -654,15 +566,15 @@ def _build_live_slate(date_iso: str, season: int) -> Tuple[pd.DataFrame, List[st
     notices: List[str] = []
     games = _fetch_schedule(date_iso)
     if not games:
-        notices.append("Live MLB schedule unavailable — showing demo slate.")
+        notices.append("Live MLB schedule unavailable for today.")
         return pd.DataFrame(), notices
 
     game_pks = tuple(int(g["game_id"]) for g in games if g.get("game_id"))
     lineups = _fetch_lineups(game_pks)
     if not lineups:
         notices.append(
-            "Lineups not yet confirmed — showing demo slate. "
-            "Check back after 12pm ET on a live slate day."
+            "Lineups not yet confirmed. Confirmed lineups typically post 2–4 "
+            "hours before first pitch."
         )
         return pd.DataFrame(), notices
 
@@ -724,7 +636,7 @@ def _build_live_slate(date_iso: str, season: int) -> Tuple[pd.DataFrame, List[st
                 })
 
     if not rows:
-        notices.append("No confirmed lineups parsed — showing demo slate.")
+        notices.append("No confirmed lineups parsed from today's slate.")
         return pd.DataFrame(), notices
 
     df = pd.DataFrame(rows)
@@ -812,8 +724,6 @@ def _score_slate(df: pd.DataFrame) -> pd.DataFrame:
         status = str(r.get("lineup_status", "Confirmed"))
         if status == "Projected":
             f.append("📋 Projected")
-        elif status == "Demo":
-            f.append("🧪 Demo")
         else:
             f.append("✅ Confirmed")
         if r.get("platoon_advantage"):
@@ -845,6 +755,10 @@ def _label_style(label: str) -> str:
 
 def _render_leaderboard(scored: pd.DataFrame) -> None:
     st.markdown("### 🏆 Leaderboard — Today's RBI Edge Targets")
+
+    if scored is None or scored.empty or "score" not in scored.columns:
+        st.info("No hitters available to score yet — see the status banner above for details.")
+        return
 
     games = sorted(scored["game"].unique().tolist())
     has_projected = bool((scored.get("lineup_status") == "Projected").any()) if "lineup_status" in scored.columns else False
@@ -903,6 +817,9 @@ def _render_leaderboard(scored: pd.DataFrame) -> None:
 
 def _render_parlays(scored: pd.DataFrame, n_legs: int) -> None:
     threshold = 0.70 if n_legs == 2 else 0.65
+    if scored is None or scored.empty or "score" not in scored.columns:
+        st.info(f"No scored hitters available — cannot build {n_legs}-leg combos yet.")
+        return
     pool = scored[scored["score"] >= threshold].copy()
     if len(pool) < n_legs:
         st.info(f"Not enough hitters with score ≥ {threshold:.2f} to build {n_legs}-leg combos right now.")
@@ -929,8 +846,11 @@ def _render_parlays(scored: pd.DataFrame, n_legs: int) -> None:
         return
 
     df = pd.DataFrame(rows).sort_values("_prob", ascending=False).head(10).reset_index(drop=True)
-    df.insert(0, "Rank", df.index + 1)
-    df.loc[df["Rank"] <= 3, "Rank"] = df.loc[df["Rank"] <= 3, "Rank"].astype(str) + " ⭐"
+    # Build Rank as a string column so we can safely append the ⭐ badge to the
+    # top three without triggering pandas' "setting str into numeric column"
+    # TypeError that occurs when Rank is left as int64.
+    ranks = [f"{i + 1} ⭐" if i < 3 else str(i + 1) for i in range(len(df))]
+    df.insert(0, "Rank", ranks)
     df = df.drop(columns=["_prob"])
     st.dataframe(df, use_container_width=True, hide_index=True)
     st.caption(
@@ -1033,8 +953,9 @@ def render_rbi_model_page(
 
     When called with the host app's pre-loaded ``schedule_df`` and helpers
     (``build_game_context_fn``, ``clean_name_fn``, ``norm_team_fn``), the
-    cascade is **confirmed → projected → demo**. Without those helpers,
-    falls back to direct ``statsapi``/``pybaseball`` pulls and then demo.
+    cascade is **confirmed → projected**. Without those helpers, falls back
+    to direct ``statsapi``/``pybaseball`` pulls (confirmed only). When no
+    rows can be built, a polished empty state is shown — never fake data.
     """
     st.markdown(
         '<div class="section-title" style="font-size:1.45rem;margin-top:8px;">'
@@ -1097,15 +1018,24 @@ def render_rbi_model_page(
             notices.extend(sa_notices)
             live_df = standalone_df
 
-    fallback_used = False
-    if live_df.empty:
-        fallback_used = True
-        live_df = _demo_slate()
-
     scored = _score_slate(live_df)
 
     # --- Surface lineup-status banner (always visible, always accurate) ---
-    if not fallback_used and "lineup_status" in scored.columns:
+    if scored.empty:
+        # Polished empty state — matches the style of other generators
+        # ("No lineups posted yet…") instead of a fake demo slate.
+        if schedule_df is None or len(schedule_df) == 0:
+            st.warning(
+                "🗓️ **No games on the slate.** Pick a different date or check back later — "
+                "the RBI Edge Model needs an upcoming/in-progress MLB game to score hitters."
+            )
+        else:
+            st.info(
+                "📋 **Lineups not ready yet.** Confirmed lineups typically post 2–4 hours "
+                "before first pitch, and projected lineups need a few recent completed games "
+                "from each team. Use 🔄 Refresh data after lineups drop."
+            )
+    elif "lineup_status" in scored.columns:
         n_conf = int((scored["lineup_status"] == "Confirmed").sum())
         n_proj = int((scored["lineup_status"] == "Projected").sum())
         if n_conf and not n_proj:
@@ -1121,12 +1051,6 @@ def render_rbi_model_page(
                 f"✅ {n_conf} confirmed · 📋 {n_proj} projected — mixed slate. "
                 "Projected rows are flagged in the Key Flags column."
             )
-    elif fallback_used:
-        st.warning(
-            "🧪 **Demo fallback** — live + projected data unavailable (no network, missing dependencies, "
-            "or no recent games to project from). Showing a deterministic demo slate so the UI remains usable. "
-            "On a live slate day this page will auto-fill with confirmed or projected lineups."
-        )
 
     for n in notices:
         st.caption(n)

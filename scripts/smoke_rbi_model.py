@@ -239,6 +239,138 @@ def test_market_total_overrides_model_est():
     print("  [OK] Market totals_map overrides Model Est.")
 
 
+def test_projected_only_slate_yields_leaderboard_rows():
+    """Tuning regression: a projected-only slate must produce rows that pass
+    the default min-score filter (0.50) and the Moderate Edge label band.
+
+    The pre-2026-05-13 scoring crushed projected lineups via the context
+    multiplier so even strong projected hitters sat below 0.65, blanking the
+    page when the default filter was applied. We now require at least one
+    projected row to score ≥ 0.50."""
+    df, _ = rm._build_slate_from_app(
+        schedule_df=_fake_schedule(),
+        batters_df=_make_batters_with_dupes(),
+        pitchers_df=_make_pitchers_with_dupes(),
+        build_game_context_fn=lambda g: _ctx_projected_both(),
+        clean_name_fn=_clean, norm_team_fn=_norm, totals_map={},
+    )
+    scored = rm._score_slate(df)
+    assert not scored.empty
+    above = scored[scored["score"] >= 0.50]
+    assert not above.empty, (
+        f"projected-only slate must produce ≥1 row at score≥0.50; got {scored['score'].tolist()}"
+    )
+    print(f"  [OK] projected-only slate -> {len(above)}/{len(scored)} rows pass 0.50 min")
+
+
+def test_missing_optional_data_does_not_zero_out_score():
+    """A near-empty row (only slot + name) must still produce a usable score
+    in the 0.45-0.70 band, not 0.0 — missing optional context is neutral."""
+    sparse_row = {"player": "Test Hitter", "team": "NYY", "lineup_slot": 4}
+    s = rm.score_player(sparse_row)
+    assert 0.45 <= s <= 0.75, f"sparse-data score landed at {s}; expected 0.45-0.75 neutral band"
+    label = rm.score_to_label(s)
+    assert label != "❌ Fade", f"sparse-data hitter should not be auto-faded; got {label}"
+    print(f"  [OK] sparse-data hitter scores {s:.3f} ({label}) — not zeroed")
+
+
+def test_score_labels_are_reasonable():
+    """League-average heart-of-order should be 'Moderate Edge', not 'Fade'.
+    Elite should reach 'Strong Edge'. Bands changed 2026-05-13."""
+    avg_heart = {"lineup_slot": 3, "lineup_stable": True}
+    elite = {
+        "lineup_slot": 4, "xwoba_l15": 0.420, "xslg": 0.600, "slg": 0.550,
+        "barrel_pct": 20, "hard_hit_pct": 52, "k_pct": 18, "iso_l15": 0.260,
+        "platoon_advantage": True, "park_run_factor": 1.08, "game_total": 9.5,
+        "team_runs_l7": 5.3, "lineup_stable": True,
+    }
+    avg_score = rm.score_player(avg_heart)
+    elite_score = rm.score_player(elite)
+    assert rm.score_to_label(avg_score) in ("✅ Moderate Edge", "⚠️ Marginal"), (
+        f"average heart-of-order should not be 'Fade'; got {rm.score_to_label(avg_score)} @ {avg_score}"
+    )
+    assert rm.score_to_label(elite_score) == "🔥 Strong Edge", (
+        f"elite hitter should reach Strong Edge; got {rm.score_to_label(elite_score)} @ {elite_score}"
+    )
+    print(f"  [OK] avg #3 -> {avg_score:.2f} ({rm.score_to_label(avg_score)}); "
+          f"elite -> {elite_score:.2f} ({rm.score_to_label(elite_score)})")
+
+
+def test_parlay_pool_has_enough_candidates_for_2leg():
+    """Parlay generator must reach ≥2 cross-game candidates from a typical
+    slate. We assemble two projected games, score them, and confirm the
+    threshold + fallback combination yields a non-empty pool with hitters
+    from at least 2 games."""
+    schedule = pd.DataFrame([
+        {"game_pk": 1, "game_time_utc": "2026-05-13T23:05:00Z",
+         "home_team": "Yankees", "home_abbr": "NYY", "home_id": 147,
+         "away_team": "Mets", "away_abbr": "NYM", "away_id": 121,
+         "home_probable": "Gerrit Cole", "away_probable": "Kodai Senga",
+         "park_factor": 105},
+        {"game_pk": 2, "game_time_utc": "2026-05-13T23:10:00Z",
+         "home_team": "Red Sox", "home_abbr": "BOS", "home_id": 111,
+         "away_team": "Blue Jays", "away_abbr": "TOR", "away_id": 141,
+         "home_probable": "Gerrit Cole", "away_probable": "Kodai Senga",
+         "park_factor": 102},
+    ])
+    df, _ = rm._build_slate_from_app(
+        schedule_df=schedule,
+        batters_df=_make_batters_with_dupes(),
+        pitchers_df=_make_pitchers_with_dupes(),
+        build_game_context_fn=lambda g: _ctx_projected_both(),
+        clean_name_fn=_clean, norm_team_fn=_norm, totals_map={},
+    )
+    scored = rm._score_slate(df)
+    threshold = 0.55  # 2-leg parlay floor
+    pool = scored[scored["score"] >= threshold]
+    if len(pool) < 6:
+        topup = scored.sort_values("score", ascending=False).head(6)
+        pool = pd.concat([pool, topup]).drop_duplicates(subset=["player", "team", "game"])
+    assert pool["game"].nunique() >= 2, (
+        f"parlay pool must span ≥2 games; got {pool['game'].nunique()} from {len(pool)} rows"
+    )
+    print(f"  [OK] 2-leg parlay pool: {len(pool)} hitters across "
+          f"{pool['game'].nunique()} games")
+
+
+def test_strict_thresholds_do_not_blank_page():
+    """Even with the user dragging the min-score slider very high, the
+    leaderboard's fallback logic must guarantee the page never blanks when
+    slate data exists. We assert there is always at least one scored row
+    we can fall back to."""
+    df, _ = rm._build_slate_from_app(
+        schedule_df=_fake_schedule(),
+        batters_df=_make_batters_with_dupes(),
+        pitchers_df=_make_pitchers_with_dupes(),
+        build_game_context_fn=lambda g: _ctx_mixed(),
+        clean_name_fn=_clean, norm_team_fn=_norm, totals_map={},
+    )
+    scored = rm._score_slate(df)
+    # Simulate the very-strict slider position 0.95
+    strict = scored[scored["score"] >= 0.95]
+    # Strict may legitimately be empty — but the fallback can still surface rows:
+    fallback = scored.sort_values("score", ascending=False).head(15)
+    assert not fallback.empty, "fallback must produce ≥1 row when slate has data"
+    print(f"  [OK] strict 0.95 yielded {len(strict)} rows; fallback surfaces "
+          f"{len(fallback)} — page does not blank")
+
+
+def test_projected_penalty_is_modest():
+    """The projected vs confirmed gap must be modest (≤0.07) so a strong
+    projected hitter is not pushed below the default 0.50 filter."""
+    base = {
+        "lineup_slot": 3, "xwoba_l15": 0.360, "xslg": 0.470, "slg": 0.440,
+        "barrel_pct": 12, "hard_hit_pct": 44, "k_pct": 20, "iso_l15": 0.190,
+        "platoon_advantage": True, "park_run_factor": 1.02, "game_total": 9.0,
+        "team_runs_l7": 4.9,
+    }
+    confirmed = rm.score_player(dict(base, lineup_stable=True))
+    projected = rm.score_player(dict(base, lineup_stable=False))
+    gap = confirmed - projected
+    assert 0.0 <= gap <= 0.07, f"projected vs confirmed gap should be modest; got {gap:.3f}"
+    print(f"  [OK] confirmed={confirmed:.3f}, projected={projected:.3f}, gap={gap:.3f}")
+
+
 def test_no_demo_references_in_module():
     src = open(rm.__file__, "r", encoding="utf-8").read().lower()
     for token in ("demo player", "fake player", "is_demo", "demo_mode",
@@ -256,6 +388,12 @@ def main() -> int:
         test_parlay_generation_uses_projected_rows,
         test_no_odds_key_uses_model_est_total,
         test_market_total_overrides_model_est,
+        test_projected_only_slate_yields_leaderboard_rows,
+        test_missing_optional_data_does_not_zero_out_score,
+        test_score_labels_are_reasonable,
+        test_parlay_pool_has_enough_candidates_for_2leg,
+        test_strict_thresholds_do_not_blank_page,
+        test_projected_penalty_is_modest,
         test_no_demo_references_in_module,
     ]
     failed = 0

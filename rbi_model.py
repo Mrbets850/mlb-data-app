@@ -45,18 +45,25 @@ STADIUM_COORDS: Dict[str, Tuple[float, float]] = {
     "CIN": (39.0979, -84.5082),
 }
 
-SLOT_MAP = {1: 0.5, 2: 0.5, 3: 1.0, 4: 1.0, 5: 1.0, 6: 0.7, 7: 0.7, 8: 0.2, 9: 0.2}
+SLOT_MAP = {1: 0.65, 2: 0.70, 3: 1.0, 4: 1.0, 5: 0.95, 6: 0.75, 7: 0.65, 8: 0.40, 9: 0.35}
 
 
-def score_player(row: Dict[str, Any]) -> float:
-    """Compute the RBI Edge raw score for a single hitter row."""
-    batting_slot_score = SLOT_MAP.get(int(row.get("lineup_slot", 5) or 5), 0.5)
+def _compute_components(row: Dict[str, Any]) -> Dict[str, float]:
+    """Shared scoring math used by score_player and _component_scores.
 
-    team_obp_score = min(float(row.get("team_obp_l14", 0.320)) / 0.360, 1.0)
-    sp_whip_score = 1.0 - min(float(row.get("sp_whip", 1.30)) / 2.0, 1.0)
-    sp_bb9_score = min(float(row.get("sp_bb9", 3.0)) / 5.0, 1.0)
-    total_score = min(float(row.get("game_total", 8.5)) / 12.0, 1.0)
-    bullpen_score = 1.0 - min(float(row.get("bullpen_era_l10", 4.0)) / 6.0, 1.0)
+    Tuned 2026-05-13 to broaden the candidate pool: normalizing denominators
+    sit closer to "above average" rather than "elite ceiling", missing
+    optional context defaults are neutral (~1.0 multiplier) instead of
+    punitive, and the projected-lineup penalty is reduced so a projected
+    Judge does not get crushed by the context multiplier.
+    """
+    batting_slot_score = SLOT_MAP.get(int(row.get("lineup_slot", 5) or 5), 0.6)
+
+    team_obp_score = min(float(row.get("team_obp_l14", 0.320)) / 0.345, 1.0)
+    sp_whip_score = 1.0 - min(float(row.get("sp_whip", 1.30)) / 1.60, 1.0)
+    sp_bb9_score = min(float(row.get("sp_bb9", 3.0)) / 4.0, 1.0)
+    total_score = min(float(row.get("game_total", 8.5)) / 10.5, 1.0)
+    bullpen_score = 1.0 - min(float(row.get("bullpen_era_l10", 4.0)) / 5.5, 1.0)
 
     opportunity = (
         batting_slot_score * 0.233
@@ -67,16 +74,16 @@ def score_player(row: Dict[str, Any]) -> float:
         + bullpen_score * 0.083
     )
 
-    xwoba_score = min(float(row.get("xwoba_l15", 0.320)) / 0.420, 1.0)
+    xwoba_score = min(float(row.get("xwoba_l15", 0.320)) / 0.380, 1.0)
     xslg_gap_score = min(
-        max(float(row.get("xslg", 0.400)) - float(row.get("slg", 0.400)), 0) / 0.080,
+        max(float(row.get("xslg", 0.400)) - float(row.get("slg", 0.400)), 0) / 0.060,
         1.0,
     )
-    barrel_score = min(float(row.get("barrel_pct", 8.0)) / 18.0, 1.0)
-    hh_score = min(float(row.get("hard_hit_pct", 38.0)) / 55.0, 1.0)
-    k_score = 1.0 - min(float(row.get("k_pct", 22.0)) / 35.0, 1.0)
-    iso_score = min(float(row.get("iso_l15", 0.150)) / 0.280, 1.0)
-    risp_score = min(float(row.get("risp_avg", 0.260)) / 0.340, 1.0)
+    barrel_score = min(float(row.get("barrel_pct", 8.0)) / 14.0, 1.0)
+    hh_score = min(float(row.get("hard_hit_pct", 38.0)) / 48.0, 1.0)
+    k_score = 1.0 - min(float(row.get("k_pct", 22.0)) / 30.0, 1.0)
+    iso_score = min(float(row.get("iso_l15", 0.150)) / 0.220, 1.0)
+    risp_score = min(float(row.get("risp_avg", 0.260)) / 0.310, 1.0)
 
     skill = (
         xwoba_score * 0.267
@@ -88,68 +95,16 @@ def score_player(row: Dict[str, Any]) -> float:
         + risp_score * 0.133
     )
 
-    platoon = 1.0 if row.get("platoon_advantage", False) else 0.6
+    # Platoon unknown → neutral, not punitive (was 0.6, now 0.85).
+    if "platoon_advantage" not in row or row.get("platoon_advantage") is None:
+        platoon = 0.90
+    else:
+        platoon = 1.0 if row.get("platoon_advantage") else 0.85
     park = float(row.get("park_run_factor", 1.0))
-    temp = min(max(float(row.get("temp_f", 72)) / 80.0, 0.7), 1.1)
-    form = min(float(row.get("team_runs_l7", 4.5)) / 5.2, 1.15)
-    stability = 1.0 if row.get("lineup_stable", True) else 0.6
-
-    context_mult = (
-        platoon * 0.25
-        + park * 0.20
-        + temp * 0.15
-        + form * 0.20
-        + stability * 0.20
-    )
-
-    raw_score = (opportunity * 0.50 + skill * 0.50) * context_mult
-    return round(raw_score, 4)
-
-
-def _component_scores(row: Dict[str, Any]) -> Dict[str, float]:
-    """Return the three sub-scores used for the Player Deep Dive view."""
-    batting_slot_score = SLOT_MAP.get(int(row.get("lineup_slot", 5) or 5), 0.5)
-    team_obp_score = min(float(row.get("team_obp_l14", 0.320)) / 0.360, 1.0)
-    sp_whip_score = 1.0 - min(float(row.get("sp_whip", 1.30)) / 2.0, 1.0)
-    sp_bb9_score = min(float(row.get("sp_bb9", 3.0)) / 5.0, 1.0)
-    total_score = min(float(row.get("game_total", 8.5)) / 12.0, 1.0)
-    bullpen_score = 1.0 - min(float(row.get("bullpen_era_l10", 4.0)) / 6.0, 1.0)
-
-    opportunity = (
-        batting_slot_score * 0.233
-        + team_obp_score * 0.167
-        + sp_whip_score * 0.133
-        + sp_bb9_score * 0.100
-        + total_score * 0.117
-        + bullpen_score * 0.083
-    )
-
-    xwoba_score = min(float(row.get("xwoba_l15", 0.320)) / 0.420, 1.0)
-    xslg_gap_score = min(
-        max(float(row.get("xslg", 0.400)) - float(row.get("slg", 0.400)), 0) / 0.080,
-        1.0,
-    )
-    barrel_score = min(float(row.get("barrel_pct", 8.0)) / 18.0, 1.0)
-    hh_score = min(float(row.get("hard_hit_pct", 38.0)) / 55.0, 1.0)
-    k_score = 1.0 - min(float(row.get("k_pct", 22.0)) / 35.0, 1.0)
-    iso_score = min(float(row.get("iso_l15", 0.150)) / 0.280, 1.0)
-    risp_score = min(float(row.get("risp_avg", 0.260)) / 0.340, 1.0)
-
-    skill = (
-        xwoba_score * 0.267
-        + xslg_gap_score * 0.156
-        + barrel_score * 0.178
-        + hh_score * 0.133
-        + k_score * 0.111
-        + iso_score * 0.133
-        + risp_score * 0.133
-    )
-
-    platoon = 1.0 if row.get("platoon_advantage", False) else 0.6
-    park = float(row.get("park_run_factor", 1.0))
-    temp = min(max(float(row.get("temp_f", 72)) / 80.0, 0.7), 1.1)
-    form = min(float(row.get("team_runs_l7", 4.5)) / 5.2, 1.15)
-    stability = 1.0 if row.get("lineup_stable", True) else 0.6
+    temp = min(max(float(row.get("temp_f", 72)) / 78.0, 0.85), 1.1)
+    form = min(float(row.get("team_runs_l7", 4.5)) / 4.8, 1.12)
+    # Projected lineups should be mildly discounted, not crushed (was 0.6).
+    stability = 1.0 if row.get("lineup_stable", True) else 0.92
 
     context_mult = (
         platoon * 0.25
@@ -166,34 +121,50 @@ def _component_scores(row: Dict[str, Any]) -> Dict[str, float]:
     }
 
 
+def score_player(row: Dict[str, Any]) -> float:
+    """Compute the RBI Edge raw score for a single hitter row."""
+    comps = _compute_components(row)
+    raw_score = (comps["opportunity"] * 0.50 + comps["skill"] * 0.50) * comps["context"]
+    return round(raw_score, 4)
+
+
+def _component_scores(row: Dict[str, Any]) -> Dict[str, float]:
+    """Return the three sub-scores used for the Player Deep Dive view."""
+    return _compute_components(row)
+
+
+# Label / probability bands tuned 2026-05-13 to match the broader score
+# distribution. Strong Edge stays reserved for genuine standouts; Moderate
+# covers the "good RBI bet" tier where most leaderboard rows live; Marginal
+# remains visible but de-emphasized.
 def score_to_label(score: float) -> str:
-    if score >= 0.80:
+    if score >= 0.72:
         return "🔥 Strong Edge"
-    if score >= 0.65:
+    if score >= 0.58:
         return "✅ Moderate Edge"
-    if score >= 0.50:
+    if score >= 0.45:
         return "⚠️ Marginal"
     return "❌ Fade"
 
 
 def score_to_prob(score: float) -> str:
-    if score >= 0.80:
-        return "60–65%"
-    if score >= 0.65:
-        return "50–58%"
-    if score >= 0.50:
-        return "42–50%"
-    return "<42%"
+    if score >= 0.72:
+        return "58–65%"
+    if score >= 0.58:
+        return "48–57%"
+    if score >= 0.45:
+        return "40–48%"
+    return "<40%"
 
 
 def _prob_midpoint(score: float) -> float:
-    if score >= 0.80:
-        return 0.625
-    if score >= 0.65:
-        return 0.54
-    if score >= 0.50:
-        return 0.46
-    return 0.38
+    if score >= 0.72:
+        return 0.615
+    if score >= 0.58:
+        return 0.525
+    if score >= 0.45:
+        return 0.44
+    return 0.37
 
 
 def _implied_odds(prob: float) -> str:
@@ -963,7 +934,7 @@ def _render_leaderboard(scored: pd.DataFrame) -> None:
     has_projected = bool((scored.get("lineup_status") == "Projected").any()) if "lineup_status" in scored.columns else False
     with st.sidebar:
         st.markdown("#### RBI Edge filters")
-        min_score = st.slider("Min RBI Edge Score", 0.30, 0.95, 0.65, 0.01, key="rbi_edge_min_score")
+        min_score = st.slider("Min RBI Edge Score", 0.20, 0.95, 0.50, 0.01, key="rbi_edge_min_score")
         sel_games = st.multiselect("Game filter", games, default=games, key="rbi_edge_games")
         only_platoon = st.checkbox("Platoon advantage only", value=False, key="rbi_edge_platoon")
         only_hitter_park = st.checkbox("Hitter park only (≥1.05)", value=False, key="rbi_edge_park")
@@ -985,8 +956,26 @@ def _render_leaderboard(scored: pd.DataFrame) -> None:
         f = f[f["lineup_status"] == "Confirmed"]
 
     if f.empty:
-        st.info("No hitters match the current filters. Try lowering the score threshold.")
-        return
+        # Fallback so the page never goes blank when slate data exists: drop
+        # the score floor and show the top-15 by score, preserving any
+        # game/platoon/park filters the user picked.
+        fallback = scored.copy()
+        if sel_games:
+            fallback = fallback[fallback["game"].isin(sel_games)]
+        if only_platoon:
+            fallback = fallback[fallback["platoon_advantage"] == True]  # noqa: E712
+        if only_hitter_park:
+            fallback = fallback[fallback["park_run_factor"].astype(float) >= 1.05]
+        if has_projected and only_confirmed:
+            fallback = fallback[fallback["lineup_status"] == "Confirmed"]
+        if fallback.empty:
+            st.info("No hitters match the current filters. Try lowering the score threshold.")
+            return
+        st.caption(
+            f"No hitters above score {float(min_score):.2f} — showing the top "
+            f"{min(15, len(fallback))} candidates by RBI Edge instead."
+        )
+        f = fallback.sort_values("score", ascending=False).head(15)
 
     cols = ["player", "team", "lineup_slot", "matchup", "lineup_status", "score", "label", "prob", "flags"]
     cols = [c for c in cols if c in f.columns]
@@ -1015,13 +1004,35 @@ def _render_leaderboard(scored: pd.DataFrame) -> None:
 
 
 def _render_parlays(scored: pd.DataFrame, n_legs: int) -> None:
-    threshold = 0.70 if n_legs == 2 else 0.65
+    threshold = 0.55 if n_legs == 2 else 0.50
+    # Minimum pool to consider building combos. Want enough cross-game variety
+    # to find n_legs hitters from distinct games.
+    pool_target = max(n_legs * 3, 6)
     if scored is None or scored.empty or "score" not in scored.columns:
         st.info(f"No scored hitters available — cannot build {n_legs}-leg combos yet.")
         return
+
+    fallback_note = ""
     pool = scored[scored["score"] >= threshold].copy()
-    if len(pool) < n_legs:
-        st.info(f"Not enough hitters with score ≥ {threshold:.2f} to build {n_legs}-leg combos right now.")
+    if len(pool) < pool_target:
+        # Threshold left too few candidates — top up with the highest-scored
+        # remaining hitters so we always surface combos when the slate has
+        # enough rows from distinct games.
+        topup = scored.sort_values("score", ascending=False).head(pool_target)
+        pool = pd.concat([pool, topup]).drop_duplicates(subset=["player", "team", "game"])
+        if not pool.empty:
+            fallback_note = (
+                f"Pool extended below the {threshold:.2f} score floor — using the "
+                f"top {len(pool)} candidates so cross-game combos remain available."
+            )
+
+    # Need at least n_legs hitters from distinct games to build any combo.
+    if pool["game"].nunique() < n_legs:
+        st.info(
+            f"Need hitters from at least {n_legs} different games to build a "
+            f"{n_legs}-leg parlay. Today's slate has only "
+            f"{pool['game'].nunique()} game(s) with scored hitters."
+        )
         return
 
     rows: List[Dict[str, Any]] = []
@@ -1045,6 +1056,8 @@ def _render_parlays(scored: pd.DataFrame, n_legs: int) -> None:
         return
 
     df = pd.DataFrame(rows).sort_values("_prob", ascending=False).head(10).reset_index(drop=True)
+    if fallback_note:
+        st.caption(fallback_note)
     # Build Rank as a string column so we can safely append the ⭐ badge to the
     # top three without triggering pandas' "setting str into numeric column"
     # TypeError that occurs when Rank is left as int64.
@@ -1093,18 +1106,18 @@ def _render_deep_dive(scored: pd.DataFrame) -> None:
 
     st.markdown("#### Feature inputs")
     thresholds = {
-        "team_obp_l14": (0.330, "↑"),
+        "team_obp_l14": (0.320, "↑"),
         "sp_whip": (1.30, "↓"),
         "sp_bb9": (3.0, "↑"),
         "game_total": (8.5, "↑"),
         "bullpen_era_l10": (4.0, "↓"),
-        "xwoba_l15": (0.330, "↑"),
-        "xslg": (0.430, "↑"),
-        "slg": (0.430, "↑"),
+        "xwoba_l15": (0.320, "↑"),
+        "xslg": (0.420, "↑"),
+        "slg": (0.420, "↑"),
         "barrel_pct": (8.0, "↑"),
-        "hard_hit_pct": (40.0, "↑"),
+        "hard_hit_pct": (38.0, "↑"),
         "k_pct": (22.0, "↓"),
-        "iso_l15": (0.170, "↑"),
+        "iso_l15": (0.160, "↑"),
         "risp_avg": (0.260, "↑"),
         "park_run_factor": (1.00, "↑"),
         "temp_f": (72.0, "↑"),
@@ -1302,6 +1315,6 @@ def render_rbi_model_page(
             "HardHit% 13.3%, K% 11.1%, ISO L15 13.3%, RISP AVG 13.3%\n"
             "- **Context multiplier (0.70–1.15)**: platoon 25%, park 20%, temperature 15%, "
             "team runs L7 20%, lineup stability 20%\n\n"
-            "**Tier labels**: 🔥 Strong Edge ≥ 0.80 · ✅ Moderate Edge ≥ 0.65 · "
-            "⚠️ Marginal ≥ 0.50 · ❌ Fade < 0.50"
+            "**Tier labels**: 🔥 Strong Edge ≥ 0.72 · ✅ Moderate Edge ≥ 0.58 · "
+            "⚠️ Marginal ≥ 0.45 · ❌ Fade < 0.45"
         )

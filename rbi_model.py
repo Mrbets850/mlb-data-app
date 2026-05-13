@@ -289,13 +289,19 @@ def _fetch_park_factors(season: int) -> pd.DataFrame:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_game_totals(date_iso: str) -> Tuple[Dict[str, float], str]:
-    """Return (team→total map, notice). Defaults to {} if no Odds API key."""
+    """Return (team→total map, notice). Empty {} = fall back to Model Est. total.
+
+    Missing/expired Odds API key is **not** a scary warning anymore — the
+    caller computes an internal model estimate from app-native team/pitcher
+    context. We only emit a notice if the API itself errored after a real
+    attempt, and the wording is informational (caption, not warning).
+    """
     try:
         api_key = st.secrets.get("odds_api_key")
     except Exception:
         api_key = None
     if not api_key:
-        return {}, "Odds API key not configured — defaulting game totals to 8.5."
+        return {}, ""  # silent — caller will use Model Est. total
     try:
         import requests
         url = (
@@ -304,7 +310,7 @@ def _fetch_game_totals(date_iso: str) -> Tuple[Dict[str, float], str]:
         )
         resp = requests.get(url, timeout=8)
         if resp.status_code != 200:
-            return {}, f"Odds API returned {resp.status_code} — using default total 8.5."
+            return {}, f"Odds API returned {resp.status_code} — using Model Est. game totals."
         data = resp.json() or []
         out: Dict[str, float] = {}
         for game in data:
@@ -329,7 +335,7 @@ def _fetch_game_totals(date_iso: str) -> Tuple[Dict[str, float], str]:
                     out[away] = total
         return out, ""
     except Exception:
-        return {}, "Odds API call failed — using default total 8.5."
+        return {}, "Odds API call failed — using Model Est. game totals."
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -438,6 +444,116 @@ def _row_from_app_batter(name: str, team: str, lineup_spot: int, b_row: Any,
     }
 
 
+def _index_by_name_key(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+    """Return a {name_key: row_dict} mapping that tolerates duplicate keys.
+
+    Using ``df.set_index("name_key").to_dict("index")`` raises
+    ``ValueError: DataFrame index must be unique for orient='index'`` whenever
+    two rows share a ``name_key`` — which routinely happens in Savant exports
+    where the same hitter appears under multiple stints or where two players
+    share a normalized name across teams. We instead iterate row-by-row and
+    keep the *first* hit for each key so the lookup degrades gracefully
+    instead of crashing the whole RBI Edge tab.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(df, pd.DataFrame) or df.empty or "name_key" not in df.columns:
+        return out
+    for rec in df.to_dict("records"):
+        key = rec.get("name_key")
+        if key is None or (isinstance(key, float) and pd.isna(key)):
+            continue
+        key_str = str(key)
+        if key_str not in out:
+            out[key_str] = rec
+    return out
+
+
+def _team_obp_map(batters_df: pd.DataFrame) -> Dict[str, float]:
+    """Compute a {team_key: team_obp} map from the app's batters_df.
+
+    Falls back to the league-average default in ``score_player`` for any team
+    we cannot compute. Uses ``team_key`` if present (already-normalized) or
+    falls back to ``Team``.
+    """
+    if not isinstance(batters_df, pd.DataFrame) or batters_df.empty:
+        return {}
+    if "OBP" not in batters_df.columns:
+        return {}
+    col_team = "team_key" if "team_key" in batters_df.columns else (
+        "Team" if "Team" in batters_df.columns else None
+    )
+    if col_team is None:
+        return {}
+    try:
+        s = pd.to_numeric(batters_df["OBP"], errors="coerce")
+        df = batters_df.assign(_obp=s).dropna(subset=["_obp"])
+        if df.empty:
+            return {}
+        return df.groupby(col_team)["_obp"].mean().to_dict()
+    except Exception:
+        return {}
+
+
+def _team_runs_map(batters_df: pd.DataFrame) -> Dict[str, float]:
+    """Approximate runs-per-game proxy from team-level offense.
+
+    Uses (OBP * SLG) * 30 as a coarse linear proxy when no live team runs/game
+    feed is wired up. We just want a value in the same 3.5–5.5 range that
+    score_player expects; absolute accuracy is not required because the
+    Context multiplier clips the result.
+    """
+    obp_map = _team_obp_map(batters_df)
+    if not obp_map:
+        return {}
+    if "SLG" not in batters_df.columns:
+        return obp_map  # tolerate, just return OBP-based ranking
+    col_team = "team_key" if "team_key" in batters_df.columns else "Team"
+    try:
+        s = pd.to_numeric(batters_df["SLG"], errors="coerce")
+        slg_map = (
+            batters_df.assign(_slg=s)
+            .dropna(subset=["_slg"])
+            .groupby(col_team)["_slg"]
+            .mean()
+            .to_dict()
+        )
+    except Exception:
+        return {}
+    out: Dict[str, float] = {}
+    for team, obp in obp_map.items():
+        slg = slg_map.get(team)
+        if slg is None:
+            continue
+        # Coarse linear proxy → typical MLB team lands ~4.3-4.8 runs/game.
+        # Tuned so that an OBP*SLG product of ~0.13 (league average) yields
+        # ~4.5 runs. We clamp to a sane 3.5–5.5 band so a small or unusually
+        # elite roster sample doesn't blow up the Model Est. game total.
+        raw = float(obp) * float(slg) * 34.6
+        out[team] = float(max(3.5, min(5.5, raw)))
+    return out
+
+
+def _model_est_total(home_runs: float, away_runs: float, park_factor_100: float,
+                     home_sp_era: float, away_sp_era: float, temp_f: float) -> float:
+    """Internal estimated game total. Used when Odds API key is absent/expired.
+
+    Combines team form, opposing starter ERA, park run factor, and temperature
+    into a single number in the 7.0–11.0 range. This is deliberately simple —
+    we only need a *reasonable* default so the Opportunity sub-score isn't
+    pinned at the league mean. Not meant to be a market-replacement total.
+    """
+    base = float(home_runs or 4.4) + float(away_runs or 4.4)
+    # ERA pull: high ERA → more runs, ~+0.4 runs per ERA point above 4.0.
+    sp_avg = (float(home_sp_era or 4.0) + float(away_sp_era or 4.0)) / 2.0
+    base += (sp_avg - 4.0) * 0.45
+    # Park: 100 is neutral; +5 → +0.3 runs.
+    pf = float(park_factor_100 or 100.0)
+    base *= 1.0 + ((pf - 100.0) / 100.0) * 0.6
+    # Temperature: warmer → more runs, ~+0.15 runs per 10F above 65.
+    base += max(0.0, (float(temp_f or 72.0) - 65.0)) * 0.015
+    return float(max(6.5, min(12.5, base)))
+
+
 def _build_slate_from_app(
     schedule_df: pd.DataFrame,
     batters_df: pd.DataFrame,
@@ -445,31 +561,42 @@ def _build_slate_from_app(
     build_game_context_fn,
     clean_name_fn,
     norm_team_fn,
+    totals_map: Dict[str, float] | None = None,
 ) -> Tuple[pd.DataFrame, List[str]]:
     """Preferred path: use the host app's already-cached schedule/lineup/weather.
 
     Returns ``(df, notices)``. Each row's ``lineup_status`` is set to
-    ``"Confirmed"`` or ``"Projected"``. Side is silently skipped if the
-    app reports it as ``"Not Posted"``.
+    ``"Confirmed"`` or ``"Projected"``. Sides flagged ``"Not Posted"`` are
+    silently skipped so a single sparse team never blanks the whole page.
     """
     notices: List[str] = []
     if schedule_df is None or len(schedule_df) == 0:
         return pd.DataFrame(), ["Slate schedule is empty for today."]
 
-    # Pre-index batters and pitchers by name_key for O(1) lookup.
-    batters_idx: Dict[str, Any] = {}
-    if isinstance(batters_df, pd.DataFrame) and not batters_df.empty and "name_key" in batters_df.columns:
-        batters_idx = {str(k): v for k, v in batters_df.set_index("name_key").to_dict("index").items()}
-    pitchers_idx: Dict[str, Any] = {}
-    if isinstance(pitchers_df, pd.DataFrame) and not pitchers_df.empty and "name_key" in pitchers_df.columns:
-        pitchers_idx = {str(k): v for k, v in pitchers_df.set_index("name_key").to_dict("index").items()}
+    # Duplicate-key-safe lookup tables for batters and pitchers. ``name_key``
+    # is *not* guaranteed unique in the host app's batters_df/pitchers_df
+    # (multiple stints, identical normalized names), so we cannot use
+    # ``set_index(...).to_dict("index")`` here — it raises
+    # "DataFrame index must be unique for orient='index'".
+    batters_idx = _index_by_name_key(batters_df)
+    pitchers_idx = _index_by_name_key(pitchers_df)
+
+    # Team-level offense proxies (OBP and runs/game) computed from the app's
+    # batters_df. Falls back to score_player defaults for missing teams.
+    team_obp = _team_obp_map(batters_df)
+    team_runs = _team_runs_map(batters_df)
+    totals_map = totals_map or {}
 
     n_confirmed_sides = 0
     n_projected_sides = 0
     n_not_posted_sides = 0
     rows: List[Dict[str, Any]] = []
 
+    n_model_est_totals = 0
+
     for _, game in schedule_df.iterrows():
+        # Per-game errors must NOT blank the whole page. Skip this game only
+        # and continue rendering everyone else's projected/confirmed rows.
         try:
             ctx = build_game_context_fn(game)
         except Exception:
@@ -483,6 +610,51 @@ def _build_slate_from_app(
         except (TypeError, ValueError):
             temp = 72.0
 
+        # Resolve game total: prefer market total when injected, otherwise
+        # compute an internal model estimate from team form + opposing SP +
+        # park + temperature. We deliberately do NOT call the Odds API here —
+        # the host app handles that and passes a totals_map in if available.
+        home_full = str(game.get("home_team", "") or "")
+        away_full = str(game.get("away_team", "") or "")
+        home_abbr_raw = str(game.get("home_abbr", "") or "")
+        away_abbr_raw = str(game.get("away_abbr", "") or "")
+        market_total = None
+        for key in (home_full, away_full, home_abbr_raw, away_abbr_raw):
+            if key and key in totals_map:
+                try:
+                    market_total = float(totals_map[key])
+                    break
+                except (TypeError, ValueError):
+                    pass
+
+        if market_total is not None:
+            game_total = market_total
+            total_source = "Market"
+        else:
+            home_team_key = norm_team_fn(home_abbr_raw) if norm_team_fn else home_abbr_raw
+            away_team_key = norm_team_fn(away_abbr_raw) if norm_team_fn else away_abbr_raw
+            home_runs_pg = team_runs.get(home_team_key, 4.4)
+            away_runs_pg = team_runs.get(away_team_key, 4.4)
+            home_sp_key = clean_name_fn(game.get("home_probable", "")) if clean_name_fn else ""
+            away_sp_key = clean_name_fn(game.get("away_probable", "")) if clean_name_fn else ""
+            home_sp_row = pitchers_idx.get(home_sp_key) if home_sp_key else None
+            away_sp_row = pitchers_idx.get(away_sp_key) if away_sp_key else None
+            try:
+                home_era = float(home_sp_row.get("ERA")) if home_sp_row else 4.0
+            except (TypeError, ValueError):
+                home_era = 4.0
+            try:
+                away_era = float(away_sp_row.get("ERA")) if away_sp_row else 4.0
+            except (TypeError, ValueError):
+                away_era = 4.0
+            game_total = _model_est_total(
+                home_runs=home_runs_pg, away_runs=away_runs_pg,
+                park_factor_100=float(game.get("park_factor", 100) or 100),
+                home_sp_era=home_era, away_sp_era=away_era, temp_f=temp,
+            )
+            total_source = "Model Est."
+            n_model_est_totals += 1
+
         for side in ("away", "home"):
             status = ctx.get(f"{side}_status") or ""
             if status == "Not Posted":
@@ -493,10 +665,14 @@ def _build_slate_from_app(
             elif status == "Projected":
                 n_projected_sides += 1
             else:
+                # Unknown status — skip this side but keep rendering the rest
+                # of today's slate.
                 continue
 
             lineup = ctx.get(f"{side}_lineup")
             if not isinstance(lineup, pd.DataFrame) or lineup.empty:
+                # Sparse data for this side only — skip silently, do not blank
+                # the whole page.
                 continue
 
             team_abbr = norm_team_fn(game.get(f"{side}_abbr", "")) or ""
@@ -504,6 +680,9 @@ def _build_slate_from_app(
             opp_abbr = norm_team_fn(game.get(f"{opp_side}_abbr", "")) or ""
             opp_pitcher = game.get(f"{opp_side}_probable", "TBD")
             game_label = f"{game.get('away_abbr', '')} @ {game.get('home_abbr', '')}"
+            # team_runs_l7 / team_obp_l14 from app-native batters_df aggregates
+            t_obp = team_obp.get(team_abbr)
+            t_runs = team_runs.get(team_abbr)
 
             p_row = None
             if opp_pitcher and opp_pitcher != "TBD":
@@ -535,6 +714,12 @@ def _build_slate_from_app(
                 row["matchup"] = game_label
                 row["lineup_status"] = "Confirmed" if status == "Confirmed" else "Projected"
                 row["lineup_stable"] = status == "Confirmed"
+                row["game_total"] = float(game_total)
+                row["total_source"] = total_source
+                if t_obp is not None:
+                    row["team_obp_l14"] = float(t_obp)
+                if t_runs is not None:
+                    row["team_runs_l7"] = float(t_runs)
                 rows.append(row)
 
     if rows:
@@ -551,6 +736,11 @@ def _build_slate_from_app(
             )
         elif n_confirmed_sides:
             notices.append(f"All **{n_confirmed_sides}** lineups confirmed.")
+        if n_model_est_totals and not totals_map:
+            notices.append(
+                f"Game totals computed by **Model Est.** (team form · opposing SP · park · weather) "
+                f"for {n_model_est_totals} game(s)."
+            )
         return pd.DataFrame(rows), notices
 
     return pd.DataFrame(), notices
@@ -596,10 +786,16 @@ def _build_live_slate(date_iso: str, season: int) -> Tuple[pd.DataFrame, List[st
         home_abbr = str(g.get("home_name", ""))[:3].upper()
         away_abbr = str(g.get("away_name", ""))[:3].upper()
         matchup = f"{g.get('away_name', '')} @ {g.get('home_name', '')}"
-        total_default = 8.5
-        total = float(
-            totals_map.get(g.get("home_name", ""), totals_map.get(g.get("away_name", ""), total_default))
-        )
+        market = totals_map.get(g.get("home_name", "")) or totals_map.get(g.get("away_name", ""))
+        if market is not None:
+            total = float(market)
+            total_source = "Market"
+        else:
+            total = _model_est_total(
+                home_runs=4.4, away_runs=4.4, park_factor_100=100.0,
+                home_sp_era=4.0, away_sp_era=4.0, temp_f=72.0,
+            )
+            total_source = "Model Est."
 
         for side, abbr in (("home", home_abbr), ("away", away_abbr)):
             order = info.get(f"{side}_order", [])
@@ -633,6 +829,7 @@ def _build_live_slate(date_iso: str, season: int) -> Tuple[pd.DataFrame, List[st
                     "team_runs_l7": 4.5,
                     "lineup_stable": True,
                     "lineup_status": "Confirmed",
+                    "total_source": total_source,
                 })
 
     if not rows:
@@ -732,6 +929,8 @@ def _score_slate(df: pd.DataFrame) -> pd.DataFrame:
             f.append("🏟 Hitter park")
         if float(r.get("game_total", 8.5)) >= 9.0:
             f.append("📈 Total ≥9")
+        if str(r.get("total_source", "")) == "Model Est.":
+            f.append("📐 Model Est. Total")
         if int(r.get("lineup_slot", 5) or 5) in (3, 4, 5):
             f.append("🎯 Heart")
         flags.append(" · ".join(f))
@@ -986,17 +1185,26 @@ def render_rbi_model_page(
         ts = _dt.datetime.now().strftime("%b %d %Y %I:%M %p CT")
         st.caption(f"Last updated: {ts}")
 
-    # --- Build slate: confirmed → projected → demo ---
+    # --- Build slate: confirmed → projected (no demo/fake fallback) ---
     today = _dt.date.today()
     date_iso = today.strftime("%Y-%m-%d")
     season = today.year
 
     notices: List[str] = []
     live_df = pd.DataFrame()
+    used_app_path = False
+
+    # Try to pull market totals once. Missing key → empty map (silent); the
+    # slate builder will compute Model Est. totals from app-native context.
+    totals_map, totals_notice = _fetch_game_totals(date_iso)
 
     with st.spinner("Building today's RBI Edge slate…"):
-        # Preferred path: host app injected schedule + helpers (covers
-        # confirmed AND projected lineups via build_game_context).
+        # Preferred path: host app injected schedule + helpers. This covers
+        # BOTH confirmed and projected lineups via build_game_context, using
+        # the same data sources as the Matchup/Heatmap pages. We treat this
+        # as the *primary* path and do not fall through to a standalone pull
+        # just because a non-critical enrichment raised — the duplicate-index
+        # guard inside _build_slate_from_app now makes that path stable.
         if schedule_df is not None and build_game_context_fn is not None:
             try:
                 live_df, app_notices = _build_slate_from_app(
@@ -1006,24 +1214,36 @@ def render_rbi_model_page(
                     build_game_context_fn=build_game_context_fn,
                     clean_name_fn=clean_name_fn or (lambda s: str(s).lower()),
                     norm_team_fn=norm_team_fn or (lambda s: str(s)),
+                    totals_map=totals_map,
                 )
                 notices.extend(app_notices)
+                used_app_path = True
             except Exception as exc:
-                notices.append(f"App-injected slate builder failed: {exc}. Trying standalone pull…")
+                # The app path is robust now (duplicate-safe lookups, per-game
+                # try/except), so reaching here means a genuinely unexpected
+                # error. Surface a small caption, not a scary warning, and
+                # fall back to the standalone confirmed-only pull below.
+                notices.append(f"Internal: slate builder hit an unexpected error ({exc}).")
                 live_df = pd.DataFrame()
 
-        # Standalone fallback (no app helpers, or app path returned empty).
-        if live_df.empty:
+        # Standalone fallback only when the host app is not wired up at all.
+        # We never fall back just because the app path produced zero rows —
+        # zero rows is a real "no lineups yet" signal we render as an empty
+        # state below, not a reason to re-pull the same data via statsapi.
+        if not used_app_path and live_df.empty:
             standalone_df, sa_notices = _build_live_slate(date_iso, season)
             notices.extend(sa_notices)
             live_df = standalone_df
+
+    if totals_notice:
+        notices.append(totals_notice)
 
     scored = _score_slate(live_df)
 
     # --- Surface lineup-status banner (always visible, always accurate) ---
     if scored.empty:
         # Polished empty state — matches the style of other generators
-        # ("No lineups posted yet…") instead of a fake demo slate.
+        # ("No lineups posted yet…") — never synthesized rows.
         if schedule_df is None or len(schedule_df) == 0:
             st.warning(
                 "🗓️ **No games on the slate.** Pick a different date or check back later — "

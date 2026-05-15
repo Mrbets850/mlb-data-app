@@ -3487,6 +3487,25 @@ MATCHUP_HEATMAP_DISPLAY_LABELS = {
     "Likely":      "Likely",
 }
 
+# Compact labels shown in the mobile card grid where horizontal space is at a
+# premium. Each label has to fit inside a ~70px tile without wrapping more
+# than one line, so abbreviations beat the long desktop headers.
+MATCHUP_HEATMAP_MOBILE_LABELS = {
+    "Matchup":     "MTCH",
+    "ISO":         "ISO",
+    "Brl/BIP%":    "BRL%",
+    "FB%":         "FB%",
+    "GB%":         "GB%",
+    "EV":          "EV",
+    "HH%":         "HH%",
+    "HR/FB%":      "HR/FB",
+    "PullAir%":    "PULL",
+    "LA":          "LA",
+    "xwOBA":       "xwOBA",
+    "SweetSpot%":  "SWT%",
+    "Likely":      "LIKELY",
+}
+
 def _heatmap_rgb(pct):
     """Map pct in [0,1] to an RGB tuple along red→orange→yellow→light-green→dark-green."""
     pct = max(0.0, min(1.0, float(pct)))
@@ -3801,6 +3820,36 @@ def render_matchup_heatmap_html(df):
 .mhm-trend-up   { color: #15803d; }
 .mhm-trend-down { color: #b91c1c; }
 .mhm-trend-flat { color: #475569; }
+
+/* Mobile card layout: every stat fits on screen as a small heat-colored tile
+   so the user never has to scroll sideways. The desktop table is hidden and
+   the per-player cards take over below 700px. */
+.mhm-cards { display: none; margin: 6px 0 14px 0; }
+.mhm-card { border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;
+  box-shadow: 0 2px 10px rgba(15,23,42,0.06); padding: 10px 12px; margin-bottom: 10px; }
+.mhm-card-header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px;
+  padding-bottom: 6px; border-bottom: 1px dashed #e2e8f0; }
+.mhm-card-name { font-weight: 800; color: #0f172a; font-size: 0.92rem; }
+.mhm-card-meta { font-size: 0.65rem; color: #64748b; font-weight: 700; }
+.mhm-card-sub  { font-size: 0.66rem; font-weight: 800; line-height: 1.2; }
+.mhm-card-sub.crushes { color: #be185d; }
+.mhm-card-sub.form    { color: #1d4ed8; }
+.mhm-card-sub.hr      { color: #7c2d12; }
+.mhm-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.mhm-tile { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 6px 2px; border-radius: 8px; background: #f1f5f9; min-height: 44px; }
+.mhm-tile-label { font-size: 0.58rem; font-weight: 800; letter-spacing: .03em;
+  color: #475569; text-transform: uppercase; line-height: 1; margin-bottom: 3px; }
+.mhm-tile-value { font-size: 0.78rem; font-weight: 800; color: #0f172a; line-height: 1; }
+.mhm-tile.is-na { background: #e2e8f0; }
+.mhm-tile.is-na .mhm-tile-value { color: #64748b; }
+.mhm-tile-likely { grid-column: span 4; background: #f8fafc; padding: 4px; }
+.mhm-tile-likely .mhm-tile-value { font-size: 0.74rem; }
+
+@media (max-width: 700px) {
+  .mhm-wrap  { display: none; }
+  .mhm-cards { display: block; }
+}
 </style>
 """
 
@@ -3812,10 +3861,14 @@ def render_matchup_heatmap_html(df):
         label = MATCHUP_HEATMAP_DISPLAY_LABELS.get(c, c)
         header_cells.append(f'<th class="{cls}">{label}</th>')
 
-    # Build body rows
+    # Build body rows (desktop table) AND mobile cards in one pass so the two
+    # layouts stay synchronised — same numbers, same heat colors, same order.
     body_rows = []
+    mobile_cards = []
     for _, r in df.iterrows():
         cells = []
+        mobile_tiles = []
+        mobile_header_html = ""
         for c in display_cols:
             v = r.get(c)
             if c == "Hitter":
@@ -3863,20 +3916,50 @@ def render_matchup_heatmap_html(df):
                     f'{hr_html}'
                     f'</td>'
                 )
+                m_crushes = (f'<div class="mhm-card-sub crushes">💥 {crushes_str}</div>'
+                             if crushes_str and crushes_str != "—" else "")
+                m_form = (f'<div class="mhm-card-sub form">📈 {form_line}</div>'
+                          if form_line else "")
+                m_hr = (f'<div class="mhm-card-sub hr">' + " · ".join(hr_lines) + '</div>'
+                        if hr_lines else "")
+                mobile_header_html = (
+                    f'<div class="mhm-card-header">'
+                    f'<div class="mhm-card-name">{spot}. {v}</div>'
+                    f'<div class="mhm-card-meta">{team}</div>'
+                    f'{m_crushes}{m_form}{m_hr}'
+                    f'</div>'
+                )
                 continue
             if c == "Team" or c == "Crushes":
                 # Already rendered alongside Hitter — skip dedicated cell.
                 continue
             if c == "Likely":
+                mlabel = MATCHUP_HEATMAP_MOBILE_LABELS.get(c, c)
                 if v is None or (isinstance(v, float) and pd.isna(v)) or str(v) == "—":
                     cells.append('<td class="mhm-na">—</td>')
+                    mobile_tiles.append(
+                        f'<div class="mhm-tile mhm-tile-likely is-na">'
+                        f'<div class="mhm-tile-label">{mlabel}</div>'
+                        f'<div class="mhm-tile-value">—</div></div>'
+                    )
                 else:
                     cells.append(f'<td><span class="mhm-likely">{v}</span></td>')
+                    mobile_tiles.append(
+                        f'<div class="mhm-tile mhm-tile-likely">'
+                        f'<div class="mhm-tile-label">{mlabel}</div>'
+                        f'<div class="mhm-tile-value">{v}</div></div>'
+                    )
                 continue
             spec = HEATMAP_THRESHOLDS.get(c)
             fmt = spec[3] if spec else "{}"
+            mlabel = MATCHUP_HEATMAP_MOBILE_LABELS.get(c, c)
             if v is None or (isinstance(v, float) and pd.isna(v)):
                 cells.append('<td class="mhm-na">—</td>')
+                mobile_tiles.append(
+                    f'<div class="mhm-tile is-na">'
+                    f'<div class="mhm-tile-label">{mlabel}</div>'
+                    f'<div class="mhm-tile-value">—</div></div>'
+                )
                 continue
             try:
                 txt = fmt.format(float(v))
@@ -3895,11 +3978,27 @@ def render_matchup_heatmap_html(df):
             rgb, text_color = _heatmap_color_for(c, v)
             if rgb is None:
                 cells.append(f'<td>{txt}</td>')
+                mobile_tiles.append(
+                    f'<div class="mhm-tile">'
+                    f'<div class="mhm-tile-label">{mlabel}</div>'
+                    f'<div class="mhm-tile-value">{txt}</div></div>'
+                )
             else:
                 style = (f'background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]}); '
                          f'color: {text_color}; font-weight: 800;')
                 cells.append(f'<td style="{style}">{txt}</td>')
+                tile_style = (f'background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]});')
+                tile_value_style = f'color: {text_color};'
+                mobile_tiles.append(
+                    f'<div class="mhm-tile" style="{tile_style}">'
+                    f'<div class="mhm-tile-label" style="{tile_value_style} opacity:.85;">{mlabel}</div>'
+                    f'<div class="mhm-tile-value" style="{tile_value_style}">{txt}</div></div>'
+                )
         body_rows.append(f'<tr>{"".join(cells)}</tr>')
+        mobile_cards.append(
+            f'<div class="mhm-card">{mobile_header_html}'
+            f'<div class="mhm-grid">{"".join(mobile_tiles)}</div></div>'
+        )
 
     # Filter out the "Team" and "Crushes" columns from header (both are rendered
     # in the Hitter cell as sub-lines so the table stays mobile-friendly).
@@ -3911,6 +4010,7 @@ def render_matchup_heatmap_html(df):
         f'<thead><tr>{"".join(header_cells_filtered)}</tr></thead>'
         f'<tbody>{"".join(body_rows)}</tbody>'
         f'</table></div>'
+        f'<div class="mhm-cards">{"".join(mobile_cards)}</div>'
     )
     return table_html
 

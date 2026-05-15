@@ -4196,10 +4196,13 @@ def _fetch_pitcher_season_stats(player_id: int, season: int) -> dict:
         out = {
             "K%":   _pct(s.get("strikeoutsPer9Inn")) and None,  # we'll compute below
             "BB%":  _pct(s.get("walksPer9Inn")) and None,
+            "K/9":  _f(s.get("strikeoutsPer9Inn")),
+            "BB/9": _f(s.get("walksPer9Inn")),
             "IP":   ip,
             "ERA":  _f(s.get("era")),
             "WHIP": _f(s.get("whip")),
             "BAA":  _f(s.get("avg")),
+            "BABIP":_f(s.get("babip")),
             "BF":   bf,
         }
         # Compute K% / BB% from raw counts since StatsAPI doesn't ship them
@@ -4207,9 +4210,17 @@ def _fetch_pitcher_season_stats(player_id: int, season: int) -> dict:
         try:
             so = int(s.get("strikeOuts") or 0)
             bb = int(s.get("baseOnBalls") or 0)
+            hr = int(s.get("homeRuns") or 0)
+            h  = int(s.get("hits") or 0)
             if bf and bf > 0:
                 out["K%"]  = round(100.0 * so / bf, 1)
                 out["BB%"] = round(100.0 * bb / bf, 1)
+            # BABIP fallback if StatsAPI omitted it. AB ≈ BF − BB.
+            if out.get("BABIP") is None and bf:
+                ab_est = bf - bb
+                denom = ab_est - so - hr
+                if denom > 0:
+                    out["BABIP"] = round((h - hr) / denom, 3)
         except Exception:
             pass
         return out
@@ -4293,10 +4304,16 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
     if bb_pct is None:
         bb_pct = api_stats.get("BB%")
 
-    ip   = api_stats.get("IP")
-    era  = api_stats.get("ERA")
-    whip = api_stats.get("WHIP")
-    bf   = api_stats.get("BF")
+    ip    = api_stats.get("IP")
+    era   = api_stats.get("ERA")
+    whip  = api_stats.get("WHIP")
+    bf    = api_stats.get("BF")
+    k9    = api_stats.get("K/9")
+    bb9   = api_stats.get("BB/9")
+    babip = api_stats.get("BABIP")
+
+    # K-BB% (small-sample skill signal): publish whenever both rates are known.
+    kbb_pct = (k_pct - bb_pct) if (k_pct is not None and bb_pct is not None) else None
 
     # SwStr% (true): swing-rate × whiff-on-swing. Only computable from Savant.
     sw_str = (swing / 100.0) * (whiff / 100.0) * 100.0 if (swing is not None and whiff is not None) else None
@@ -4410,6 +4427,10 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
         "wOBA": _r(woba, 3),
         "K%": _r(k_pct, 1),
         "BB%": _r(bb_pct, 1),
+        "K-BB%": _r(kbb_pct, 1),
+        "K/9": _r(k9, 2),
+        "BB/9": _r(bb9, 2),
+        "BABIP": _r(babip, 3),
         "Whiff%": _r(whiff, 1),
         "SwStr%": _r(sw_str, 1),
         "Barrel%": _r(barrel, 1),
@@ -4468,7 +4489,11 @@ SLATE_PITCHER_HEATMAP = {
     "xwOBA":           (0.260, 0.340, True),
     "wOBA":            (0.260, 0.340, True),
     "K%":              (18.0, 32.0,   False),
+    "K/9":             (6.0,  12.0,   False),
     "BB%":             (5.0,  11.0,   True),
+    "BB/9":            (2.0,  4.5,    True),
+    "K-BB%":           (5.0,  25.0,   False),
+    "BABIP":           (0.260, 0.330, True),
     "Whiff%":          (20.0, 32.0,   False),
     "SwStr%":          (9.0,  15.0,   False),
     "Barrel%":         (4.0,  12.0,   True),
@@ -4483,6 +4508,8 @@ SLATE_PITCHER_FORMAT = {
     "Pitch Score": "{:.1f}", "Strikeout Score": "{:.1f}",
     "xwOBA": "{:.3f}", "wOBA": "{:.3f}",
     "K%": "{:.1f}", "BB%": "{:.1f}",
+    "K/9": "{:.2f}", "BB/9": "{:.2f}",
+    "K-BB%": "{:+.1f}", "BABIP": "{:.3f}",
     "Whiff%": "{:.1f}", "SwStr%": "{:.1f}",
     "Barrel%": "{:.1f}", "HH%": "{:.1f}",
     "FB%": "{:.1f}", "GB%": "{:.1f}",
@@ -4647,7 +4674,347 @@ def render_slate_pitcher_html(df, schedule_df=None):
 
     return css + f'<div class="sp-wrap"><table class="sp-table">{thead}{tbody}</table></div>'
 
-def render_slate_pitcher_minicards(away_row: dict, home_row: dict):
+# ---------------------------------------------------------------------------
+# Mobile-first Slate Pitchers dashboard
+#
+# Renders a vertically-stacked card per pitcher (no left-to-right scrolling),
+# emphasizing the small-sample-stable skill metrics: K%, K/9, BB%, K-BB%, WHIP,
+# BABIP. Tier badges flag pitchers who project as "K Dominator", "Command Edge",
+# "Traffic Limiter" or "Matchup Boost" based on the metric mix. Designed to
+# replace the wide heatmap table on phones.
+# ---------------------------------------------------------------------------
+
+def _sp_pct_bar(value, lo, hi, reverse=False):
+    """Map a value to a 0-100 'goodness' percent. Higher % = better pitcher.
+    reverse=True flips it (lower raw value = better, e.g. BB%, BABIP, WHIP)."""
+    if value is None:
+        return None
+    try:
+        x = float(value)
+    except Exception:
+        return None
+    if hi == lo:
+        return 50.0
+    t = (x - lo) / (hi - lo)
+    t = max(0.0, min(1.0, t))
+    if reverse:
+        t = 1.0 - t
+    return round(t * 100.0, 1)
+
+def _sp_compute_tiers(row: dict) -> list:
+    """Return a list of (label, tone) tier callouts for one pitcher row.
+    tone ∈ {good, warn, info}. Empty list when nothing qualifies."""
+    tiers = []
+    k_pct  = row.get("K%")
+    bb_pct = row.get("BB%")
+    kbb    = row.get("K-BB%")
+    whip   = row.get("WHIP")
+    babip  = row.get("BABIP")
+    whiff  = row.get("Whiff%")
+    k9     = row.get("K/9")
+
+    def _ge(v, t):
+        try: return v is not None and float(v) >= t
+        except Exception: return False
+    def _le(v, t):
+        try: return v is not None and float(v) <= t
+        except Exception: return False
+
+    # K Dominator — bat-missing engine.
+    if _ge(k_pct, 27.0) or _ge(k9, 10.0) or _ge(whiff, 30.0):
+        tiers.append(("⚡ K Dominator", "good"))
+    # Command Edge — limits free passes AND misses bats.
+    if _le(bb_pct, 6.5) and (_ge(k_pct, 22.0) or _ge(kbb, 17.0)):
+        tiers.append(("🎯 Command Edge", "good"))
+    # Traffic Limiter — WHIP based: keeps the bases clear.
+    if _le(whip, 1.15):
+        tiers.append(("🛡️ Traffic Limiter", "good"))
+    # Matchup Boost — K-BB% leans heavily positive (the most predictive small-sample mix).
+    if _ge(kbb, 18.0):
+        tiers.append(("📈 Matchup Boost", "good"))
+    # Luck filter — BABIP context, not skill. Flag suspiciously low/high.
+    if _le(babip, 0.260):
+        tiers.append(("🍀 BABIP Luck", "warn"))   # may regress worse
+    elif _ge(babip, 0.330):
+        tiers.append(("☁️ BABIP Unlucky", "info"))  # may regress better
+    # Fade warning — high walks + soft K.
+    if _ge(bb_pct, 10.0) and (k_pct is None or _le(k_pct, 19.0)):
+        tiers.append(("⚠️ Fade Risk", "warn"))
+    return tiers
+
+# Mobile-first metric panel: which metrics get a chip on the card, and the
+# (lo, hi, reverse) goodness scale for the colored progress bar behind them.
+SP_CARD_METRICS = [
+    # (key, label, fmt, lo, hi, reverse)
+    ("K%",      "K%",     "{:.1f}",  18.0, 32.0, False),
+    ("K/9",     "K/9",    "{:.2f}",  6.0,  12.0, False),
+    ("BB%",     "BB%",    "{:.1f}",  5.0,  11.0, True),
+    ("K-BB%",   "K-BB%",  "{:+.1f}", 5.0,  25.0, False),
+    ("WHIP",    "WHIP",   "{:.2f}",  1.00, 1.50, True),
+    ("BABIP",   "BABIP",  "{:.3f}",  0.260, 0.330, True),  # context only
+]
+
+def render_slate_pitcher_dashboard(df, schedule_df=None):
+    """Mobile-first stacked-card dashboard for the slate's probable pitchers.
+
+    Replaces the wide heatmap table. Each pitcher gets a self-contained card:
+    header (team logo, name, throws, opponent, time, source chip + tier badges),
+    a 2-column grid of metric chips (K%, K/9, BB%, K-BB%, WHIP, BABIP) with a
+    colored fill that encodes 'goodness' for that metric (higher % bar = better
+    pitcher; BB%/BABIP/WHIP bars are reversed so low values still read green).
+
+    The card grid is 2-column on phones, expanding to 3 columns above ~720px.
+    Nothing scrolls horizontally."""
+    if df is None or df.empty:
+        return "<div class='spd-empty'>No probable starters posted yet.</div>"
+
+    css = (
+        "<style>"
+        ".spd-wrap { display:grid; grid-template-columns: 1fr; gap: 14px; "
+        "  margin: 8px 0 14px 0; }"
+        "@media (min-width: 720px) { .spd-wrap { grid-template-columns: repeat(2, 1fr); } }"
+        "@media (min-width: 1100px) { .spd-wrap { grid-template-columns: repeat(3, 1fr); } }"
+        ".spd-card { background: linear-gradient(180deg, #111827 0%, #0b1220 100%); "
+        "  border:1px solid #1f2937; border-radius: 16px; padding: 14px; "
+        "  color:#e5e7eb; box-shadow: 0 4px 14px rgba(0,0,0,.25); "
+        "  display:flex; flex-direction:column; gap:10px; min-width:0; }"
+        ".spd-head { display:flex; align-items:center; gap:10px; min-width:0; }"
+        ".spd-logo { width:36px; height:36px; object-fit:contain; flex:0 0 auto; "
+        "  background:#0f172a; border-radius:8px; padding:3px; }"
+        ".spd-id { display:flex; flex-direction:column; min-width:0; flex:1 1 auto; }"
+        ".spd-name { font-weight:800; font-size:1.02rem; line-height:1.15; "
+        "  color:#f8fafc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+        ".spd-sub { font-size:.78rem; color:#94a3b8; margin-top:2px; "
+        "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+        ".spd-score { font-variant-numeric: tabular-nums; font-weight:800; "
+        "  font-size:1.1rem; color:#facc15; text-align:right; flex:0 0 auto; "
+        "  padding-left:6px; }"
+        ".spd-score small { display:block; font-size:.65rem; color:#94a3b8; "
+        "  font-weight:700; letter-spacing:.06em; text-transform:uppercase; }"
+        ".spd-tiers { display:flex; flex-wrap:wrap; gap:6px; }"
+        ".spd-tier { display:inline-block; padding: 3px 8px; border-radius:999px; "
+        "  font-size:.7rem; font-weight:800; letter-spacing:.02em; "
+        "  border:1px solid transparent; }"
+        ".spd-tier.good { background: rgba(16,185,129,.14); color:#6ee7b7; "
+        "  border-color: rgba(110,231,183,.35); }"
+        ".spd-tier.warn { background: rgba(244,114,182,.12); color:#fda4af; "
+        "  border-color: rgba(253,164,175,.35); }"
+        ".spd-tier.info { background: rgba(96,165,250,.12); color:#93c5fd; "
+        "  border-color: rgba(147,197,253,.35); }"
+        ".spd-src { font-size:.62rem; font-weight:800; letter-spacing:.06em; "
+        "  text-transform:uppercase; padding:2px 7px; border-radius:999px; "
+        "  border:1px solid #334155; color:#cbd5e1; background:#0f172a; }"
+        ".spd-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }"
+        "@media (min-width: 480px) { .spd-grid { grid-template-columns: 1fr 1fr 1fr; } }"
+        ".spd-chip { position:relative; background:#0f172a; border:1px solid #1f2937; "
+        "  border-radius:10px; padding:8px 10px; overflow:hidden; }"
+        ".spd-chip-fill { position:absolute; left:0; top:0; bottom:0; width:0%; "
+        "  background: linear-gradient(90deg, rgba(16,185,129,.22), rgba(16,185,129,.06)); "
+        "  z-index:0; }"
+        ".spd-chip.bad .spd-chip-fill { background: linear-gradient(90deg, "
+        "  rgba(248,113,113,.22), rgba(248,113,113,.06)); }"
+        ".spd-chip.mid .spd-chip-fill { background: linear-gradient(90deg, "
+        "  rgba(250,204,21,.22), rgba(250,204,21,.06)); }"
+        ".spd-chip-label { position:relative; z-index:1; font-size:.7rem; "
+        "  color:#94a3b8; font-weight:700; letter-spacing:.04em; "
+        "  text-transform:uppercase; }"
+        ".spd-chip-val { position:relative; z-index:1; font-size:1.05rem; "
+        "  font-weight:800; color:#f8fafc; font-variant-numeric: tabular-nums; "
+        "  margin-top:2px; }"
+        ".spd-chip-na .spd-chip-val { color:#64748b; }"
+        ".spd-foot { font-size:.72rem; color:#94a3b8; display:flex; "
+        "  justify-content:space-between; gap:8px; flex-wrap:wrap; }"
+        ".spd-foot b { color:#e2e8f0; }"
+        ".spd-empty { padding:14px 18px; color:#94a3b8; background:#0f172a; "
+        "  border:1px dashed #334155; border-radius:14px; }"
+        "</style>"
+    )
+
+    cards = []
+    for _, r in df.iterrows():
+        rd = r.to_dict() if hasattr(r, "to_dict") else dict(r)
+        logo = rd.get("_logo") or ""
+        name = str(rd.get("Pitcher") or "—")
+        throws = rd.get("Throws") or ""
+        team = rd.get("Team") or ""
+        opp  = rd.get("Opp") or ""
+        loc  = rd.get("Loc") or ""
+        time_ = rd.get("Time") or ""
+        src   = rd.get("Source") or ""
+        pscore = rd.get("Pitch Score")
+        ip = rd.get("IP")
+        era = rd.get("ERA")
+        pa = rd.get("PA")
+
+        # Header sub: TEAM (throws) loc OPP · time
+        sub_bits = [team]
+        if throws:
+            sub_bits[-1] += f" ({throws}HP)"
+        if opp:
+            sub_bits.append(f"{loc or 'vs'} {opp}")
+        if time_:
+            sub_bits.append(str(time_))
+        sub = " · ".join([b for b in sub_bits if b])
+
+        score_html = ""
+        if pscore is not None:
+            try:
+                score_html = (
+                    f'<div class="spd-score">{float(pscore):.0f}'
+                    f'<small>Pitch Score</small></div>'
+                )
+            except Exception:
+                score_html = ""
+
+        # Tier badges
+        tiers = _sp_compute_tiers(rd)
+        tier_html = ""
+        if tiers or src:
+            chips = []
+            for label, tone in tiers:
+                chips.append(f'<span class="spd-tier {tone}">{label}</span>')
+            if src:
+                chips.append(f'<span class="spd-src" title="Data source">{src}</span>')
+            tier_html = '<div class="spd-tiers">' + "".join(chips) + "</div>"
+
+        # Metric chips
+        chip_html_parts = []
+        for key, label, fmt, lo, hi, rev in SP_CARD_METRICS:
+            v = rd.get(key)
+            pct = _sp_pct_bar(v, lo, hi, reverse=rev)
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                chip_html_parts.append(
+                    f'<div class="spd-chip spd-chip-na">'
+                    f'<div class="spd-chip-fill" style="width:0%"></div>'
+                    f'<div class="spd-chip-label">{label}</div>'
+                    f'<div class="spd-chip-val">—</div></div>'
+                )
+                continue
+            try:
+                txt = fmt.format(float(v))
+            except Exception:
+                txt = str(v)
+            tone_cls = "good"
+            if pct is not None:
+                if pct < 33:
+                    tone_cls = "bad"
+                elif pct < 66:
+                    tone_cls = "mid"
+            chip_html_parts.append(
+                f'<div class="spd-chip {tone_cls}">'
+                f'<div class="spd-chip-fill" style="width:{pct or 0}%"></div>'
+                f'<div class="spd-chip-label">{label}</div>'
+                f'<div class="spd-chip-val">{txt}</div></div>'
+            )
+
+        # Foot: IP / ERA / PA context
+        foot_bits = []
+        if ip is not None:
+            try: foot_bits.append(f"<b>IP</b> {float(ip):.1f}")
+            except Exception: pass
+        if era is not None:
+            try: foot_bits.append(f"<b>ERA</b> {float(era):.2f}")
+            except Exception: pass
+        if pa is not None:
+            try: foot_bits.append(f"<b>BF/PA</b> {int(pa)}")
+            except Exception: pass
+        foot_html = '<div class="spd-foot">' + " · ".join(foot_bits) + "</div>" if foot_bits else ""
+
+        logo_html = (
+            f'<img class="spd-logo" src="{logo}" alt="{team}" />'
+            if logo else
+            '<div class="spd-logo" style="background:#0f172a;"></div>'
+        )
+
+        cards.append(
+            '<div class="spd-card">'
+            '<div class="spd-head">'
+            f'{logo_html}'
+            f'<div class="spd-id"><div class="spd-name">{name}</div>'
+            f'<div class="spd-sub">{sub}</div></div>'
+            f'{score_html}'
+            '</div>'
+            f'{tier_html}'
+            f'<div class="spd-grid">{"".join(chip_html_parts)}</div>'
+            f'{foot_html}'
+            '</div>'
+        )
+
+    return css + '<div class="spd-wrap">' + "".join(cards) + "</div>"
+
+
+def render_slate_pitcher_explainer():
+    """Static explanation panel: what each metric means, what stabilizes
+    fast in small samples, and which categories are most predictive."""
+    return (
+        "<style>"
+        ".spx-wrap { background: linear-gradient(180deg, #0f172a 0%, #0b1220 100%); "
+        "  color:#e5e7eb; border:1px solid #1f2937; border-radius:16px; "
+        "  padding:14px 16px; margin: 6px 0 14px 0; }"
+        ".spx-title { font-weight:800; font-size:1.0rem; letter-spacing:.02em; "
+        "  color:#f8fafc; margin-bottom:8px; display:flex; align-items:center; gap:8px; }"
+        ".spx-title .spx-pill { font-size:.65rem; padding:2px 8px; border-radius:999px; "
+        "  background:#1e293b; color:#94a3b8; font-weight:800; letter-spacing:.06em; "
+        "  text-transform:uppercase; }"
+        ".spx-grid { display:grid; grid-template-columns: 1fr; gap: 8px; }"
+        "@media (min-width: 640px) { .spx-grid { grid-template-columns: 1fr 1fr; } }"
+        ".spx-row { background:#111827; border:1px solid #1f2937; border-radius:10px; "
+        "  padding:10px 12px; }"
+        ".spx-row .k { font-weight:800; color:#facc15; font-size:.85rem; }"
+        ".spx-row .tag { font-size:.62rem; padding:2px 7px; border-radius:999px; "
+        "  margin-left:6px; font-weight:800; letter-spacing:.05em; "
+        "  text-transform:uppercase; }"
+        ".spx-row .tag.top   { background: rgba(250,204,21,.16); color:#fde68a; }"
+        ".spx-row .tag.fast  { background: rgba(110,231,183,.14); color:#6ee7b7; }"
+        ".spx-row .tag.skill { background: rgba(147,197,253,.14); color:#93c5fd; }"
+        ".spx-row .tag.luck  { background: rgba(253,164,175,.14); color:#fda4af; }"
+        ".spx-row .d { color:#cbd5e1; font-size:.86rem; margin-top:4px; line-height:1.35; }"
+        ".spx-note { color:#94a3b8; font-size:.78rem; margin-top:10px; line-height:1.4; }"
+        "</style>"
+        '<div class="spx-wrap">'
+        '<div class="spx-title">📖 How to read these metrics '
+        '<span class="spx-pill">small-sample guide</span></div>'
+        '<div class="spx-grid">'
+        '<div class="spx-row"><span class="k">K-BB%</span>'
+        '<span class="tag top">Top predictor</span>'
+        '<div class="d">Strikeouts minus walks per batter faced. The single most '
+        'predictive small-sample skill stat — it captures bat-missing ability and '
+        'command in one number. Anything <b>≥ 18%</b> is elite.</div></div>'
+        '<div class="spx-row"><span class="k">K%</span>'
+        '<span class="tag fast">Stabilizes fast</span>'
+        '<div class="d">Strikeout rate per batter. Stabilizes around <b>~60 BF</b>, '
+        'making it one of the first usable signals on a new arm. <b>≥ 27%</b> = '
+        'truly hard to make contact against.</div></div>'
+        '<div class="spx-row"><span class="k">BB%</span>'
+        '<span class="tag fast">Stabilizes fast</span>'
+        '<div class="d">Walk rate. Stabilizes around <b>~120 BF</b>. Low walks '
+        '(<b>≤ 6.5%</b>) mean batters have to earn their way on — a big driver of '
+        'WHIP and run prevention.</div></div>'
+        '<div class="spx-row"><span class="k">K/9</span>'
+        '<span class="tag fast">Stabilizes fast</span>'
+        '<div class="d">Strikeouts per nine innings. A useful headline number for '
+        'prop bets and starter quality. <b>≥ 10</b> is bat-missing territory; '
+        '&lt; 7 puts the offense in play.</div></div>'
+        '<div class="spx-row"><span class="k">WHIP</span>'
+        '<span class="tag skill">Overall skill</span>'
+        '<div class="d">Walks + hits per inning. A blended measure of how often '
+        'a pitcher lets baserunners on. Best starters live <b>≤ 1.10</b>; over '
+        '1.40 is traffic city. Includes some hit luck — pair with BABIP.</div></div>'
+        '<div class="spx-row"><span class="k">BABIP</span>'
+        '<span class="tag luck">Luck filter</span>'
+        '<div class="d">Opponent batting average on balls in play. League norm is '
+        '<b>~.295</b>. Pitchers running <b>&lt; .260</b> are usually due for '
+        'regression worse; <b>&gt; .330</b> are often pitching better than the '
+        'surface stats show.</div></div>'
+        '</div>'
+        '<div class="spx-note">📊 <b>How hard is this pitcher to bat against?</b> '
+        'Lead with K-BB% and K/9 for bat-missing ability, then check BB% and WHIP '
+        'for whether the bases stay clear. Use BABIP last — as a luck check, not '
+        'a skill grade. Whiff% / SwStr% (shown on the card chips when Statcast '
+        'data exists) confirms the K% signal is driven by real swing-and-miss, '
+        'not weak opposing lineups.</div>'
+        '</div>'
+    )
     """Compact two-up cards summarizing both starters in the current game.
     Each card pulls Pitch Score, Strikeout Score and the key Statcast headline
     metrics (xwOBA-against, K%, Whiff%, Barrel%, HH%) from the Slate Pitchers
@@ -6477,7 +6844,17 @@ st.markdown(
 )
 
 if _view == "🥎 Slate Pitchers":
-    st.markdown('<div class="section-title" style="font-size:1.4rem;margin-top:8px;">🥎 Slate Pitchers</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '🥎 Slate Pitchers'
+        '</div>'
+        '<div style="color:#64748b; font-size:.9rem; margin: -4px 0 10px 0;">'
+        'Mobile-first pitcher evaluation dashboard. Compare today\'s probable '
+        'starters on the metrics that actually predict how hard they are to bat '
+        'against — <b>K%, K/9, BB%, K-BB%, WHIP, BABIP</b>.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     if pitcher_stats_df is None or pitcher_stats_df.empty:
         st.warning(
             "Pitcher stats CSV (`Data:savant_pitcher_stats.csv`) hasn’t loaded yet. "
@@ -6489,33 +6866,75 @@ if _view == "🥎 Slate Pitchers":
     if sp_df.empty:
         st.info("No probable starters posted yet for this slate. Check back closer to first pitch.")
     else:
-        # ---- Filter row: Hide TBD / Min PA / Hide unmatched ----
-        f_cols = st.columns([1, 1, 1.2, 2.6])
-        with f_cols[0]:
-            _hide_tbd = st.checkbox("Hide TBD", value=True, key="sp_hide_tbd",
-                                    help="Hide rows whose probable starter is still TBD.")
-        with f_cols[1]:
-            _hide_unmatched = st.checkbox("Hide unmatched", value=False, key="sp_hide_unmatched",
-                                          help="Hide rows with no Savant CSV row (blank metrics).")
-        with f_cols[2]:
-            _min_pa = st.number_input("Min PA", min_value=0, value=0, step=10,
-                                      key="sp_min_pa",
-                                      help="Filter to pitchers with at least this many PA in the CSV.")
+        # -------- Filter controls (stack-friendly on phones) --------
+        # Season options: derived from the Savant pitcher_stats CSV. Today's
+        # slate is always the current season but the filter UI is preserved
+        # for forward-compat with multi-year data.
+        try:
+            _year_vals = sorted(
+                {int(y) for y in pitcher_stats_df.get("year", pd.Series([])).dropna().unique()
+                 if str(y).strip().isdigit()},
+                reverse=True,
+            )
+        except Exception:
+            _year_vals = []
+        _season_options = ["Current"] + [str(y) for y in _year_vals]
 
+        _team_options = ["All"] + sorted({
+            str(t) for t in sp_df.get("Team", pd.Series([])).dropna().tolist()
+            if str(t).strip()
+        })
+
+        f1, f2 = st.columns(2)
+        with f1:
+            _f_season = st.selectbox(
+                "Season", _season_options, index=0, key="sp_f_season",
+                help="Season for the underlying skill stats. 'Current' uses the "
+                     "latest year in the Savant CSV.",
+            )
+        with f2:
+            _f_throws = st.selectbox(
+                "Handedness", ["All", "R (RHP)", "L (LHP)"], index=0,
+                key="sp_f_throws",
+                help="Filter by pitcher throwing hand.",
+            )
+        f3, f4 = st.columns(2)
+        with f3:
+            _f_team = st.selectbox(
+                "Team", _team_options, index=0, key="sp_f_team",
+                help="Filter the slate by the pitcher's team.",
+            )
+        with f4:
+            _f_min_ip = st.number_input(
+                "Min IP", min_value=0.0, value=0.0, step=5.0,
+                key="sp_f_min_ip",
+                help="Hide pitchers with fewer than this many innings pitched "
+                     "(per MLB StatsAPI season totals).",
+            )
+
+        _hide_tbd = st.checkbox(
+            "Hide TBD probable starters", value=True, key="sp_hide_tbd",
+            help="Hide rows whose probable starter is still TBD.",
+        )
+
+        # ----- Apply filters -----
         sp_df_filtered = sp_df.copy()
         if _hide_tbd:
-            sp_df_filtered = sp_df_filtered[sp_df_filtered["Pitcher"].astype(str).str.upper() != "TBD"]
-        if _hide_unmatched:
             sp_df_filtered = sp_df_filtered[
-                ~(sp_df_filtered["xwOBA"].isna() & sp_df_filtered["K%"].isna())
+                sp_df_filtered["Pitcher"].astype(str).str.upper() != "TBD"
             ]
-        if _min_pa and _min_pa > 0 and "PA" in sp_df_filtered.columns:
+        if _f_throws.startswith("R"):
+            sp_df_filtered = sp_df_filtered[sp_df_filtered["Throws"] == "R"]
+        elif _f_throws.startswith("L"):
+            sp_df_filtered = sp_df_filtered[sp_df_filtered["Throws"] == "L"]
+        if _f_team and _f_team != "All":
+            sp_df_filtered = sp_df_filtered[sp_df_filtered["Team"] == _f_team]
+        if _f_min_ip and _f_min_ip > 0 and "IP" in sp_df_filtered.columns:
             sp_df_filtered = sp_df_filtered[
-                sp_df_filtered["PA"].fillna(-1).astype(float) >= float(_min_pa)
+                sp_df_filtered["IP"].fillna(-1).astype(float) >= float(_f_min_ip)
             ]
 
-        # Coverage summary — one chip per data tier so the user can see at a
-        # glance how much of the slate is grounded in real Statcast data.
+        # Coverage summary
         if "Source" in sp_df.columns:
             counts = sp_df["Source"].fillna("No sample").value_counts().to_dict()
             total = int(sum(counts.values()))
@@ -6524,40 +6943,128 @@ if _view == "🥎 Slate Pitchers":
             n_api    = _ct("StatsAPI")
             n_none   = _ct("No sample")
             st.markdown(
-                f'<div style="margin: 4px 0 10px 0; font-size:.85rem; color:#334155;">'
+                f'<div style="margin: 4px 0 10px 0; font-size:.85rem; color:#94a3b8;">'
                 f'<b>{total}</b> probable starters · '
-                f'<span style="color:#166534;">●</span> {n_savant} Savant 2026 · '
-                f'<span style="color:#1e40af;">●</span> {n_api} StatsAPI fallback · '
-                f'<span style="color:#64748b;">●</span> {n_none} no sample'
+                f'<span style="color:#22c55e;">●</span> {n_savant} Savant 2026 · '
+                f'<span style="color:#60a5fa;">●</span> {n_api} StatsAPI fallback · '
+                f'<span style="color:#94a3b8;">●</span> {n_none} no sample'
                 f'</div>',
                 unsafe_allow_html=True,
             )
-        # Highlight if any pitcher couldn't be matched to ANY 2026 source.
-        unmatched = sp_df[sp_df["Source"] == "No sample"] if "Source" in sp_df.columns else pd.DataFrame()
-        if not unmatched.empty and not _hide_unmatched:
-            names = ", ".join(unmatched["Pitcher"].astype(str).tolist())
-            st.caption(
-                f"ℹ️ No 2026 sample yet for: **{names}**. Likely a season debut "
-                "or recent call-up — metrics will populate after their first appearance."
+
+        # ----- Top callouts: the slate's strongest profiles by category -----
+        def _best(df_, col, ascending=False, min_ip=0.0):
+            try:
+                d = df_[df_[col].notna()].copy() if col in df_.columns else pd.DataFrame()
+            except Exception:
+                d = pd.DataFrame()
+            if "IP" in d.columns and min_ip:
+                d = d[d["IP"].fillna(0).astype(float) >= float(min_ip)]
+            if d.empty:
+                return None
+            d = d.sort_values(col, ascending=ascending, na_position="last")
+            return d.iloc[0].to_dict()
+
+        callouts = []
+        cands = [
+            ("⚡ K Dominator",    "K-BB%", False, "Highest K-BB% on the slate — best mix of bat-missing and command."),
+            ("🎯 Command Edge",  "BB%",   True,  "Lowest walk rate — won't beat himself."),
+            ("🛡️ Traffic Limiter","WHIP",  True,  "Lowest WHIP — fewest baserunners allowed."),
+            ("📈 Matchup Boost", "K/9",   False, "Highest K/9 — biggest strikeout ceiling tonight."),
+        ]
+        for label, col, asc, blurb in cands:
+            row = _best(sp_df_filtered, col, ascending=asc, min_ip=5.0)
+            if row:
+                callouts.append((label, col, row, blurb))
+
+        if callouts:
+            cards_html = []
+            for label, col, row, blurb in callouts:
+                v = row.get(col)
+                fmt = SLATE_PITCHER_FORMAT.get(col, "{}")
+                try:
+                    vtxt = fmt.format(float(v))
+                except Exception:
+                    vtxt = str(v) if v is not None else "—"
+                cards_html.append(
+                    '<div class="spco-card">'
+                    f'<div class="spco-tag">{label}</div>'
+                    f'<div class="spco-name">{row.get("Pitcher","—")}</div>'
+                    f'<div class="spco-sub">{row.get("Team","")} '
+                    f'{row.get("Loc","")} {row.get("Opp","")} · {row.get("Time","")}</div>'
+                    f'<div class="spco-val">{col} <b>{vtxt}</b></div>'
+                    f'<div class="spco-blurb">{blurb}</div>'
+                    '</div>'
+                )
+            st.markdown(
+                "<style>"
+                ".spco-row { display:grid; grid-template-columns: 1fr 1fr; gap:10px; "
+                "  margin: 6px 0 14px 0; }"
+                "@media (min-width:720px) { .spco-row { grid-template-columns: repeat(4, 1fr); } }"
+                ".spco-card { background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); "
+                "  border:1px solid #334155; border-radius:12px; padding:10px 12px; "
+                "  color:#e5e7eb; }"
+                ".spco-tag { font-size:.68rem; font-weight:800; letter-spacing:.05em; "
+                "  text-transform:uppercase; color:#fde68a; }"
+                ".spco-name { font-weight:800; font-size:.98rem; color:#f8fafc; margin-top:4px; "
+                "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+                ".spco-sub { font-size:.72rem; color:#94a3b8; margin-top:2px; }"
+                ".spco-val { margin-top:6px; font-size:.85rem; color:#cbd5e1; }"
+                ".spco-val b { color:#f8fafc; font-variant-numeric: tabular-nums; "
+                "  font-weight:800; }"
+                ".spco-blurb { font-size:.72rem; color:#94a3b8; margin-top:4px; line-height:1.3; }"
+                "</style>"
+                '<div class="spco-row">' + "".join(cards_html) + '</div>',
+                unsafe_allow_html=True,
             )
+
+        # Explanation panel (above the cards so first-time users see context first)
+        st.markdown(render_slate_pitcher_explainer(), unsafe_allow_html=True)
+
+        # ----- Sort + main mobile-first cards -----
+        sort_cols = [c for c in
+                     ["Pitch Score", "K-BB%", "K%", "K/9", "BB%", "WHIP", "BABIP",
+                      "xwOBA", "Whiff%", "IP"]
+                     if c in sp_df_filtered.columns]
+        s1, s2 = st.columns([1.6, 1])
+        with s1:
+            _sort_by = st.selectbox(
+                "Sort by", sort_cols,
+                index=0 if "Pitch Score" in sort_cols else 0,
+                key="sp_sort_by",
+            )
+        with s2:
+            _sort_dir = st.selectbox(
+                "Order",
+                ["Best first", "Worst first"],
+                index=0, key="sp_sort_dir",
+            )
+        # "Best" depends on whether the metric is positive (higher better) or
+        # reverse (lower better).
+        _reverse_metrics = {"BB%", "WHIP", "BABIP", "xwOBA", "BB/9"}
+        asc_best = _sort_by in _reverse_metrics
+        ascending = asc_best if _sort_dir == "Best first" else (not asc_best)
+        try:
+            sp_df_filtered = sp_df_filtered.sort_values(
+                _sort_by, ascending=ascending, na_position="last"
+            ).reset_index(drop=True)
+        except Exception:
+            pass
+
         if sp_df_filtered.empty:
-            st.info("No pitchers match the current filters. Try lowering Min PA or unchecking Hide TBD.")
-        st.markdown(render_slate_pitcher_html(sp_df_filtered, schedule_df), unsafe_allow_html=True)
-        st.markdown(
-            '<div class="sp-legend">'
-            'Sorted by <code>↓ Pitch Score</code> (35% xwOBA-against · 25% K-BB% · '
-            '20% Whiff% · 20% Barrel%-against). Pitch Score is only published when '
-            '≥60% of those inputs are real (no placeholder fills). Green = stronger '
-            'pitcher, red = weaker. <code>SwStr%</code> = Swing% × Whiff%. '
-            'Source chip shows where each row’s data came from: '
-            '<b>Savant</b> 2026 (Statcast), <b>Savant·sm</b>/<b>·xs</b> (small sample), '
-            '<b>StatsAPI</b> fallback (season totals only — fills K%, BB%, ERA, WHIP, IP), '
-            'or <b>No sample</b> (— shown across the row).'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-        # CSV download
-        csv_bytes = sp_df_filtered.drop(columns=[c for c in sp_df_filtered.columns if c.startswith("_")], errors="ignore").to_csv(index=False).encode("utf-8")
+            st.info("No pitchers match the current filters. Try widening Min IP, "
+                    "team, or handedness.")
+        else:
+            st.markdown(
+                render_slate_pitcher_dashboard(sp_df_filtered, schedule_df),
+                unsafe_allow_html=True,
+            )
+
+        # CSV download (unchanged behavior — useful for power users)
+        csv_bytes = sp_df_filtered.drop(
+            columns=[c for c in sp_df_filtered.columns if c.startswith("_")],
+            errors="ignore",
+        ).to_csv(index=False).encode("utf-8")
         st.download_button(
             "⬇️ Download Slate Pitchers (CSV)",
             data=csv_bytes,

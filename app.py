@@ -11440,10 +11440,11 @@ if _view == "🥎 AI 1+ Hits Parlay":
 
 
 # ============== Live HR Tracker view ==============
-# Real-time home run feed with flaming activation banner, confetti burst,
-# team-colored player cards, and a sticky counter/ticker strip. The page
-# ships with a Demo mode by default; wire a real MLB-feed fetcher into
-# render_live_hr_tracker(fetcher=...) once a polling source is available.
+# Real-time home run feed wired to the official MLB StatsAPI
+# (/api/v1/schedule + /api/v1.1/game/{pk}/feed/live). Every new HR fires a
+# flaming banner, confetti burst, and a team-colored player card with
+# season HR / OPS / ISO. A dev-only Demo toggle inside the page lets you
+# inject synthetic events for visual QA.
 if _view == "🏟️ Live HR Tracker":
     st.markdown(
         '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
@@ -11452,16 +11453,16 @@ if _view == "🏟️ Live HR Tracker":
     )
     st.markdown(
         '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
-        'Real-time home run feed. Every homer fires a flaming banner, '
-        'confetti burst, and a team-colored player card with season HR, OPS, '
-        'ISO and Barrel%. Toggle <b>Demo mode</b> off once a real MLB feed '
-        'is wired into the polling hook.'
+        'Real-time home run feed for today\'s MLB slate, pulled directly '
+        'from the official MLB StatsAPI live feed. Every homer fires a '
+        'flaming banner, confetti burst, and a team-colored player card '
+        'with season HR, OPS and ISO.'
         '</div>',
         unsafe_allow_html=True,
     )
     try:
         from live_hr_tracker import render_live_hr_tracker as _render_lhrt
-        _render_lhrt(fetcher=None)
+        _render_lhrt()
     except Exception as _lhrt_err:
         st.error(f"Live HR Tracker failed to load: {_lhrt_err}")
     st.stop()

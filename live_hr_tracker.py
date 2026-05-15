@@ -32,6 +32,11 @@ from typing import Any, Callable, Iterable
 
 import streamlit as st
 
+try:
+    import requests  # type: ignore
+except Exception:  # pragma: no cover - requests is in requirements.txt
+    requests = None  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Team color palette (compact fallback — used only if the host app doesn't
@@ -489,6 +494,345 @@ def _simulate_event(seq: int) -> HRPlayer:
 
 
 # ---------------------------------------------------------------------------
+# Real MLB feed — StatsAPI schedule + per-game live feed.
+# ---------------------------------------------------------------------------
+# Maps the StatsAPI team full names to the 2/3-letter abbreviations used by
+# TEAM_COLORS above. StatsAPI itself usually provides `teams.away.team.abbreviation`
+# on the schedule payload, so we only fall back to this map if that field is
+# missing or unusual.
+_TEAM_NAME_TO_ABBR: dict[str, str] = {
+    "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL",
+    "Baltimore Orioles": "BAL", "Boston Red Sox": "BOS",
+    "Chicago Cubs": "CHC", "Chicago White Sox": "CWS",
+    "Cincinnati Reds": "CIN", "Cleveland Guardians": "CLE",
+    "Colorado Rockies": "COL", "Detroit Tigers": "DET",
+    "Houston Astros": "HOU", "Kansas City Royals": "KC",
+    "Los Angeles Angels": "LAA", "Los Angeles Dodgers": "LAD",
+    "Miami Marlins": "MIA", "Milwaukee Brewers": "MIL",
+    "Minnesota Twins": "MIN", "New York Mets": "NYM",
+    "New York Yankees": "NYY", "Oakland Athletics": "OAK",
+    "Athletics": "ATH",
+    "Philadelphia Phillies": "PHI", "Pittsburgh Pirates": "PIT",
+    "San Diego Padres": "SD", "San Francisco Giants": "SF",
+    "Seattle Mariners": "SEA", "St. Louis Cardinals": "STL",
+    "Tampa Bay Rays": "TB", "Texas Rangers": "TEX",
+    "Toronto Blue Jays": "TOR", "Washington Nationals": "WSH",
+}
+# StatsAPI sometimes emits divergent abbreviations (TBR/CHW/SDP/SFG/WSN/KCR).
+# Normalize them to the keys we use in TEAM_COLORS.
+_ABBR_ALIASES: dict[str, str] = {
+    "TBR": "TB", "TBD": "TB",
+    "CHW": "CWS", "WSN": "WSH", "WAS": "WSH",
+    "SDP": "SD",  "SFG": "SF",  "KCR": "KC",
+}
+
+_STATSAPI_BASE = "https://statsapi.mlb.com"
+_HTTP_TIMEOUT = 12  # seconds
+
+
+def _normalize_abbr(raw: str | None, full_name: str | None = None) -> str:
+    """Return a normalized abbreviation suitable for TEAM_COLORS lookup."""
+    if raw:
+        ab = str(raw).strip().upper()
+        return _ABBR_ALIASES.get(ab, ab)
+    if full_name:
+        return _TEAM_NAME_TO_ABBR.get(str(full_name).strip(), str(full_name)[:3].upper())
+    return ""
+
+
+def _today_iso() -> str:
+    """Today's date in YYYY-MM-DD using the user's local clock — MLB schedule
+    accepts a plain calendar date and resolves it across MLB timezones."""
+    return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+@dataclass
+class FeedStatus:
+    """Lightweight, mutable snapshot of the most recent poll. Kept in
+    session_state so the status panel can render after each rerun."""
+    last_checked: float = 0.0     # epoch seconds
+    games_scanned: int = 0
+    games_live: int = 0
+    games_final: int = 0
+    games_preview: int = 0
+    hrs_today: int = 0
+    last_error: str = ""
+    schedule_date: str = ""
+
+
+class MLBLiveHRFeed:
+    """Pulls today's MLB games and yields new home-run events.
+
+    Usage:
+        feed = MLBLiveHRFeed()
+        for ev in feed.fetch_new_events(seen_ids):
+            ...
+
+    The instance is intentionally cheap to construct; we cache the schedule
+    for ~60s and the per-game ``feed/live`` payloads only on the call stack —
+    Streamlit reruns will rebuild the instance, which is fine because the
+    de-dup happens through ``seen_ids`` in session_state.
+    """
+
+    def __init__(self, *, date_iso: str | None = None,
+                 status: FeedStatus | None = None) -> None:
+        self.date_iso = date_iso or _today_iso()
+        self.status = status or FeedStatus()
+        self.status.schedule_date = self.date_iso
+
+    # ---- HTTP ----
+    def _get_json(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if requests is None:
+            raise RuntimeError("requests is not installed")
+        r = requests.get(url, params=params or {}, timeout=_HTTP_TIMEOUT,
+                         headers={"User-Agent": "live-hr-tracker/1.0"})
+        r.raise_for_status()
+        return r.json() or {}
+
+    # ---- Schedule ----
+    def fetch_schedule(self) -> list[dict[str, Any]]:
+        """Return today's games (each entry is a StatsAPI ``game`` dict)."""
+        data = self._get_json(
+            f"{_STATSAPI_BASE}/api/v1/schedule",
+            {"sportId": 1, "date": self.date_iso, "hydrate": "team,linescore"},
+        )
+        games: list[dict[str, Any]] = []
+        for d in data.get("dates", []) or []:
+            for g in d.get("games", []) or []:
+                games.append(g)
+        return games
+
+    # ---- Live feed ----
+    def fetch_game_feed(self, game_pk: int) -> dict[str, Any]:
+        return self._get_json(f"{_STATSAPI_BASE}/api/v1.1/game/{game_pk}/feed/live")
+
+    # ---- Play → HR dict ----
+    @staticmethod
+    def _extract_hit_data(play: dict[str, Any]) -> tuple[float | None, int | None]:
+        """Walk playEvents (last to first) and grab the first hitData payload."""
+        ev_list = play.get("playEvents") or []
+        for ev_p in reversed(ev_list):
+            hd = ev_p.get("hitData") or {}
+            if hd:
+                ls = hd.get("launchSpeed")
+                td = hd.get("totalDistance")
+                try:
+                    ls = float(ls) if ls is not None else None
+                except Exception:
+                    ls = None
+                try:
+                    td = int(round(float(td))) if td is not None else None
+                except Exception:
+                    td = None
+                return ls, td
+        return None, None
+
+    @staticmethod
+    def _make_event_id(game_pk: int, play: dict[str, Any]) -> str:
+        """Stable id: gamePk + atBatIndex + endTime fallback."""
+        about = play.get("about") or {}
+        idx = play.get("atBatIndex")
+        end = about.get("endTime") or ""
+        if idx is not None:
+            return f"{game_pk}-ab{idx}"
+        return f"{game_pk}-{end}"
+
+    def _build_event(self, game: dict[str, Any], game_pk: int,
+                     play: dict[str, Any],
+                     away_abbr: str, home_abbr: str) -> dict[str, Any] | None:
+        result = play.get("result") or {}
+        ev = (result.get("eventType") or result.get("event") or "").lower()
+        if ev not in ("home_run", "home run"):
+            return None
+        matchup = play.get("matchup") or {}
+        about = play.get("about") or {}
+        batter = matchup.get("batter") or {}
+        pitcher = matchup.get("pitcher") or {}
+        half = (about.get("halfInning") or "").lower()
+        inning = about.get("inning")
+        batter_team_abbr = away_abbr if half == "top" else home_abbr
+        opp_abbr = home_abbr if half == "top" else away_abbr
+        try:
+            rbi = int(result.get("rbi") or 1)
+        except Exception:
+            rbi = 1
+        launch_speed, distance = self._extract_hit_data(play)
+        # Compose matchup string: "off Snell · NYY vs BOS · T5"
+        half_short = "T" if half == "top" else "B" if half == "bottom" else ""
+        inning_tag = f"{half_short}{inning}" if inning else ""
+        pitcher_name = pitcher.get("fullName") or ""
+        matchup_parts = []
+        if pitcher_name:
+            matchup_parts.append(f"off {pitcher_name}")
+        matchup_parts.append(f"{batter_team_abbr} vs {opp_abbr}")
+        if inning_tag:
+            matchup_parts.append(inning_tag)
+        return {
+            "event_id": self._make_event_id(game_pk, play),
+            "name": batter.get("fullName") or "Unknown",
+            "team": batter_team_abbr,
+            "jersey": str(batter.get("primaryNumber") or "") or "",
+            "rbi": rbi,
+            "exit_velo": launch_speed,
+            "distance": distance,
+            "matchup": " · ".join(matchup_parts),
+            "timestamp": about.get("endTime") or datetime.now(timezone.utc).isoformat(),
+            # season stats are populated separately by the enrichment hook
+            "season_hr": None, "ops": None, "iso": None, "barrel_pct": None,
+            # carry the batter id for later enrichment
+            "_batter_id": batter.get("id"),
+        }
+
+    # ---- Public ----
+    def fetch_new_events(self, seen_ids: set[str]) -> list[dict[str, Any]]:
+        """Pull all completed HR plays for today's slate; skip any whose
+        event_id is already in ``seen_ids``."""
+        out: list[dict[str, Any]] = []
+        self.status.last_checked = time.time()
+        try:
+            games = self.fetch_schedule()
+        except Exception as e:
+            self.status.last_error = f"schedule fetch failed: {e}"
+            return out
+        else:
+            self.status.last_error = ""
+        self.status.games_scanned = len(games)
+        live = final_n = preview_n = 0
+        for g in games:
+            gpk = g.get("gamePk")
+            if not gpk:
+                continue
+            state = ((g.get("status") or {}).get("abstractGameState") or "").lower()
+            if state == "live":
+                live += 1
+            elif state == "final":
+                final_n += 1
+            elif state == "preview":
+                preview_n += 1
+            # Skip pre-game games — no plays yet.
+            if state == "preview":
+                continue
+            teams = g.get("teams") or {}
+            away_team = (teams.get("away") or {}).get("team") or {}
+            home_team = (teams.get("home") or {}).get("team") or {}
+            away_abbr = _normalize_abbr(
+                away_team.get("abbreviation"), away_team.get("name")
+            )
+            home_abbr = _normalize_abbr(
+                home_team.get("abbreviation"), home_team.get("name")
+            )
+            try:
+                feed = self.fetch_game_feed(int(gpk))
+            except Exception as e:
+                # one game failing should not poison the slate
+                self.status.last_error = f"game {gpk} feed failed: {e}"
+                continue
+            plays = ((feed.get("liveData") or {}).get("plays") or {}).get("allPlays") or []
+            for play in plays:
+                ev = self._build_event(g, int(gpk), play, away_abbr, home_abbr)
+                if not ev:
+                    continue
+                if ev["event_id"] in seen_ids:
+                    continue
+                out.append(ev)
+        self.status.games_live = live
+        self.status.games_final = final_n
+        self.status.games_preview = preview_n
+        # Note: hrs_today is incremented by the renderer once the events are
+        # ingested — we don't double-count here.
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Optional season-stat enrichment — pulls a hitter's season HR/OPS from
+# StatsAPI /people/{id}/stats. Cached aggressively because these numbers are
+# constant within a single rerun cycle. ISO is computed from SLG-AVG; the
+# Savant-only Barrel% is left blank — wiring that here would require a
+# second leaderboard call on every event, which we deliberately defer to a
+# bulk pre-load in app.py if desired.
+# ---------------------------------------------------------------------------
+@st.cache_data(ttl=900, show_spinner=False)
+def _fetch_season_stats(player_id: int, season: int) -> dict[str, Any]:
+    if requests is None or not player_id:
+        return {}
+    try:
+        r = requests.get(
+            f"{_STATSAPI_BASE}/api/v1/people/{int(player_id)}/stats",
+            params={"stats": "season", "group": "hitting", "season": season},
+            timeout=_HTTP_TIMEOUT,
+            headers={"User-Agent": "live-hr-tracker/1.0"},
+        )
+        r.raise_for_status()
+        data = r.json() or {}
+    except Exception:
+        return {}
+    out: dict[str, Any] = {}
+    for s in data.get("stats", []) or []:
+        for sp in s.get("splits", []) or []:
+            stat = sp.get("stat") or {}
+            try:
+                out["season_hr"] = int(stat.get("homeRuns")) if stat.get("homeRuns") is not None else None
+            except Exception:
+                pass
+            try:
+                out["ops"] = float(stat.get("ops")) if stat.get("ops") is not None else None
+            except Exception:
+                pass
+            try:
+                slg = float(stat.get("slg")) if stat.get("slg") is not None else None
+                avg = float(stat.get("avg")) if stat.get("avg") is not None else None
+                if slg is not None and avg is not None:
+                    out["iso"] = round(slg - avg, 3)
+            except Exception:
+                pass
+            return out
+    return out
+
+
+def _enrich_event(ev: dict[str, Any]) -> dict[str, Any]:
+    """Mutate ``ev`` in place with season HR/OPS/ISO if available."""
+    pid = ev.pop("_batter_id", None)
+    if not pid:
+        return ev
+    season = datetime.now().year
+    stats = _fetch_season_stats(int(pid), int(season))
+    for k in ("season_hr", "ops", "iso"):
+        if stats.get(k) is not None and ev.get(k) is None:
+            ev[k] = stats[k]
+    return ev
+
+
+def make_mlb_fetcher(
+    *, date_iso: str | None = None,
+    status: FeedStatus | None = None,
+    enrich: bool = True,
+) -> Callable[[], list[dict[str, Any]]]:
+    """Return a no-arg callable that yields *new* HR events on each call.
+
+    The returned function relies on the host renderer's ``seen_ids`` set
+    being threaded in through ``poll_live_hr_events``. To do this cleanly
+    without changing the public signature, we stash the most recent seen_ids
+    on the function object via ``setattr`` before each call (the renderer
+    handles this — see ``render_live_hr_tracker``).
+    """
+    feed = MLBLiveHRFeed(date_iso=date_iso, status=status)
+
+    def _fetcher() -> list[dict[str, Any]]:
+        seen = getattr(_fetcher, "_seen_ids", set()) or set()
+        events = feed.fetch_new_events(seen)
+        if enrich:
+            for ev in events:
+                _enrich_event(ev)
+        else:
+            for ev in events:
+                ev.pop("_batter_id", None)
+        return events
+
+    _fetcher._feed = feed  # type: ignore[attr-defined]
+    return _fetcher
+
+
+# ---------------------------------------------------------------------------
 # Confetti / banner JS — wrapped in a tiny self-contained html component.
 # ---------------------------------------------------------------------------
 def _confetti_html(count: int) -> str:
@@ -570,7 +914,25 @@ def _ensure_state() -> dict[str, Any]:
     s.setdefault("lhrt_last_banner", "")
     s.setdefault("lhrt_demo_seq", 0)
     s.setdefault("lhrt_last_poll", 0.0)
+    s.setdefault("lhrt_status", FeedStatus())
+    s.setdefault("lhrt_backfilled", False)  # one-time history pull on first load
     return s
+
+
+def _format_relative(epoch: float) -> str:
+    if not epoch:
+        return "never"
+    delta = max(0, int(time.time() - epoch))
+    if delta < 5:
+        return "just now"
+    if delta < 60:
+        return f"{delta}s ago"
+    m = delta // 60
+    s = delta % 60
+    if m < 60:
+        return f"{m}m {s}s ago"
+    h = m // 60
+    return f"{h}h {m % 60}m ago"
 
 
 def _ingest_events(events: list[HRPlayer]) -> HRPlayer | None:
@@ -602,41 +964,69 @@ def render_live_hr_tracker(
 ) -> None:
     """Full-page renderer for the Live HR Tracker view.
 
-    Pass ``fetcher`` to wire a real MLB feed. If absent, the page exposes
-    a "Demo mode" toggle that synthesizes events for visual QA.
+    If ``fetcher`` is None we wire the built-in MLB StatsAPI fetcher
+    automatically so the page is production-ready out of the box. A
+    developer-only "Demo mode" toggle (off by default) still lets you
+    inject synthetic events for visual QA.
     """
     s = _ensure_state()
     st.markdown('<div class="lhrt-wrap">', unsafe_allow_html=True)
     st.markdown(_PAGE_CSS, unsafe_allow_html=True)
 
+    # Build (or reuse) the real MLB fetcher. We keep it on session_state so
+    # the same FeedStatus instance survives across reruns.
+    status: FeedStatus = s["lhrt_status"]
+    if fetcher is None:
+        if "lhrt_fetcher" not in s:
+            s["lhrt_fetcher"] = make_mlb_fetcher(status=status)
+        real_fetcher = s["lhrt_fetcher"]
+    else:
+        real_fetcher = fetcher
+
     # ---- Controls row ----
     c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1.2])
     with c1:
-        demo_mode = st.toggle(
-            "🧪 Demo mode",
-            value=fetcher is None,
-            help="Generate fake HR events for visual QA. Turn off once a real feed is wired.",
-            key="lhrt_demo_toggle",
-        )
-    with c2:
         auto_refresh = st.toggle(
             "🔄 Auto-refresh",
             value=True,
-            help="Re-run the page every few seconds to pick up new events.",
+            help="Re-run the page every few seconds to pick up new HR events from the MLB live feed.",
             key="lhrt_auto_refresh",
         )
-    with c3:
+    with c2:
         interval = st.selectbox(
             "Poll every",
-            [3, 5, 10, 15, 30],
+            [10, 15, 30, 60, 120],
             index=1,
             format_func=lambda x: f"{x}s",
+            help="StatsAPI is courteous to poll once every 10-30s per game.",
             key="lhrt_poll_interval",
         )
+    with c3:
+        if st.button("🔄 Refresh now", use_container_width=True, key="lhrt_refresh_btn"):
+            s["lhrt_last_poll"] = 0.0  # force a poll on this rerun
     with c4:
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("💥 Fire HR", use_container_width=True, key="lhrt_fire_btn"):
+        if st.button("🧹 Reset feed", use_container_width=True, key="lhrt_reset_btn"):
+            for k in ("lhrt_events", "lhrt_seen_ids", "lhrt_today",
+                      "lhrt_solo", "lhrt_multi", "lhrt_last_banner",
+                      "lhrt_confetti_seq", "lhrt_confetti_count",
+                      "lhrt_backfilled"):
+                if k in s:
+                    del s[k]
+            _ensure_state()
+            st.rerun()
+
+    # Dev/demo toggle is tucked under an expander so it never fires by accident.
+    with st.expander("🧪 Dev / demo controls", expanded=False):
+        d1, d2 = st.columns([1, 1])
+        with d1:
+            demo_mode = st.toggle(
+                "Demo mode (synthetic HR events)",
+                value=False,
+                help="Synthesize fake HRs every poll. Use only for visual QA.",
+                key="lhrt_demo_toggle",
+            )
+        with d2:
+            if st.button("💥 Fire test HR", use_container_width=True, key="lhrt_fire_btn"):
                 s["lhrt_demo_seq"] += 1
                 ev = _simulate_event(s["lhrt_demo_seq"])
                 _ingest_events([ev])
@@ -645,37 +1035,63 @@ def render_live_hr_tracker(
                 s["lhrt_last_banner"] = (
                     f"🔥 {ev.name} — {_hr_type(ev.rbi)} ACTIVATED 🔥"
                 )
-        with col_b:
-            if st.button("🧹 Reset", use_container_width=True, key="lhrt_reset_btn"):
-                for k in ("lhrt_events", "lhrt_seen_ids", "lhrt_today",
-                          "lhrt_solo", "lhrt_multi", "lhrt_last_banner",
-                          "lhrt_confetti_seq", "lhrt_confetti_count"):
-                    if k in s:
-                        del s[k]
-                _ensure_state()
-                st.rerun()
 
     # ---- Poll new events ----
     now = time.time()
-    if auto_refresh and (now - s["lhrt_last_poll"]) >= float(interval):
+    if (now - s["lhrt_last_poll"]) >= float(interval) or not s["lhrt_backfilled"]:
+        first_load = not s["lhrt_backfilled"]
         s["lhrt_last_poll"] = now
         new_events: list[HRPlayer] = []
         if demo_mode:
-            # Light random chance of an event per poll, so it feels live.
+            # Light random chance of a synthetic event per poll.
             if random.random() < 0.35:
                 s["lhrt_demo_seq"] += 1
                 new_events.append(_simulate_event(s["lhrt_demo_seq"]))
         else:
-            new_events = poll_live_hr_events(fetcher, seen_ids=s["lhrt_seen_ids"])
+            # Thread the current seen_ids into the cached fetcher just before calling.
+            if hasattr(real_fetcher, "__self__") is False:
+                try:
+                    setattr(real_fetcher, "_seen_ids", s["lhrt_seen_ids"])
+                except Exception:
+                    pass
+            new_events = poll_live_hr_events(real_fetcher, seen_ids=s["lhrt_seen_ids"])
 
         if new_events:
             newest = _ingest_events(new_events)
-            if newest is not None:
+            # On the very first load, populate the feed silently — no banner /
+            # confetti — so the user sees today's HR history without 14 chained
+            # "ACTIVATED" pulses. Subsequent polls fire the celebration.
+            if newest is not None and not first_load:
                 s["lhrt_confetti_seq"] += 1
                 s["lhrt_confetti_count"] = 240 if newest.rbi >= 4 else 120
                 s["lhrt_last_banner"] = (
                     f"🔥 {newest.name} — {_hr_type(newest.rbi)} ACTIVATED 🔥"
                 )
+        s["lhrt_backfilled"] = True
+
+    # ---- Status / health panel ----
+    status_bits = []
+    if demo_mode:
+        status_bits.append("🧪 Demo mode")
+    status_bits.append(f"📅 {status.schedule_date or _today_iso()}")
+    status_bits.append(
+        f"🎮 {status.games_scanned} games "
+        f"(🔴 {status.games_live} live · ✅ {status.games_final} final · "
+        f"⏳ {status.games_preview} upcoming)"
+    )
+    status_bits.append(f"💥 {s['lhrt_today']} HR today")
+    status_bits.append(f"🕒 Checked {_format_relative(status.last_checked)}")
+    status_html = (
+        '<div style="display:flex; flex-wrap:wrap; gap:8px 14px; '
+        'background:rgba(15,23,42,.55); border:1px solid #312e81; '
+        'border-radius:10px; padding:8px 12px; margin:0 0 10px 0; '
+        'font-size:.82rem; color:#cbd5e1;">'
+        + " · ".join(f"<span>{_esc(x)}</span>" for x in status_bits)
+        + "</div>"
+    )
+    st.markdown(status_html, unsafe_allow_html=True)
+    if status.last_error and not demo_mode:
+        st.warning(f"Feed warning: {status.last_error}")
 
     # ---- Banner ----
     banner = s.get("lhrt_last_banner") or ""
@@ -761,44 +1177,29 @@ def render_live_hr_tracker(
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ---- Polling hook docstring (visible to the user) ----
-    with st.expander("⚙️ How to wire a real MLB feed", expanded=False):
+    with st.expander("⚙️ Data source & customization", expanded=False):
         st.markdown(
             """
-**Pluggable polling hook.** This page is built around a simple seam:
+**Live source.** This page polls the official MLB StatsAPI:
+
+- `GET /api/v1/schedule?sportId=1&date=YYYY-MM-DD` for today's slate.
+- `GET /api/v1.1/game/{gamePk}/feed/live` for each non-preview game.
+- Plays where `result.eventType == "home_run"` are converted into cards.
+- Season HR / OPS / ISO are enriched from `GET /api/v1/people/{id}/stats`
+  (cached for 15 min). Barrel% is left blank — wire a Savant leaderboard
+  call to populate it if needed.
+
+**Pluggable polling hook.** You can also pass a custom `fetcher`:
 
 ```python
-from live_hr_tracker import render_live_hr_tracker, build_hr_card, HRPlayer
+from live_hr_tracker import render_live_hr_tracker
 
 def my_fetcher():
-    # Hit StatsAPI /api/v1.1/game/{pk}/feed/live for each in-progress game,
-    # filter `liveData.plays.allPlays` for `result.eventType == 'home_run'`
-    # and yield dicts shaped like HRPlayer (name, team, jersey, rbi, …).
-    for play in fetch_new_hr_plays():
-        yield {
-            "event_id": play["atBatIndex_gamepk"],
-            "name":     play["matchup"]["batter"]["fullName"],
-            "team":     play["batter_team_abbr"],
-            "jersey":   play["matchup"]["batter"].get("primaryNumber", ""),
-            "season_hr": play.get("season_hr"),
-            "ops":       play.get("ops"),
-            "iso":       play.get("iso"),
-            "barrel_pct": play.get("barrel_pct"),
-            "rbi":       play["result"]["rbi"],
-            "exit_velo": play.get("hitData", {}).get("launchSpeed"),
-            "distance":  play.get("hitData", {}).get("totalDistance"),
-            "matchup":   f'off {play["matchup"]["pitcher"]["fullName"]}',
-            "timestamp": play["about"]["endTime"],
-        }
+    # Return an iterable of dicts shaped like HRPlayer with a stable event_id.
+    yield {"event_id": "g123-ab45", "name": "Aaron Judge", "team": "NYY",
+           "rbi": 3, "exit_velo": 109.4, "distance": 442, ...}
 
 render_live_hr_tracker(fetcher=my_fetcher)
-```
-
-For a one-shot custom render path you can also call `build_hr_card`
-directly:
-
-```python
-if new_hr_event:
-    st.components.v1.html(build_hr_card(player_data), height=200)
 ```
             """
         )

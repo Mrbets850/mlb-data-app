@@ -3273,13 +3273,15 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
             hr_ctx = get_batter_hr_context(pid, slate_iso) if pid else {}
         except Exception:
             hr_ctx = {}
+        _lkl, _lkl_reason = _likely_with_reason(m, cl, b_row=b_row, p_row=p_row, khr=khr, hr_form_pct_val=hrf)
         row = {
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
             "Hitter": r["player_name"],
             "Team": norm_team(r["team"]),
             "Matchup": m,
             "Crushes": crushes,
-            "Likely": _likely_label(m, cl, b_row=b_row, p_row=p_row, khr=khr, hr_form_pct_val=hrf),
+            "Likely": _lkl,
+            "_LikelyReason": _lkl_reason,
             # Internal-only fields powering the AI HR / Sleepers / parlay engines.
             # Underscore-prefixed so style_matchup_table / leaderboards hide them.
             "_TestScore": ts,
@@ -3576,22 +3578,23 @@ def _heatmap_color_for(col, value):
     text = "#0f172a" if lum > 0.55 else "#ffffff"
     return (rgb, text)
 
-def _likely_label(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pct_val=None):
-    """Synthesize a 'Likely' outcome chip from live player + pitcher stats.
+_LIKELY_FALLBACK_REASONS = {
+    "HR 🔥":           "Elite barrel + pitcher HR weakness",
+    "Long Shot HR 💥": "Power profile, tougher matchup",
+    "Strikeout ❌":    "High combined K%",
+    "HRR 💎":          "Contact + run production profile",
+    "BASES 🧭":        "SLG/ISO points to bases",
+    "—":               "",
+}
 
-    Categories (in priority order, one is picked per batter):
-      HR 🔥        — strong HR conditions: high barrel/HH/HR-form vs vulnerable
-                     pitcher (low pitcher K%, high HR allowed / xSLG-against).
-      Long Shot HR 💥 — power profile present (ISO/Barrel) but matchup/form
-                     tougher than an outright HR call.
-      Strikeout ❌  — combined batter+pitcher K% high enough to flag a K.
-      HRR 💎       — Hits + Runs + RBIs blend: contact + lineup-spot RBI ops,
-                     not pure power.
-      BASES 🧭     — at least one total base likely (XBH/hit pace via
-                     SLG/ISO/xwOBA), the default neutral-positive case.
 
-    Falls back to the legacy Matchup+Ceiling tiers when batter/pitcher rows
-    aren't supplied (keeps existing two-arg callers working).
+def _likely_with_reason(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pct_val=None):
+    """Return ``(label, reason)`` for the Heat Maps Matchup Likely chip.
+
+    ``label`` is the same string returned by :func:`_likely_label` (kept
+    backward-compatible). ``reason`` is a compact stat-driven blurb shown
+    under the chip; falls back to a generic line when batter/pitcher rows
+    aren't supplied.
     """
     try:
         m_val = float(matchup)
@@ -3606,12 +3609,18 @@ def _likely_label(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pc
     # callers don't crash.
     if b_row is None and p_row is None:
         if m_val is None or c_val is None:
-            return "—"
-        if m_val >= 145 and c_val >= 75: return "HR 🔥"
-        if m_val >= 130 and c_val >= 65: return "Long Shot HR 💥"
-        if m_val >= 115:                 return "BASES 🧭"
-        if m_val >= 100:                 return "HRR 💎"
-        return "Strikeout ❌"
+            return "—", ""
+        if m_val >= 145 and c_val >= 75:
+            lbl = "HR 🔥"
+        elif m_val >= 130 and c_val >= 65:
+            lbl = "Long Shot HR 💥"
+        elif m_val >= 115:
+            lbl = "BASES 🧭"
+        elif m_val >= 100:
+            lbl = "HRR 💎"
+        else:
+            lbl = "Strikeout ❌"
+        return lbl, _LIKELY_FALLBACK_REASONS.get(lbl, "")
 
     def _bf(row, key, default):
         if row is None:
@@ -3680,11 +3689,26 @@ def _likely_label(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pc
         and (khr_val is None or khr_val >= 55)
     )
     if hr_call:
-        return "HR 🔥"
+        parts = []
+        if b_barrel >= 10.0:
+            parts.append(f"{b_barrel:.0f}% barrel")
+        elif b_barrel >= 8.0:
+            parts.append("strong barrel")
+        if b_iso >= 0.200:
+            parts.append(f"{b_iso:.3f} ISO")
+        if p_xslg >= 0.430 or p_barrel >= 9.0:
+            parts.append("vs HR-prone arm")
+        elif p_k <= 20.0:
+            parts.append("low-K pitcher")
+        reason = " + ".join(parts[:2]) if parts else _LIKELY_FALLBACK_REASONS["HR 🔥"]
+        return "HR 🔥", reason
 
     # 2) Strikeout — combined K% genuinely elevated and not offset by elite contact.
     if combined_k >= 26 and b_barrel < 9.0 and b_iso < 0.170:
-        return "Strikeout ❌"
+        reason = f"Combined K% {combined_k:.0f}"
+        if p_k >= 26.0:
+            reason += f" · pitcher {p_k:.0f}%"
+        return "Strikeout ❌", reason
 
     # 3) HRR (Hits + Runs + RBIs) — contact-leaning hitters with on-base/xwOBA
     #    strength and lower K risk; not pure power but threat across H/R/RBI.
@@ -3697,7 +3721,13 @@ def _likely_label(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pc
         and b_iso < 0.200
     )
     if hrr_call:
-        return "HRR 💎"
+        parts = [f"xwOBA {b_xwoba:.3f}"]
+        if b_hardhit >= 40.0:
+            parts.append(f"HH% {b_hardhit:.0f}")
+        if combined_k <= 20.0:
+            parts.append("low K risk")
+        reason = " · ".join(parts[:2])
+        return "HRR 💎", reason
 
     # 4) Long Shot HR — real power profile but matchup/form short of outright HR.
     long_shot = (
@@ -3706,7 +3736,15 @@ def _likely_label(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pc
         and (c_val is None or c_val >= 55)
     )
     if long_shot:
-        return "Long Shot HR 💥"
+        parts = []
+        if b_iso >= 0.180:
+            parts.append(f"ISO {b_iso:.3f}")
+        if b_barrel >= 10.0:
+            parts.append(f"barrel {b_barrel:.0f}%")
+        if p_k >= 25.0 or pitcher_vuln < 8:
+            parts.append("tougher arm")
+        reason = " · ".join(parts[:2]) if parts else _LIKELY_FALLBACK_REASONS["Long Shot HR 💥"]
+        return "Long Shot HR 💥", reason
 
     # 5) BASES — default positive bucket: at least 1+ total bases likely
     #    (decent SLG/ISO/xwOBA, not flagged as a K).
@@ -3715,10 +3753,29 @@ def _likely_label(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pc
         and combined_k < 28
     )
     if bases_call:
-        return "BASES 🧭"
+        parts = []
+        if b_slg >= 0.420:
+            parts.append(f"SLG {b_slg:.3f}")
+        elif b_iso >= 0.140:
+            parts.append(f"ISO {b_iso:.3f}")
+        if b_xwoba >= 0.330:
+            parts.append(f"xwOBA {b_xwoba:.3f}")
+        reason = " · ".join(parts[:2]) if parts else _LIKELY_FALLBACK_REASONS["BASES 🧭"]
+        return "BASES 🧭", reason
 
     # Anything left = tough K-prone matchup.
-    return "Strikeout ❌"
+    reason = f"Combined K% {combined_k:.0f}" if combined_k > 0 else _LIKELY_FALLBACK_REASONS["Strikeout ❌"]
+    return "Strikeout ❌", reason
+
+
+def _likely_label(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pct_val=None):
+    """Backward-compatible wrapper that returns only the Likely label string.
+
+    See :func:`_likely_with_reason` for the (label, reason) version used by
+    the Heat Maps Matchup UI.
+    """
+    return _likely_with_reason(matchup, ceiling, b_row=b_row, p_row=p_row,
+                                khr=khr, hr_form_pct_val=hr_form_pct_val)[0]
 
 def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_name,
                                 weather, park_factor,
@@ -3885,6 +3942,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         )
         hr_last_line = _fmt_last_hr(hr_ctx)
         hr_l10_line = _fmt_hr_last10(hr_ctx)
+        _lkl, _lkl_reason = _likely_with_reason(m, cl, b_row=b_row, p_row=p_row, khr=khr, hr_form_pct_val=hrf)
         rows.append({
             "Spot": int(r["lineup_spot"]) if pd.notna(r["lineup_spot"]) else 99,
             "Hitter": r["player_name"],
@@ -3910,7 +3968,8 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "LA": round(la, 1) if la is not None else None,
             "xwOBA": round(xwoba, 3) if xwoba is not None else None,
             "SweetSpot%": round(sweet, 1) if sweet is not None else None,
-            "Likely": _likely_label(m, cl, b_row=b_row, p_row=p_row, khr=khr, hr_form_pct_val=hrf),
+            "Likely": _lkl,
+            "_LikelyReason": _lkl_reason,
         })
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -3929,7 +3988,7 @@ def render_matchup_heatmap_html(df):
     # Spot collapses into row label; _HR Trend is carried alongside HR Form
     # for arrow rendering; _Form / _Form*_AVG are rendered in the Hitter cell.
     _hidden = ("Spot", "_HR Trend", "_Form", "_FormL5_AVG", "_FormL10_AVG", "_FormL30_AVG",
-               "_LastHR", "_HRLast10", "_LastHRDate", "_HRLast10N")
+               "_LastHR", "_HRLast10", "_LastHRDate", "_HRLast10N", "_LikelyReason")
     display_cols = [c for c in df.columns if c not in _hidden]
 
     css = """
@@ -3962,6 +4021,12 @@ def render_matchup_heatmap_html(df):
   white-space: normal; line-height: 1.15; max-width: 220px; }
 .mhm-likely { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800;
   background: #f1f5f9; color: #0f172a; display: inline-block; }
+.mhm-likely-reason { font-size: 0.64rem; font-weight: 700; color: #475569;
+  margin-top: 3px; line-height: 1.2; max-width: 180px; white-space: normal;
+  text-align: center; margin-left: auto; margin-right: auto; }
+.mhm-tile-reason { font-size: 0.60rem; font-weight: 700; color: #475569;
+  margin-top: 3px; line-height: 1.15; text-align: center; padding: 0 4px;
+  white-space: normal; }
 /* Missing/insufficient-sample cells: muted neutral background instead of bare
    white, so the heat map reads as one continuous board. */
 .mhm-na { background-color: #cbd5e1; color: #475569; font-weight: 800; }
@@ -4086,6 +4151,10 @@ def render_matchup_heatmap_html(df):
                 continue
             if c == "Likely":
                 mlabel = MATCHUP_HEATMAP_MOBILE_LABELS.get(c, c)
+                reason = r.get("_LikelyReason", "")
+                if reason is None or (isinstance(reason, float) and pd.isna(reason)):
+                    reason = ""
+                reason = str(reason).strip()
                 if v is None or (isinstance(v, float) and pd.isna(v)) or str(v) == "—":
                     cells.append('<td class="mhm-na">—</td>')
                     mobile_tiles.append(
@@ -4094,11 +4163,18 @@ def render_matchup_heatmap_html(df):
                         f'<div class="mhm-tile-value">—</div></div>'
                     )
                 else:
-                    cells.append(f'<td><span class="mhm-likely">{v}</span></td>')
+                    reason_html = f'<div class="mhm-likely-reason">{reason}</div>' if reason else ""
+                    cells.append(
+                        f'<td><span class="mhm-likely">{v}</span>{reason_html}</td>'
+                    )
+                    mobile_reason_html = (
+                        f'<div class="mhm-tile-reason">{reason}</div>' if reason else ""
+                    )
                     mobile_tiles.append(
                         f'<div class="mhm-tile mhm-tile-likely">'
                         f'<div class="mhm-tile-label">{mlabel}</div>'
-                        f'<div class="mhm-tile-value">{v}</div></div>'
+                        f'<div class="mhm-tile-value">{v}</div>'
+                        f'{mobile_reason_html}</div>'
                     )
                 continue
             spec = HEATMAP_THRESHOLDS.get(c)

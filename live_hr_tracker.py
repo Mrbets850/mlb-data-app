@@ -134,6 +134,7 @@ class HRPlayer:
     team: str = ""
     jersey: str = ""
     avatar_url: str = ""
+    player_id: int | str | None = None  # MLB person id — used to derive headshot URL
     season_hr: int | None = None
     ops: float | None = None
     iso: float | None = None
@@ -150,6 +151,42 @@ class HRPlayer:
     def from_dict(cls, data: dict[str, Any]) -> "HRPlayer":
         keys = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in data.items() if k in keys})
+
+
+# MLB official headshot CDN — current/cuts/120/{player_id} renders a clean
+# 120px headshot for any active player. Used when we have a player_id but no
+# explicit avatar_url. The URL is purely numeric → safe to interpolate.
+_HEADSHOT_URL_TEMPLATE = (
+    "https://midfield.mlbstatic.com/v1/people/{pid}/spots/120"
+)
+
+
+def _safe_avatar_url(avatar_url: Any, player_id: Any) -> str:
+    """Return a safe http(s) URL for the avatar img, or '' to force fallback.
+
+    - Trims whitespace.
+    - Rejects empty / non-string / scheme-less / javascript:/data: URLs.
+    - Falls back to the MLB headshot CDN when ``player_id`` is a positive int.
+    """
+    candidate = ""
+    if avatar_url is not None:
+        try:
+            candidate = str(avatar_url).strip()
+        except Exception:
+            candidate = ""
+    if candidate:
+        low = candidate.lower()
+        if low.startswith(("http://", "https://")) and " " not in candidate:
+            return candidate
+        # anything else (javascript:, data:, file:, relative, garbage) → drop
+    # Derive from player_id if we have one.
+    try:
+        pid_int = int(str(player_id).strip()) if player_id not in (None, "") else 0
+    except Exception:
+        pid_int = 0
+    if pid_int > 0:
+        return _HEADSHOT_URL_TEMPLATE.format(pid=pid_int)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -223,12 +260,27 @@ def build_hr_card(player_data: Any, *, dim: bool = False) -> str:
         except Exception:
             ts_display = str(p.timestamp)
 
-    avatar_inner = (
-        f'<img src="{_esc(p.avatar_url)}" alt="" '
-        f'onerror="this.style.display=\'none\';this.parentNode.classList.add(\'lhrt-avatar-fallback\')">'
-        if p.avatar_url else ""
-    )
+    safe_url = _safe_avatar_url(p.avatar_url, p.player_id)
     initials = "".join(part[:1] for part in (p.name or "").split()[:2]).upper() or "?"
+    # Avatar markup strategy:
+    # - If we have a safe URL: render <img>. The .lhrt-avatar div does NOT
+    #   get the fallback class up front, so initials are hidden behind the
+    #   loaded headshot. If the image fails to load the inline onerror
+    #   removes itself and toggles the fallback class on the parent so
+    #   the CSS-only initials show. The handler references `this` only and
+    #   uses no string literals, so quoting is bulletproof.
+    # - If we have no URL: render the fallback directly. No <img> tag at all.
+    if safe_url:
+        avatar_classes = "lhrt-avatar"
+        avatar_inner = (
+            f'<img src="{_esc(safe_url)}" alt="" loading="lazy" '
+            f'referrerpolicy="no-referrer" '
+            f'onerror="this.onerror=null;this.remove();'
+            f'this.parentNode&amp;&amp;this.parentNode.classList.add(&quot;lhrt-avatar-fallback&quot;);">'
+        )
+    else:
+        avatar_classes = "lhrt-avatar lhrt-avatar-fallback"
+        avatar_inner = ""
 
     card_classes = "lhrt-card" + (" lhrt-card-dim" if dim else " lhrt-card-fresh")
     grand_slam_badge = ""
@@ -239,7 +291,7 @@ def build_hr_card(player_data: Any, *, dim: bool = False) -> str:
 <div class="{card_classes}" style="--team-primary:{primary};--team-secondary:{secondary};">
   {grand_slam_badge}
   <div class="lhrt-card-head">
-    <div class="lhrt-avatar lhrt-avatar-fallback" data-initials="{_esc(initials)}">
+    <div class="{avatar_classes}" data-initials="{_esc(initials)}">
       {avatar_inner}
       <span class="lhrt-jersey">#{_esc(p.jersey or '—')}</span>
     </div>
@@ -452,22 +504,22 @@ def poll_live_hr_events(
 # Demo simulator — gives the user something to look at out of the box.
 # ---------------------------------------------------------------------------
 _DEMO_BATTERS = [
-    # name, team, jersey, season_hr, ops, iso, barrel_pct
-    ("Aaron Judge",       "NYY", "99", 42, .998, .305, 19.8),
-    ("Shohei Ohtani",     "LAD", "17", 38, .987, .298, 17.4),
-    ("Juan Soto",         "NYY", "22", 31, .955, .267, 15.2),
-    ("Mookie Betts",      "LAD", "50", 24, .891, .234, 13.8),
-    ("Bryce Harper",      "PHI", "3",  28, .912, .248, 14.6),
-    ("Ronald Acuña Jr.",  "ATL", "13", 26, .934, .241, 14.9),
-    ("Pete Alonso",       "NYM", "20", 33, .854, .258, 16.1),
-    ("Yordan Alvarez",    "HOU", "44", 30, .945, .276, 17.8),
-    ("Kyle Tucker",       "HOU", "30", 25, .889, .238, 13.4),
-    ("Vladimir Guerrero", "TOR", "27", 27, .872, .231, 14.1),
-    ("Rafael Devers",     "BOS", "11", 29, .881, .249, 13.9),
-    ("Matt Olson",        "ATL", "28", 31, .867, .254, 15.3),
-    ("Corey Seager",      "TEX", "5",  26, .898, .256, 13.2),
-    ("Bobby Witt Jr.",    "KC",  "7",  22, .914, .242, 11.8),
-    ("Gunnar Henderson",  "BAL", "2",  28, .883, .247, 13.5),
+    # name, team, jersey, season_hr, ops, iso, barrel_pct, mlbam_id
+    ("Aaron Judge",       "NYY", "99", 42, .998, .305, 19.8, 592450),
+    ("Shohei Ohtani",     "LAD", "17", 38, .987, .298, 17.4, 660271),
+    ("Juan Soto",         "NYY", "22", 31, .955, .267, 15.2, 665742),
+    ("Mookie Betts",      "LAD", "50", 24, .891, .234, 13.8, 605141),
+    ("Bryce Harper",      "PHI", "3",  28, .912, .248, 14.6, 547180),
+    ("Ronald Acuña Jr.",  "ATL", "13", 26, .934, .241, 14.9, 660670),
+    ("Pete Alonso",       "NYM", "20", 33, .854, .258, 16.1, 624413),
+    ("Yordan Alvarez",    "HOU", "44", 30, .945, .276, 17.8, 670541),
+    ("Kyle Tucker",       "HOU", "30", 25, .889, .238, 13.4, 663656),
+    ("Vladimir Guerrero", "TOR", "27", 27, .872, .231, 14.1, 665489),
+    ("Rafael Devers",     "BOS", "11", 29, .881, .249, 13.9, 646240),
+    ("Matt Olson",        "ATL", "28", 31, .867, .254, 15.3, 621566),
+    ("Corey Seager",      "TEX", "5",  26, .898, .256, 13.2, 608369),
+    ("Bobby Witt Jr.",    "KC",  "7",  22, .914, .242, 11.8, 677951),
+    ("Gunnar Henderson",  "BAL", "2",  28, .883, .247, 13.5, 683002),
 ]
 _DEMO_PITCHERS = [
     "Gerrit Cole", "Tarik Skubal", "Zack Wheeler", "Logan Webb",
@@ -478,11 +530,12 @@ _DEMO_PITCHERS = [
 
 def _simulate_event(seq: int) -> HRPlayer:
     """Build a single fake HR event."""
-    name, team, jersey, hr, ops, iso, brl = random.choice(_DEMO_BATTERS)
+    name, team, jersey, hr, ops, iso, brl, pid = random.choice(_DEMO_BATTERS)
     pitcher = random.choice(_DEMO_PITCHERS)
     rbi = random.choices([1, 2, 3, 4], weights=[55, 25, 15, 5], k=1)[0]
     return HRPlayer(
         name=name, team=team, jersey=jersey,
+        player_id=pid,
         season_hr=hr, ops=ops, iso=iso, barrel_pct=brl,
         rbi=rbi,
         exit_velo=round(random.uniform(98.0, 117.0), 1),
@@ -667,11 +720,13 @@ class MLBLiveHRFeed:
         matchup_parts.append(f"{batter_team_abbr} vs {opp_abbr}")
         if inning_tag:
             matchup_parts.append(inning_tag)
+        batter_id = batter.get("id")
         return {
             "event_id": self._make_event_id(game_pk, play),
             "name": batter.get("fullName") or "Unknown",
             "team": batter_team_abbr,
             "jersey": str(batter.get("primaryNumber") or "") or "",
+            "player_id": batter_id,
             "rbi": rbi,
             "exit_velo": launch_speed,
             "distance": distance,
@@ -679,8 +734,8 @@ class MLBLiveHRFeed:
             "timestamp": about.get("endTime") or datetime.now(timezone.utc).isoformat(),
             # season stats are populated separately by the enrichment hook
             "season_hr": None, "ops": None, "iso": None, "barrel_pct": None,
-            # carry the batter id for later enrichment
-            "_batter_id": batter.get("id"),
+            # carry the batter id for later enrichment (also exposed as player_id above)
+            "_batter_id": batter_id,
         }
 
     # ---- Public ----

@@ -387,11 +387,30 @@ body::before {
 }
 @media (max-width: 640px) {
     .block-container { padding-left: 0.6rem; padding-right: 0.6rem; }
+    /* Hard-lock the document to the phone viewport — no element may push
+       horizontal scroll on the page. Wide tables / heatmaps that don't
+       have a mobile-card twin can still scroll inside their own card. */
+    html, body { max-width: 100vw; overflow-x: hidden !important; }
+    .block-container { max-width: 100vw !important; overflow-x: hidden; }
+    [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
+    [data-testid="stHorizontalBlock"] > div {
+        min-width: 0 !important; width: 100% !important; flex: 1 1 100% !important;
+    }
+    /* Streamlit inserts inline images at native width — clamp them. */
+    [data-testid="stMarkdownContainer"] img { max-width: 100% !important; height: auto; }
+    /* Buttons + radios are tappable full-width on phones. */
+    [data-testid="stButton"] button,
+    [data-testid="stDownloadButton"] button { width: 100% !important; }
 }
-/* Let wide tables scroll horizontally instead of being clipped */
+/* Let wide tables scroll horizontally INSIDE their card on desktop,
+   instead of being clipped at the page boundary. */
 [data-testid="stDataFrame"], [data-testid="stTable"] { width: 100% !important; }
 [data-testid="stDataFrame"] > div { overflow-x: auto !important; }
 .stDataFrame, .stTable { width: 100% !important; }
+/* Helper used in markdown captions to hide "swipe horizontally" copy on
+   phones now that mobile cards no longer scroll horizontally. */
+.mobile-hide-swipe { display: inline; }
+@media (max-width: 640px) { .mobile-hide-swipe { display: none !important; } }
 html, body, [class*="css"] {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Arial, sans-serif;
     color: #0f172a;
@@ -5341,6 +5360,209 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df,
     df = df.sort_values("Sleeper Score", ascending=False).reset_index(drop=True)
     return df
 
+# ============== Shared mobile-card system ==============
+#
+# Every Apps & Generators category that historically rendered a wide table
+# (HR Sleepers, TB 1.5+, HRR 1.5+, RBI Edge, Hot/Cold Batters, HR Milestones,
+# Day vs Night HR, Ballpark Weather, daily HR finder) also emits a parallel
+# mobile-card grid using the helpers below. CSS hides one or the other based
+# on viewport: tables on desktop (≥640px), cards on phones (<640px). This
+# gives us the Slate-Pitchers-style look everywhere without horizontal
+# scrolling, while preserving the existing desktop tables verbatim.
+#
+# Visual language matches `render_slate_pitcher_dashboard` (purple/gold
+# brand + dark gradient cards + colored stat chips).
+
+MOBILE_CARDS_CSS = (
+    "<style>"
+    # Wrapper that switches between desktop table and mobile card grid.
+    ".mc-desktop { display:block; }"
+    ".mc-mobile  { display:none; }"
+    "@media (max-width: 640px) {"
+    "  .mc-desktop { display:none !important; }"
+    "  .mc-mobile  { display:block !important; }"
+    "}"
+    ".mc-grid { display:grid; grid-template-columns: 1fr; gap: 12px; "
+    "  margin: 6px 0 12px 0; }"
+    "@media (min-width: 480px) and (max-width: 640px) {"
+    "  .mc-grid { grid-template-columns: repeat(2, 1fr); }"
+    "}"
+    ".mc-card { background: linear-gradient(180deg, #15102b 0%, #0b0820 100%); "
+    "  border:1px solid #2a1e4a; border-radius:14px; padding:12px 13px; "
+    "  color:#e9e6f5; box-shadow: 0 4px 12px rgba(0,0,0,.30); "
+    "  display:flex; flex-direction:column; gap:8px; min-width:0; }"
+    ".mc-head { display:flex; align-items:flex-start; gap:8px; min-width:0; }"
+    ".mc-rank { font-variant-numeric: tabular-nums; font-weight:900; "
+    "  font-size:.78rem; color:#fcd34d; background:#3b1f6b; "
+    "  border:1px solid #5b3aa0; padding:2px 7px; border-radius:8px; "
+    "  flex:0 0 auto; line-height:1.3; }"
+    ".mc-id { display:flex; flex-direction:column; min-width:0; flex:1 1 auto; }"
+    ".mc-name { font-weight:800; font-size:1.0rem; line-height:1.15; "
+    "  color:#f8fafc; word-break:break-word; }"
+    ".mc-sub { font-size:.74rem; color:#a3a0c4; margin-top:2px; "
+    "  word-break:break-word; }"
+    ".mc-score { font-variant-numeric: tabular-nums; font-weight:900; "
+    "  font-size:1.05rem; color:#fcd34d; text-align:right; flex:0 0 auto; "
+    "  padding-left:6px; line-height:1.05; }"
+    ".mc-score small { display:block; font-size:.6rem; color:#a3a0c4; "
+    "  font-weight:700; letter-spacing:.06em; text-transform:uppercase; "
+    "  margin-top:2px; }"
+    ".mc-tiers { display:flex; flex-wrap:wrap; gap:5px; }"
+    ".mc-tier { display:inline-block; padding: 2px 8px; border-radius:999px; "
+    "  font-size:.66rem; font-weight:800; letter-spacing:.03em; "
+    "  border:1px solid transparent; text-transform:uppercase; }"
+    ".mc-tier.elite  { background: rgba(16,185,129,.18); color:#86efac; "
+    "  border-color: rgba(110,231,183,.40); }"
+    ".mc-tier.strong { background: rgba(132,204,22,.16); color:#bef264; "
+    "  border-color: rgba(190,242,100,.40); }"
+    ".mc-tier.ok     { background: rgba(250,204,21,.14); color:#fde68a; "
+    "  border-color: rgba(253,224,71,.40); }"
+    ".mc-tier.soft   { background: rgba(249,115,22,.16); color:#fdba74; "
+    "  border-color: rgba(253,186,116,.40); }"
+    ".mc-tier.poor   { background: rgba(239,68,68,.18); color:#fecaca; "
+    "  border-color: rgba(252,165,165,.40); }"
+    ".mc-tier.gold   { background: rgba(252,211,77,.16); color:#fde68a; "
+    "  border-color: rgba(253,224,71,.45); }"
+    ".mc-tier.info   { background: rgba(139,92,246,.20); color:#ddd6fe; "
+    "  border-color: rgba(196,181,253,.40); }"
+    ".mc-tier.warn   { background: rgba(244,114,182,.14); color:#fda4af; "
+    "  border-color: rgba(253,164,175,.35); }"
+    ".mc-grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 6px; }"
+    ".mc-grid3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }"
+    ".mc-chip { background:#1c1340; border:1px solid #2a1e4a; "
+    "  border-radius:9px; padding:6px 8px; min-width:0; }"
+    ".mc-chip.good { border-color: rgba(110,231,183,.35); "
+    "  background: linear-gradient(180deg, rgba(16,185,129,.10), #1c1340); }"
+    ".mc-chip.bad  { border-color: rgba(252,165,165,.35); "
+    "  background: linear-gradient(180deg, rgba(239,68,68,.10), #1c1340); }"
+    ".mc-chip.mid  { border-color: rgba(253,224,71,.35); "
+    "  background: linear-gradient(180deg, rgba(250,204,21,.10), #1c1340); }"
+    ".mc-chip-label { font-size:.62rem; color:#a3a0c4; "
+    "  font-weight:700; letter-spacing:.04em; text-transform:uppercase; "
+    "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+    ".mc-chip-val { font-size:.95rem; font-weight:800; color:#f8fafc; "
+    "  font-variant-numeric: tabular-nums; margin-top:1px; "
+    "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+    ".mc-chip-val.na { color:#6b7290; }"
+    ".mc-foot { font-size:.72rem; color:#a3a0c4; display:flex; "
+    "  flex-wrap:wrap; gap:6px 10px; }"
+    ".mc-foot b { color:#e9e6f5; }"
+    ".mc-empty { padding:14px 16px; color:#a3a0c4; background:#15102b; "
+    "  border:1px dashed #2a1e4a; border-radius:14px; text-align:center; }"
+    # Auto-hide ANY wide dataframe / heatmap-table-wrap on phones if a sibling
+    # .mc-mobile exists. We do NOT touch dataframes that have no mobile twin.
+    "@media (max-width: 640px) {"
+    "  div[data-testid='stHorizontalBlock'] { flex-wrap: wrap !important; }"
+    "  div[data-testid='stHorizontalBlock'] > div { "
+    "    min-width: 0 !important; width: 100% !important; "
+    "    flex: 1 1 100% !important; }"
+    "}"
+    "</style>"
+)
+
+
+def _mc_tier_from_score(score, thresholds=(75, 65, 55)):
+    """Map a 0-100 score to (css-class, label). Higher = better."""
+    if score is None:
+        return ("ok", "—")
+    try:
+        s = float(score)
+    except Exception:
+        return ("ok", "—")
+    e, st_, ok = thresholds
+    if s >= e:  return ("elite",  "Elite")
+    if s >= st_: return ("strong", "Strong")
+    if s >= ok: return ("ok",     "Average")
+    return ("soft", "Soft")
+
+
+def _mc_chip_tone(v, lo, hi, reverse=False):
+    """Return ('good'|'mid'|'bad') from a value relative to a metric's
+    expected range. `reverse=True` for stats where lower is better."""
+    if v is None:
+        return "mid"
+    try:
+        x = float(v)
+    except Exception:
+        return "mid"
+    if hi == lo:
+        return "mid"
+    pct = (x - lo) / (hi - lo)
+    if reverse:
+        pct = 1.0 - pct
+    if pct >= 0.66: return "good"
+    if pct <= 0.33: return "bad"
+    return "mid"
+
+
+def _mc_fmt(v, fmt):
+    if v is None:
+        return None
+    try:
+        if isinstance(v, float) and pd.isna(v):
+            return None
+    except Exception:
+        pass
+    try:
+        return fmt.format(float(v))
+    except Exception:
+        s = str(v).strip()
+        return s if s else None
+
+
+def _mc_chip(label, val, tone="mid"):
+    """Build a single stat chip. val=None renders an em-dash."""
+    if val is None:
+        return (
+            '<div class="mc-chip">'
+            f'<div class="mc-chip-label">{label}</div>'
+            f'<div class="mc-chip-val na">—</div></div>'
+        )
+    return (
+        f'<div class="mc-chip {tone}">'
+        f'<div class="mc-chip-label">{label}</div>'
+        f'<div class="mc-chip-val">{val}</div></div>'
+    )
+
+
+def _mc_card(*, rank=None, name="", sub="", score=None, score_label="Score",
+             tiers=None, chips_html="", foot_html=""):
+    """Assemble one card. `tiers` is a list of (label, css-class)."""
+    rank_html = (
+        f'<span class="mc-rank">#{rank}</span>' if rank is not None else ""
+    )
+    score_html = ""
+    if score is not None:
+        try:
+            score_html = (
+                f'<div class="mc-score">{float(score):.1f}'
+                f'<small>{score_label}</small></div>'
+            )
+        except Exception:
+            score_html = ""
+    tier_html = ""
+    if tiers:
+        tier_html = (
+            '<div class="mc-tiers">' +
+            "".join(f'<span class="mc-tier {cls}">{lab}</span>'
+                    for lab, cls in tiers) +
+            '</div>'
+        )
+    return (
+        '<div class="mc-card">'
+        '<div class="mc-head">'
+        f'{rank_html}'
+        f'<div class="mc-id"><div class="mc-name">{name}</div>'
+        f'<div class="mc-sub">{sub}</div></div>'
+        f'{score_html}'
+        '</div>'
+        f'{tier_html}'
+        f'{chips_html}'
+        f'{foot_html}'
+        '</div>'
+    )
+
+
 def render_hr_sleepers_html(df):
     """Render the HR Sleepers table with tiered borders and badge tier pills.
     Uses the same gold-on-dark-green visual language as the rest of the app.
@@ -5423,7 +5645,54 @@ def render_hr_sleepers_html(df):
             "</tr>"
         )
 
-    return css + (
+    # ---- Mobile card grid (same data, vertical card layout) ----
+    mobile_cards = []
+    for i, r in df.iterrows():
+        tier_cls, tier_label = _tier(r.get("Sleeper Score"))
+        chip_parts = [
+            _mc_chip("Matchup", _mc_fmt(r.get("Matchup"), "{:.1f}"),
+                     _mc_chip_tone(r.get("Matchup"), 80, 140)),
+            _mc_chip("ISO", _mc_fmt(r.get("ISO"), "{:.3f}"),
+                     _mc_chip_tone(r.get("ISO"), 0.130, 0.260)),
+            _mc_chip("Barrel%", _mc_fmt(r.get("Brl/BIP%"), "{:.1f}%"),
+                     _mc_chip_tone(r.get("Brl/BIP%"), 5.0, 14.0)),
+            _mc_chip("HardHit%", _mc_fmt(r.get("HH%"), "{:.1f}%"),
+                     _mc_chip_tone(r.get("HH%"), 32.0, 50.0)),
+            _mc_chip("FB%", _mc_fmt(r.get("FB%"), "{:.1f}%"),
+                     _mc_chip_tone(r.get("FB%"), 28.0, 45.0)),
+            _mc_chip("HR/FB%", _mc_fmt(r.get("HR/FB%"), "{:.1f}%"),
+                     _mc_chip_tone(r.get("HR/FB%"), 6.0, 18.0)),
+            _mc_chip("Pull Air%", _mc_fmt(r.get("PullAir%"), "{:.1f}%"),
+                     _mc_chip_tone(r.get("PullAir%"), 8.0, 22.0)),
+            _mc_chip("xwOBA", _mc_fmt(r.get("xwOBA"), "{:.3f}"),
+                     _mc_chip_tone(r.get("xwOBA"), 0.300, 0.400)),
+            _mc_chip("Exit Velo", _mc_fmt(r.get("EV"), "{:.1f}"),
+                     _mc_chip_tone(r.get("EV"), 86.0, 94.0)),
+        ]
+        opp_sp = r.get("Opp SP", "") or "—"
+        foot = (
+            f'<div class="mc-foot"><b>{r.get("Game","")}</b>'
+            f' · <span>vs {opp_sp}</span>'
+            f' · Spot {r.get("Spot","")}</div>'
+        )
+        mobile_cards.append(_mc_card(
+            rank=i + 1,
+            name=r.get("Hitter", ""),
+            sub=f'{r.get("Team","")} · Bats {r.get("Bat","")}',
+            score=r.get("Sleeper Score"),
+            score_label="Sleeper",
+            tiers=[(tier_label, tier_cls)],
+            chips_html='<div class="mc-grid2">' + "".join(chip_parts) + "</div>",
+            foot_html=foot,
+        ))
+    mobile_html = (
+        '<div class="mc-mobile"><div class="mc-grid">'
+        + "".join(mobile_cards) +
+        '</div></div>'
+    )
+
+    return MOBILE_CARDS_CSS + css + (
+        '<div class="mc-desktop">'
         '<div class="hrs-wrap"><table class="hrs-table">'
         '<thead><tr>'
         '<th>#</th><th>Hitter</th><th>Game</th><th>Sleeper</th>'
@@ -5433,6 +5702,8 @@ def render_hr_sleepers_html(df):
         '</tr></thead><tbody>'
         + "".join(rows_html) +
         '</tbody></table></div>'
+        '</div>'
+        + mobile_html
     )
 
 # ============== Total Bases & HRR Targets data layer ==============
@@ -5819,11 +6090,112 @@ def render_targets_html(df, mode="tb"):
         rows_html.append(common + metrics_html + "</tr>")
 
     head_html = "".join(f"<th>{h}</th>" for h in headers)
-    return css + (
+
+    # ---- Mobile card grid ----
+    if mode == "tb":
+        score_label = "TB Score"
+    elif mode == "rbi2":
+        score_label = "RBI Score"
+    else:
+        score_label = "HRR Score"
+
+    def _chips_for(r):
+        if mode == "tb":
+            chips = [
+                _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
+                         _mc_chip_tone(r.get("Matchup"), 80, 140)),
+                _mc_chip("xBA", _mc_fmt(r.get("xBA"), "{:.3f}"),
+                         _mc_chip_tone(r.get("xBA"), 0.230, 0.310)),
+                _mc_chip("xSLG", _mc_fmt(r.get("xSLG"), "{:.3f}"),
+                         _mc_chip_tone(r.get("xSLG"), 0.380, 0.520)),
+                _mc_chip("ISO", _mc_fmt(r.get("ISO"), "{:.3f}"),
+                         _mc_chip_tone(r.get("ISO"), 0.130, 0.260)),
+                _mc_chip("Barrel%", _mc_fmt(r.get("Barrel%"), "{:.1f}%"),
+                         _mc_chip_tone(r.get("Barrel%"), 5.0, 14.0)),
+                _mc_chip("K%", _mc_fmt(r.get("K%"), "{:.1f}%"),
+                         _mc_chip_tone(r.get("K%"), 16.0, 30.0, reverse=True)),
+            ]
+        elif mode == "rbi2":
+            chips = [
+                _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
+                         _mc_chip_tone(r.get("Matchup"), 80, 140)),
+                _mc_chip("xSLG", _mc_fmt(r.get("xSLG"), "{:.3f}"),
+                         _mc_chip_tone(r.get("xSLG"), 0.380, 0.520)),
+                _mc_chip("ISO", _mc_fmt(r.get("ISO"), "{:.3f}"),
+                         _mc_chip_tone(r.get("ISO"), 0.130, 0.260)),
+                _mc_chip("Barrel%", _mc_fmt(r.get("Barrel%"), "{:.1f}%"),
+                         _mc_chip_tone(r.get("Barrel%"), 5.0, 14.0)),
+                _mc_chip("HardHit%", _mc_fmt(r.get("HardHit%"), "{:.1f}%"),
+                         _mc_chip_tone(r.get("HardHit%"), 32.0, 50.0)),
+                _mc_chip("K%", _mc_fmt(r.get("K%"), "{:.1f}%"),
+                         _mc_chip_tone(r.get("K%"), 16.0, 30.0, reverse=True)),
+            ]
+        else:  # hrr
+            chips = [
+                _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
+                         _mc_chip_tone(r.get("Matchup"), 80, 140)),
+                _mc_chip("xBA", _mc_fmt(r.get("xBA"), "{:.3f}"),
+                         _mc_chip_tone(r.get("xBA"), 0.230, 0.310)),
+                _mc_chip("xOBP", _mc_fmt(r.get("xOBP"), "{:.3f}"),
+                         _mc_chip_tone(r.get("xOBP"), 0.300, 0.400)),
+                _mc_chip("xSLG", _mc_fmt(r.get("xSLG"), "{:.3f}"),
+                         _mc_chip_tone(r.get("xSLG"), 0.380, 0.520)),
+                _mc_chip("ISO", _mc_fmt(r.get("ISO"), "{:.3f}"),
+                         _mc_chip_tone(r.get("ISO"), 0.130, 0.260)),
+                _mc_chip("K%", _mc_fmt(r.get("K%"), "{:.1f}%"),
+                         _mc_chip_tone(r.get("K%"), 16.0, 30.0, reverse=True)),
+            ]
+        return '<div class="mc-grid2">' + "".join(chips) + "</div>"
+
+    mobile_cards = []
+    for i, r in df.iterrows():
+        tier_cls, tier_label = _tier(r.get("Score"))
+        opp_sp = r.get("Opp SP", "") or "—"
+        opp_hand = (r.get("OppHand") or "").upper()
+        park = r.get("Park", "") or "—"
+        try:
+            pf = float(r.get("ParkFactor", 100) or 100)
+        except Exception:
+            pf = 100.0
+        weather = (r.get("Weather", "—") or "—")
+        lineup = (r.get("LineupStatus") or "Not Posted").strip()
+        lineup_pill = {
+            "Confirmed": ("CONF", "elite"),
+            "Projected": ("PROJ", "info"),
+        }.get(lineup, ("TBD", "warn"))
+        tiers = [(tier_label, tier_cls), (lineup_pill[0], lineup_pill[1])]
+        foot = (
+            f'<div class="mc-foot">'
+            f'<b>{r.get("Game","")}</b>'
+            f' · vs {opp_sp}{f" ({opp_hand}HP)" if opp_hand else ""}'
+            f' · Park {park} {int(round(pf))}'
+            f' · {weather}'
+            f'</div>'
+        )
+        mobile_cards.append(_mc_card(
+            rank=i + 1,
+            name=r.get("Hitter", ""),
+            sub=f'{r.get("Team","")} · Bats {r.get("Bat","")} · Spot {r.get("Spot","")}',
+            score=r.get("Score"),
+            score_label=score_label,
+            tiers=tiers,
+            chips_html=_chips_for(r),
+            foot_html=foot,
+        ))
+    mobile_html = (
+        '<div class="mc-mobile"><div class="mc-grid">'
+        + "".join(mobile_cards) +
+        '</div></div>'
+    )
+
+    return MOBILE_CARDS_CSS + css + (
+        '<div class="mc-desktop">'
         f'<div class="tg-wrap"><table class="tg-table">'
         f'<thead><tr>{head_html}</tr></thead><tbody>'
         + "".join(rows_html) +
         '</tbody></table></div>'
+        '</div>'
+        + mobile_html
     )
 
 def style_slate_pitcher_table(df):
@@ -6652,7 +7024,7 @@ def _render_rbi_hero_strip():
         '<div class="rbi-hero">'
         '<div class="rbi-hero-title">🔥 Top 15 — 2+ RBI Plays Tonight</div>'
         '<div class="rbi-hero-sub">Heart-of-order power bats with the best '
-        'RBI matchup — swipe to see all 15. Refreshes by slate date and blends '
+        'RBI matchup<span class="mobile-hide-swipe"> — swipe to see all 15</span>. Refreshes by slate date and blends '
         "today's opponent / probable pitcher / lineup spot / park &amp; weather "
         'with each hitter\'s L10 form when available. Started games are '
         'excluded. Open the <b>⚾ RBI Edge Model</b> tab for filters &amp; full table.</div>'
@@ -10029,6 +10401,26 @@ if _view == "🌬️ Ballpark Weather":
         "  .bw-row.head .bw-col-venue, .bw-row.head .bw-col-precip, "
         "  .bw-row.head .bw-col-impact { display: none; } "
         "}"
+        # Below 640px we drop the table grid entirely and render every game
+        # as a self-contained dark card with stacked rows, matching the
+        # Slate-Pitchers card visual language.
+        "@media (max-width: 640px) { "
+        "  .bw-row.head { display: none; } "
+        "  .bw-row { display: block; padding: 12px 14px; margin: 8px 0; "
+        "    border-radius: 14px; background: linear-gradient(180deg,#15102b 0%,#0b0820 100%); "
+        "    border: 1px solid #2a1e4a; box-shadow: 0 4px 12px rgba(0,0,0,.30); } "
+        "  .bw-row > div { display: block; padding: 2px 0; } "
+        "  .bw-rank { width: 28px; height: 28px; "
+        "    border-color: #fcd34d; color: #fcd34d; background: #3b1f6b; } "
+        "  .bw-matchup { font-size: 1.05rem; color: #f8fafc; } "
+        "  .bw-temp { display: inline-block; margin-right: 12px; } "
+        "  .bw-wind { display: inline-flex; margin-right: 12px; } "
+        "  .bw-precip { display: inline-block; } "
+        # Show the columns the 720px breakpoint hid — they're useful again now
+        # that each game is a full-width card.
+        "  .bw-row .bw-col-venue, .bw-row .bw-col-precip, .bw-row .bw-col-impact "
+        "  { display: inline-block !important; margin-right: 12px; } "
+        "}"
         "</style>",
         unsafe_allow_html=True,
     )
@@ -11410,6 +11802,115 @@ _slate_lineup_sig = _slate_lineup_signature(schedule_df)
 _slate_cache_key = f"{selected_date}_{len(schedule_df)}_{_slate_lineup_sig}"
 _slate_df = _build_slate_dataframe(schedule_df, batters_df, pitchers_df, _slate_cache_key, slate_date=selected_date)
 
+def _df_mobile_cards_html(df, *, name_col=None, sub_col=None, score_col=None,
+                          score_label="Score", chip_cols=None, foot_cols=None,
+                          rank_col="#", max_chips=8):
+    """Generic dataframe -> mobile-card-grid renderer.
+
+    - name_col: header of the card (player / batter / matchup)
+    - sub_col:  one-line sub under the name
+    - score_col: top-right big number (formatted as-is)
+    - chip_cols: list of column names to render as stat chips (in order)
+    - foot_cols: list of column names to render as a meta line at the bottom
+    Falls back gracefully when columns aren't present.
+    """
+    if df is None or df.empty:
+        return '<div class="mc-empty">No data to display.</div>'
+    chip_cols = chip_cols or []
+    foot_cols = foot_cols or []
+    cards = []
+    for _, r in df.iterrows():
+        name = str(r.get(name_col, "")) if name_col else ""
+        sub  = str(r.get(sub_col, ""))  if sub_col  else ""
+        score = r.get(score_col) if score_col else None
+        # Render score as text directly (column may already be formatted)
+        score_html = ""
+        if score is not None and not (isinstance(score, float) and pd.isna(score)):
+            try:
+                txt = f"{float(score):.1f}"
+            except Exception:
+                txt = str(score)
+            score_html = (
+                f'<div class="mc-score">{txt}'
+                f'<small>{score_label}</small></div>'
+            )
+        rank_val = r.get(rank_col) if rank_col else None
+        try:
+            rank_int = int(rank_val) if rank_val is not None else None
+        except Exception:
+            rank_int = None
+        rank_html = f'<span class="mc-rank">#{rank_int}</span>' if rank_int else ""
+        # Chips
+        chip_html_parts = []
+        for c in chip_cols[:max_chips]:
+            if c not in r.index and c not in df.columns:
+                continue
+            v = r.get(c)
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                txt = None
+            else:
+                try:
+                    if isinstance(v, float):
+                        txt = f"{v:.3f}" if abs(v) < 5 else f"{v:.1f}"
+                    else:
+                        txt = str(v)
+                except Exception:
+                    txt = str(v)
+            chip_html_parts.append(_mc_chip(c, txt, "mid"))
+        chips_html = (
+            '<div class="mc-grid2">' + "".join(chip_html_parts) + "</div>"
+            if chip_html_parts else ""
+        )
+        # Foot
+        foot_bits = []
+        for c in foot_cols:
+            if c not in r.index and c not in df.columns:
+                continue
+            val = r.get(c)
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                continue
+            foot_bits.append(f"<b>{c}</b> {val}")
+        foot_html = (
+            '<div class="mc-foot">' + " · ".join(foot_bits) + "</div>"
+            if foot_bits else ""
+        )
+        cards.append(
+            '<div class="mc-card">'
+            '<div class="mc-head">'
+            f'{rank_html}'
+            f'<div class="mc-id"><div class="mc-name">{name}</div>'
+            f'<div class="mc-sub">{sub}</div></div>'
+            f'{score_html}'
+            '</div>'
+            f'{chips_html}'
+            f'{foot_html}'
+            '</div>'
+        )
+    return (
+        '<div class="mc-mobile"><div class="mc-grid">'
+        + "".join(cards) +
+        '</div></div>'
+    )
+
+
+def _df_with_cards(df, **kwargs):
+    """Render an `st.dataframe` wrapped in .mc-desktop + a mobile cards grid."""
+    if df is None or df.empty:
+        return
+    st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
+    st.dataframe(
+        df,
+        width='stretch',
+        hide_index=True,
+        height=min(720, 60 + 36 * len(df)),
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(
+        MOBILE_CARDS_CSS + _df_mobile_cards_html(df, **kwargs),
+        unsafe_allow_html=True,
+    )
+
+
 def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
     if df.empty:
         st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
@@ -11426,12 +11927,83 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
                  if c in ranked.columns]
     out = ranked[show_cols]
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
+
+    # Desktop: classic dataframe (preserved). Mobile: card grid below.
+    st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
     st.dataframe(
         style_matchup_table(out),
         width='stretch',
         hide_index=True,
         height=min(640, 60 + 38 * len(out)),
     )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Mobile: dark cards in Slate-Pitchers style.
+    mobile_cards = []
+    for _, r in ranked.iterrows():
+        match_score = r.get("Matchup")
+        # Reuse the same 0-100ish "Matchup" scale for tier coloring.
+        if match_score is not None and not (isinstance(match_score, float) and pd.isna(match_score)):
+            try:
+                m = float(match_score)
+                if m >= 130:   tier = ("Elite", "elite")
+                elif m >= 110: tier = ("Strong", "strong")
+                elif m >= 90:  tier = ("Average", "ok")
+                else:          tier = ("Soft", "soft")
+            except Exception:
+                tier = ("—", "ok")
+        else:
+            tier = ("—", "ok")
+        tiers = [tier]
+        likely = r.get("Likely")
+        if isinstance(likely, str) and likely.strip():
+            tiers.append((likely.strip(), "gold"))
+
+        chips = [
+            _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
+                     _mc_chip_tone(r.get("Matchup"), 80, 140)),
+            _mc_chip("ISO", _mc_fmt(r.get("ISO"), "{:.3f}"),
+                     _mc_chip_tone(r.get("ISO"), 0.130, 0.260)),
+            _mc_chip("Barrel%", _mc_fmt(r.get("Brl/BIP%"), "{:.1f}%"),
+                     _mc_chip_tone(r.get("Brl/BIP%"), 5.0, 14.0)),
+            _mc_chip("HardHit%", _mc_fmt(r.get("HH%"), "{:.1f}%"),
+                     _mc_chip_tone(r.get("HH%"), 32.0, 50.0)),
+            _mc_chip("Exit Velo", _mc_fmt(r.get("EV"), "{:.1f}"),
+                     _mc_chip_tone(r.get("EV"), 86.0, 94.0)),
+            _mc_chip("HR/FB%", _mc_fmt(r.get("HR/FB%"), "{:.1f}%"),
+                     _mc_chip_tone(r.get("HR/FB%"), 6.0, 18.0)),
+            _mc_chip("xwOBA", _mc_fmt(r.get("xwOBA"), "{:.3f}"),
+                     _mc_chip_tone(r.get("xwOBA"), 0.300, 0.400)),
+            _mc_chip("LA", _mc_fmt(r.get("LA"), "{:.1f}°"), "mid"),
+        ]
+        foot_bits = []
+        if r.get("Game"):
+            foot_bits.append(f'<b>{r.get("Game")}</b>')
+        if r.get("OppPitcher"):
+            foot_bits.append(f'vs {r.get("OppPitcher")}')
+        if r.get("Spot") not in (None, ""):
+            foot_bits.append(f'Spot {r.get("Spot")}')
+        if r.get("HR (L10G)") not in (None, ""):
+            foot_bits.append(f'L10G HR: <b>{r.get("HR (L10G)")}</b>')
+        foot = f'<div class="mc-foot">{" · ".join(foot_bits)}</div>' if foot_bits else ""
+        mobile_cards.append(_mc_card(
+            rank=int(r.get("#")) if r.get("#") is not None else None,
+            name=r.get("Hitter", ""),
+            sub=f'{r.get("Team","")}',
+            score=r.get("Matchup"),
+            score_label="Matchup",
+            tiers=tiers,
+            chips_html='<div class="mc-grid2">' + "".join(chips) + "</div>",
+            foot_html=foot,
+        ))
+    st.markdown(
+        MOBILE_CARDS_CSS +
+        '<div class="mc-mobile"><div class="mc-grid">'
+        + "".join(mobile_cards) +
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+
     csv = out.to_csv(index=False)
     st.download_button(
         f"⬇️ Download {title} CSV",
@@ -11487,12 +12059,70 @@ if _render_hr_milestones:
                 "_sort_hr", ascending=False, na_position="last"
             ).drop(columns=["_sort_hr"]).reset_index(drop=True)
         slate_hr.insert(0, "#", range(1, len(slate_hr) + 1))
+        st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
         st.dataframe(
             slate_hr,
             width='stretch',
             hide_index=True,
             height=min(640, 60 + 36 * len(slate_hr)),
         )
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Mobile HR milestone cards.
+        hrm_cards = []
+        for _, r in slate_hr.iterrows():
+            season_hr = r.get("Season HR")
+            try:
+                shr = float(season_hr) if season_hr not in (None, "") else None
+            except Exception:
+                shr = None
+            if shr is None:
+                tier = ("Off log", "warn")
+            elif shr >= 25:
+                tier = ("Power 🔥", "elite")
+            elif shr >= 15:
+                tier = ("Threat", "strong")
+            elif shr >= 8:
+                tier = ("Streaky", "ok")
+            else:
+                tier = ("Sleeper", "soft")
+            tiers = [tier]
+            likely = r.get("Likely")
+            if isinstance(likely, str) and likely.strip():
+                tiers.append((likely.strip(), "gold"))
+            chips = [
+                _mc_chip("Season HR", _mc_fmt(r.get("Season HR"), "{:.0f}"),
+                         _mc_chip_tone(r.get("Season HR"), 5, 30)),
+                _mc_chip("HR L10G", _mc_fmt(r.get("HR (L10G)"), "{:.0f}"),
+                         _mc_chip_tone(r.get("HR (L10G)"), 0, 4)),
+                _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
+                         _mc_chip_tone(r.get("Matchup"), 80, 140)),
+                _mc_chip("Last HR", (str(r.get("Last HR Date")) if r.get("Last HR Date") not in (None, "") else None), "mid"),
+            ]
+            foot_bits = []
+            if r.get("Game"):  foot_bits.append(f'<b>{r.get("Game")}</b>')
+            if r.get("OppPitcher"): foot_bits.append(f'vs {r.get("OppPitcher")}')
+            if r.get("Spot") not in (None, ""): foot_bits.append(f'Spot {r.get("Spot")}')
+            if r.get("Bat") not in (None, ""):  foot_bits.append(f'Bats {r.get("Bat")}')
+            foot = f'<div class="mc-foot">{" · ".join(foot_bits)}</div>' if foot_bits else ""
+            hrm_cards.append(_mc_card(
+                rank=int(r.get("#")) if r.get("#") is not None else None,
+                name=r.get("Hitter", ""),
+                sub=f'{r.get("Team","")}',
+                score=r.get("Season HR"),
+                score_label="HR",
+                tiers=tiers,
+                chips_html='<div class="mc-grid2">' + "".join(chips) + "</div>",
+                foot_html=foot,
+            ))
+        st.markdown(
+            MOBILE_CARDS_CSS +
+            '<div class="mc-mobile"><div class="mc-grid">'
+            + "".join(hrm_cards) +
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+
         st.download_button(
             "⬇️ Download HR Milestones CSV",
             slate_hr.to_csv(index=False),
@@ -11596,11 +12226,63 @@ if _render_hr_milestones:
                 f'</div>',
                 unsafe_allow_html=True,
             )
+            st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
             st.dataframe(
                 out_hr,
                 width='stretch',
                 hide_index=True,
                 height=min(640, 60 + 34 * len(out_hr)),
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # Mobile HR-by-date cards.
+            hrd_cards = []
+            for _, hrr in out_hr.iterrows():
+                # Distance/EV come in as already-formatted strings ("123" / "—")
+                dist_v = hrr.get("Distance (ft)")
+                ev_v = hrr.get("Exit Velo (mph)")
+                try:
+                    dist_num = float(dist_v) if dist_v not in (None, "", "—") else None
+                except Exception:
+                    dist_num = None
+                try:
+                    ev_num = float(ev_v) if ev_v not in (None, "", "—") else None
+                except Exception:
+                    ev_num = None
+                tier = ("BOMB 💣", "elite") if (dist_num is not None and dist_num >= 430) else (
+                       ("No-Doubt", "strong") if (dist_num is not None and dist_num >= 400) else
+                       ("Solo Shot", "ok")
+                )
+                chips = [
+                    _mc_chip("Distance", f"{int(dist_num)} ft" if dist_num is not None else None,
+                             _mc_chip_tone(dist_num, 380, 450) if dist_num is not None else "mid"),
+                    _mc_chip("Exit Velo", f"{ev_num:.1f}" if ev_num is not None else None,
+                             _mc_chip_tone(ev_num, 95, 112) if ev_num is not None else "mid"),
+                    _mc_chip("Inning", str(hrr.get("Inning") or "—"), "mid"),
+                    _mc_chip("Pitcher", str(hrr.get("Off Pitcher") or "—"), "mid"),
+                ]
+                play = str(hrr.get("Play") or "").strip()
+                foot = (
+                    f'<div class="mc-foot"><b>{hrr.get("Game","")}</b>'
+                    + (f' · {play}' if play else '')
+                    + '</div>'
+                )
+                hrd_cards.append(_mc_card(
+                    rank=int(hrr.get("#")) if hrr.get("#") is not None else None,
+                    name=hrr.get("Batter", ""),
+                    sub=f'{hrr.get("Team","")}',
+                    score=None,
+                    score_label="",
+                    tiers=[tier],
+                    chips_html='<div class="mc-grid2">' + "".join(chips) + "</div>",
+                    foot_html=foot,
+                ))
+            st.markdown(
+                MOBILE_CARDS_CSS +
+                '<div class="mc-mobile"><div class="mc-grid">'
+                + "".join(hrd_cards) +
+                '</div></div>',
+                unsafe_allow_html=True,
             )
             st.download_button(
                 f"⬇️ Download HRs for {hr_date_iso} CSV",
@@ -11826,9 +12508,12 @@ if _render_day_night:
             if table.empty:
                 st.info(f"No hitters cleared the {dn_min_pa}-PA day-game floor with the current filters.")
             else:
-                st.dataframe(
-                    table, width='stretch', hide_index=True,
-                    height=min(720, 60 + 36 * len(table)),
+                _df_with_cards(
+                    table,
+                    name_col="Hitter", sub_col="Team",
+                    score_col="Day HR", score_label="Day HR",
+                    chip_cols=["Day HR/PA", "Day PA", "OPS", "AVG", "HR", "PA"],
+                    foot_cols=["Team", "Confidence"],
                 )
                 st.download_button(
                     "⬇️ Download Day HR leaderboard (CSV)",
@@ -11843,9 +12528,12 @@ if _render_day_night:
             if table.empty:
                 st.info(f"No hitters cleared the {dn_min_pa}-PA night-game floor with the current filters.")
             else:
-                st.dataframe(
-                    table, width='stretch', hide_index=True,
-                    height=min(720, 60 + 36 * len(table)),
+                _df_with_cards(
+                    table,
+                    name_col="Hitter", sub_col="Team",
+                    score_col="Night HR", score_label="Night HR",
+                    chip_cols=["Night HR/PA", "Night PA", "OPS", "AVG", "HR", "PA"],
+                    foot_cols=["Team", "Confidence"],
                 )
                 st.download_button(
                     "⬇️ Download Night HR leaderboard (CSV)",
@@ -11856,6 +12544,8 @@ if _render_day_night:
                 )
 
         elif dn_view == "Side-by-Side":
+            # On phones, stack vertically (handled by global CSS); on desktop,
+            # the two st.columns(2) calls remain side-by-side.
             c_left, c_right = st.columns(2)
             with c_left:
                 st.markdown(
@@ -11866,9 +12556,12 @@ if _render_day_night:
                 if d_tbl.empty:
                     st.info("No day-game qualifiers.")
                 else:
-                    st.dataframe(
-                        d_tbl, width='stretch', hide_index=True,
-                        height=min(720, 60 + 36 * len(d_tbl)),
+                    _df_with_cards(
+                        d_tbl,
+                        name_col="Hitter", sub_col="Team",
+                        score_col="Day HR", score_label="Day HR",
+                        chip_cols=["Day HR/PA", "Day PA", "OPS", "AVG"],
+                        foot_cols=["Team"],
                     )
             with c_right:
                 st.markdown(
@@ -11879,9 +12572,12 @@ if _render_day_night:
                 if n_tbl.empty:
                     st.info("No night-game qualifiers.")
                 else:
-                    st.dataframe(
-                        n_tbl, width='stretch', hide_index=True,
-                        height=min(720, 60 + 36 * len(n_tbl)),
+                    _df_with_cards(
+                        n_tbl,
+                        name_col="Hitter", sub_col="Team",
+                        score_col="Night HR", score_label="Night HR",
+                        chip_cols=["Night HR/PA", "Night PA", "OPS", "AVG"],
+                        foot_cols=["Team"],
                     )
 
         elif dn_view == "Today's Slate Targets":
@@ -12196,9 +12892,12 @@ if _render_day_night:
                             'against tonight\'s lighting</div>',
                             unsafe_allow_html=True,
                         )
-                        st.dataframe(
-                            disp, width='stretch', hide_index=True,
-                            height=min(720, 60 + 36 * len(disp)),
+                        _df_with_cards(
+                            disp,
+                            name_col="Hitter", sub_col="Team",
+                            score_col="Target Score", score_label="Target",
+                            chip_cols=["HR/PA", "PA", "HR", "OPS", "Bucket", "Confidence"],
+                            foot_cols=["Game", "Opp SP", "Opp SP Hand", "Matchup"],
                         )
                         st.download_button(
                             "⬇️ Download Slate HR Targets (CSV)",
@@ -12243,9 +12942,13 @@ if _render_day_night:
                 if t_day.empty:
                     st.info("No qualifiers with both PA denominators above the floor.")
                 else:
-                    st.dataframe(
-                        t_day, width='stretch', hide_index=True,
-                        height=min(720, 60 + 36 * len(t_day)),
+                    _df_with_cards(
+                        t_day,
+                        name_col="Hitter", sub_col="Team",
+                        score_col="Edge (Day − Night)", score_label="Edge",
+                        chip_cols=["Day HR", "Day PA", "Day HR/PA",
+                                   "Night HR", "Night PA", "Night HR/PA"],
+                        foot_cols=["Team"],
                     )
             with c_right:
                 st.markdown(
@@ -12255,9 +12958,13 @@ if _render_day_night:
                 if t_night.empty:
                     st.info("No qualifiers with both PA denominators above the floor.")
                 else:
-                    st.dataframe(
-                        t_night, width='stretch', hide_index=True,
-                        height=min(720, 60 + 36 * len(t_night)),
+                    _df_with_cards(
+                        t_night,
+                        name_col="Hitter", sub_col="Team",
+                        score_col="Edge (Day − Night)", score_label="Edge",
+                        chip_cols=["Night HR", "Night PA", "Night HR/PA",
+                                   "Day HR", "Day PA", "Day HR/PA"],
+                        foot_cols=["Team"],
                     )
 
         # Footer caption — methodology so the user trusts the numbers.

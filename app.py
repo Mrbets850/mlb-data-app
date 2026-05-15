@@ -511,6 +511,30 @@ html, body, [class*="css"] {
     letter-spacing: 0.02em;
 }
 
+/* ---- mobile: turn the game carousel into a visible grid of square
+   tiles so all games are in plain sight without horizontal scrolling.
+   Desktop keeps the horizontal carousel look. ---- */
+@media (max-width: 640px) {
+    .carousel-wrap { padding: 8px 6px; }
+    .carousel-strip {
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        overflow: visible !important;
+        padding: 4px;
+    }
+    .carousel-strip::-webkit-scrollbar { display: none; }
+    .game-pill {
+        min-width: 0;
+        width: 100%;
+        padding: 10px 6px;
+        border-radius: 14px;
+    }
+    .game-pill .logos img { width: 32px; height: 32px; }
+    .game-pill .matchup-text { font-size: 0.82rem; }
+    .game-pill .time { font-size: 0.72rem; }
+}
+
 /* ---- section card ---- */
 .section-card {
     background: #fff; border: 1px solid #e2e8f0; border-radius: 18px;
@@ -645,6 +669,30 @@ html, body, [class*="css"] {
     transform: translateY(-1px);
 }
 .stTabs [data-baseweb="tab-highlight"] { background: #facc15 !important; height: 3px !important; }
+
+/* ---- mobile: let game-view tabs wrap into a visible grid of square
+   tiles so users see every tab without horizontal scrolling. Hide
+   the right-edge fade and scrollbar since they no longer apply. ---- */
+@media (max-width: 640px) {
+    .stTabs [data-baseweb="tab-list"] {
+        flex-wrap: wrap !important;
+        overflow-x: visible !important;
+        gap: 6px;
+        padding: 8px;
+    }
+    .stTabs [data-baseweb="tab-list"]::after { display: none !important; }
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+    .stTabs [data-baseweb="tab"] {
+        flex: 1 1 calc(50% - 6px) !important;
+        min-width: 0 !important;
+        white-space: normal !important;
+        text-align: center;
+        line-height: 1.15;
+        padding: 10px 8px !important;
+        font-size: 0.92rem !important;
+    }
+    .game-views-sub { display: none !important; }
+}
 
 /* ---- input polish ---- */
 .stButton > button {
@@ -6202,12 +6250,25 @@ st.markdown(
     "  box-shadow:0 0 0 3px rgba(250,204,21,.25), 0 6px 16px rgba(5,20,12,.35); "
     "  transform:translateY(-1px); text-decoration:none; }"
     ".top-tab-pill.active:hover { color:#facc15; }"
+    # Mobile: replace horizontal pill carousel with a visible grid of
+    # square tiles so every category is in plain sight without
+    # horizontal scrolling. Desktop layout (above) is unchanged.
     "@media (max-width: 640px) { "
-    "  .top-tab-row { padding:12px; } "
-    "  .top-tab-strip { gap:10px; } "
-    "  .top-tab-pill { padding:14px 20px; min-height:52px; min-width:140px; "
-    "    font-size:1.05rem; } "
+    "  .top-tab-row { padding:10px; } "
+    "  .top-tab-strip { display:grid !important; "
+    "    grid-template-columns: repeat(2, minmax(0, 1fr)); "
+    "    gap:8px; overflow:visible !important; "
+    "    flex-wrap:wrap; padding-bottom:0; } "
+    "  .top-tab-strip::-webkit-scrollbar { display:none; } "
+    "  .top-tab-pill { width:100%; min-width:0; flex:1 1 auto; "
+    "    padding:14px 10px; min-height:64px; font-size:.98rem; "
+    "    white-space:normal; line-height:1.15; text-align:center; "
+    "    border-radius:14px; } "
     "  .apps-gen-title { font-size:1.08rem; } "
+    "  .apps-gen-sub { display:none; } "
+    "}"
+    "@media (max-width: 380px) { "
+    "  .top-tab-pill { padding:12px 8px; min-height:60px; font-size:.92rem; } "
     "}"
     ".sp-legend { color:#64748b; font-size:.78rem; margin: 4px 0 12px 0; }"
     ".sp-legend code { background:#f1f5f9; padding: 1px 6px; border-radius:6px; "
@@ -6297,7 +6358,7 @@ for _i, _opt in enumerate(_TOP_VIEW_OPTIONS):
 st.markdown(
     '<div class="apps-gen-header">'
     '<span class="apps-gen-title">🧰 Apps &amp; Generators</span>'
-    '<span class="apps-gen-sub">Tap a pill · swipe → for more</span>'
+    '<span class="apps-gen-sub">Tap any tile to switch views</span>'
     '</div>'
     '<div class="top-tab-row"><div class="top-tab-strip">'
     + "".join(_pills_html)
@@ -10419,8 +10480,8 @@ st.markdown(
     "font-weight:900;font-size:1.05rem;'>☰</span>"
     "<span style='font-weight:900;font-size:1.08rem;color:#facc15;"
     "letter-spacing:.01em;'>Game views</span>"
-    "<span style='color:#fde68a;font-weight:600;font-size:.88rem;"
-    "margin-left:auto;'>tap a tab · swipe → for more</span>"
+    "<span class='game-views-sub' style='color:#fde68a;font-weight:600;font-size:.88rem;"
+    "margin-left:auto;'>Tap any tab to switch</span>"
     "</div>",
     unsafe_allow_html=True,
 )

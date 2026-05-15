@@ -10480,7 +10480,21 @@ home_matchup = build_matchup_table(ctx["home_lineup"], batters_df, pitchers_df, 
 # into the Apps & Generators pill row above, so this section stays focused
 # on the selected matchup. We still render a header banner so mobile users
 # clearly see they're inside the per-game area.
+#
+# Render flags drive which sections execute below. `nullcontext()` is a
+# no-op context manager — `with nullcontext():` still runs the body — so
+# we MUST also gate each `with tab_X:` block on the corresponding flag
+# (`_render_X`) to actually suppress that section. Without these flags,
+# the slate-wide leaderboards leak onto the main Games page even though
+# their tab containers were nulled out.
 _is_games_view = (_view == "⚾ Games")
+_render_matchup = _is_games_view
+_render_injuries = _is_games_view
+_render_hot = (_view == "🔥 Hot Batters")
+_render_cold = (_view == "🧊 Cold Batters")
+_render_hr_milestones = (_view == "💣 HR Milestones")
+_render_day_night = (_view == "☀️🌙 Day vs Night HR")
+
 if _is_games_view:
     st.markdown(
         "<div style='display:flex;align-items:center;gap:10px;"
@@ -10499,24 +10513,25 @@ if _is_games_view:
         unsafe_allow_html=True,
     )
     tab_matchup, tab_injuries = st.tabs(["📊 Matchup", "🏥 Injuries"])
-    # Slate-wide views render nothing here — they live in Apps & Generators.
     tab_hot = nullcontext()
     tab_cold = nullcontext()
     tab_hr_milestones = nullcontext()
     tab_day_night = nullcontext()
 else:
-    # User picked a slate-wide leaderboard from Apps & Generators above.
-    # Suppress the per-game Matchup + Injuries panels and only run the
-    # selected slate-wide section below.
     tab_matchup = nullcontext()
     tab_injuries = nullcontext()
-    tab_hot = st.container() if _view == "🔥 Hot Batters" else nullcontext()
-    tab_cold = st.container() if _view == "🧊 Cold Batters" else nullcontext()
-    tab_hr_milestones = st.container() if _view == "💣 HR Milestones" else nullcontext()
-    tab_day_night = st.container() if _view == "☀️🌙 Day vs Night HR" else nullcontext()
+    tab_hot = st.container() if _render_hot else nullcontext()
+    tab_cold = st.container() if _render_cold else nullcontext()
+    tab_hr_milestones = st.container() if _render_hr_milestones else nullcontext()
+    tab_day_night = st.container() if _render_day_night else nullcontext()
 
 # ============== Matchup tab ==============
-with tab_matchup:
+# `nullcontext()` does NOT suppress a `with` body, so simply nulling
+# out the tab containers (as the previous version did) left every
+# section's Streamlit calls executing on the main Games page. We now
+# guard each section with an explicit `_render_X` check.
+if _render_matchup:
+ with tab_matchup:
     # Make explicit that the board below recomputes against the selected
     # slate game's context, not a global/season ranking.
     st.caption(
@@ -10819,7 +10834,8 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
         width='stretch',
     )
 
-with tab_hot:
+if _render_hot:
+ with tab_hot:
     st.markdown(
         '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
         'Top 15 hitters across the entire slate — ranked by Matchup score (combines opposing pitcher, '
@@ -10827,7 +10843,8 @@ with tab_hot:
         '</div>', unsafe_allow_html=True)
     _render_leaderboard(_slate_df, "🔥 Hot Batters — Top 15", top=True, n=15, sort_col="Matchup")
 
-with tab_cold:
+if _render_cold:
+ with tab_cold:
     st.markdown(
         '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
         'Bottom 15 hitters across the slate — toughest matchups. Useful for fade lists, '
@@ -10836,7 +10853,8 @@ with tab_cold:
     _render_leaderboard(_slate_df, "🧊 Cold Batters — Bottom 15", top=False, n=15, sort_col="Matchup")
 
 # ============== HR Milestones tab ==============
-with tab_hr_milestones:
+if _render_hr_milestones:
+ with tab_hr_milestones:
     st.markdown(
         '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
         '💣 <b>HR Milestones</b> — season HR totals, most recent HR date, and HR over each batter\'s '
@@ -10991,7 +11009,8 @@ with tab_hr_milestones:
     )
 
 # ============== Day vs Night HR tab ==============
-with tab_day_night:
+if _render_day_night:
+ with tab_day_night:
     st.markdown(
         '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
         '☀️🌙 <b>Day vs Night HR splits</b> — season-long Day Games vs Night '
@@ -11647,7 +11666,8 @@ with tab_day_night:
         )
 
 # ============== Injuries tab ==============
-with tab_injuries:
+if _render_injuries:
+ with tab_injuries:
     st.markdown(
         '<div style="margin: 4px 0 12px 0; color:#475569; font-size:0.92rem;">'
         'Injured List + day-to-day players for both teams. Pulled live from MLB StatsAPI '

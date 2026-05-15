@@ -12051,13 +12051,57 @@ if _render_hr_milestones:
                                     "Season HR", "Last HR Date", "HR (L10G)", "Matchup", "Likely"]
                        if c in _slate_df.columns]
         slate_hr = _slate_df[wanted_cols].copy()
-        # Sort by Season HR (desc), with NaN at bottom — handles early-spring
-        # offseason gracefully when StatsAPI hasn't published a current log yet.
-        if "Season HR" in slate_hr.columns:
-            slate_hr["_sort_hr"] = pd.to_numeric(slate_hr["Season HR"], errors="coerce")
-            slate_hr = slate_hr.sort_values(
-                "_sort_hr", ascending=False, na_position="last"
-            ).drop(columns=["_sort_hr"]).reset_index(drop=True)
+
+        # ----- Sort + display controls (default: Season HR, max 25 players)
+        # so the slate panel is never overwhelming on mobile. Cap at 50.
+        _sort_options = [c for c in
+                         ["Season HR", "HR (L10G)", "Matchup", "Last HR Date",
+                          "Hitter", "Team"]
+                         if c in slate_hr.columns]
+        _ctrl1, _ctrl2, _ctrl3 = st.columns([1.3, 1.0, 1.0])
+        with _ctrl1:
+            _hrm_sort = st.selectbox(
+                "Sort by",
+                _sort_options,
+                index=0 if _sort_options else 0,
+                key="hrm_sort_field",
+            ) if _sort_options else None
+        with _ctrl2:
+            _hrm_dir = st.radio(
+                "Direction",
+                ["Descending", "Ascending"],
+                index=0,
+                horizontal=True,
+                key="hrm_sort_dir",
+            )
+        with _ctrl3:
+            _hrm_limit = st.slider(
+                "Max players shown",
+                min_value=10,
+                max_value=50,
+                value=min(25, len(slate_hr)) if len(slate_hr) else 25,
+                step=5,
+                key="hrm_max_players",
+                help=(
+                    "Limit how many slate hitters are listed below. "
+                    "Capped at 50 so the page stays readable on mobile."
+                ),
+            )
+
+        _ascending = (_hrm_dir == "Ascending")
+        if _hrm_sort:
+            if _hrm_sort in ("Hitter", "Team", "Last HR Date"):
+                slate_hr["_sort_key"] = slate_hr[_hrm_sort].astype(str).fillna("")
+                slate_hr = slate_hr.sort_values(
+                    "_sort_key", ascending=_ascending, na_position="last"
+                ).drop(columns=["_sort_key"]).reset_index(drop=True)
+            else:
+                slate_hr["_sort_key"] = pd.to_numeric(slate_hr[_hrm_sort], errors="coerce")
+                slate_hr = slate_hr.sort_values(
+                    "_sort_key", ascending=_ascending, na_position="last"
+                ).drop(columns=["_sort_key"]).reset_index(drop=True)
+        # Apply the cap and rebuild the rank column from 1.
+        slate_hr = slate_hr.head(int(_hrm_limit)).reset_index(drop=True)
         slate_hr.insert(0, "#", range(1, len(slate_hr) + 1))
         st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
         st.dataframe(
@@ -12220,6 +12264,55 @@ if _render_hr_milestones:
         if out_hr.empty:
             st.info(f"No HRs match '{name_q}' on {hr_date_iso}.")
         else:
+            # ----- Sort + max-50 control so a 30+ HR day doesn't dump every
+            # play into one scroll on mobile. Distance default keeps the
+            # bombs at the top.
+            _hr_sort_opts = [c for c in
+                             ["Distance (ft)", "Exit Velo (mph)", "Batter",
+                              "Team", "Inning", "Game"]
+                             if c in out_hr.columns]
+            _hrs1, _hrs2, _hrs3 = st.columns([1.3, 1.0, 1.0])
+            with _hrs1:
+                _hr_sort = st.selectbox(
+                    "Sort HRs by",
+                    _hr_sort_opts,
+                    index=0,
+                    key="hr_date_sort_field",
+                ) if _hr_sort_opts else None
+            with _hrs2:
+                _hr_dir = st.radio(
+                    "Direction",
+                    ["Descending", "Ascending"],
+                    index=0,
+                    horizontal=True,
+                    key="hr_date_sort_dir",
+                )
+            with _hrs3:
+                _hr_limit = st.slider(
+                    "Max HRs shown",
+                    min_value=10,
+                    max_value=50,
+                    value=min(25, len(out_hr)) if len(out_hr) else 25,
+                    step=5,
+                    key="hr_date_max",
+                    help=(
+                        "Cap the number of home runs rendered below. "
+                        "Capped at 50 to keep the mobile view readable."
+                    ),
+                )
+            _hr_asc = (_hr_dir == "Ascending")
+            if _hr_sort:
+                if _hr_sort in ("Distance (ft)", "Exit Velo (mph)"):
+                    out_hr["_sort_key"] = pd.to_numeric(
+                        out_hr[_hr_sort].replace("—", pd.NA), errors="coerce"
+                    )
+                else:
+                    out_hr["_sort_key"] = out_hr[_hr_sort].astype(str).fillna("")
+                out_hr = out_hr.sort_values(
+                    "_sort_key", ascending=_hr_asc, na_position="last"
+                ).drop(columns=["_sort_key"]).reset_index(drop=True)
+            out_hr = out_hr.head(int(_hr_limit)).reset_index(drop=True)
+            out_hr["#"] = range(1, len(out_hr) + 1)
             st.markdown(
                 f'<div style="margin: 6px 0 10px 0; font-weight:800; color:#0f172a;">'
                 f'⚾ {len(out_hr)} home run{"s" if len(out_hr) != 1 else ""} on {hr_date_iso}'
@@ -12510,7 +12603,7 @@ if _render_day_night:
             else:
                 _df_with_cards(
                     table,
-                    name_col="Hitter", sub_col="Team",
+                    name_col="Player", sub_col="Team",
                     score_col="Day HR", score_label="Day HR",
                     chip_cols=["Day HR/PA", "Day PA", "OPS", "AVG", "HR", "PA"],
                     foot_cols=["Team", "Confidence"],
@@ -12530,7 +12623,7 @@ if _render_day_night:
             else:
                 _df_with_cards(
                     table,
-                    name_col="Hitter", sub_col="Team",
+                    name_col="Player", sub_col="Team",
                     score_col="Night HR", score_label="Night HR",
                     chip_cols=["Night HR/PA", "Night PA", "OPS", "AVG", "HR", "PA"],
                     foot_cols=["Team", "Confidence"],
@@ -12558,7 +12651,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         d_tbl,
-                        name_col="Hitter", sub_col="Team",
+                        name_col="Player", sub_col="Team",
                         score_col="Day HR", score_label="Day HR",
                         chip_cols=["Day HR/PA", "Day PA", "OPS", "AVG"],
                         foot_cols=["Team"],
@@ -12574,7 +12667,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         n_tbl,
-                        name_col="Hitter", sub_col="Team",
+                        name_col="Player", sub_col="Team",
                         score_col="Night HR", score_label="Night HR",
                         chip_cols=["Night HR/PA", "Night PA", "OPS", "AVG"],
                         foot_cols=["Team"],
@@ -12894,7 +12987,7 @@ if _render_day_night:
                         )
                         _df_with_cards(
                             disp,
-                            name_col="Hitter", sub_col="Team",
+                            name_col="Player", sub_col="Team",
                             score_col="Target Score", score_label="Target",
                             chip_cols=["HR/PA", "PA", "HR", "OPS", "Bucket", "Confidence"],
                             foot_cols=["Game", "Opp SP", "Opp SP Hand", "Matchup"],
@@ -12944,7 +13037,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         t_day,
-                        name_col="Hitter", sub_col="Team",
+                        name_col="Player", sub_col="Team",
                         score_col="Edge (Day − Night)", score_label="Edge",
                         chip_cols=["Day HR", "Day PA", "Day HR/PA",
                                    "Night HR", "Night PA", "Night HR/PA"],
@@ -12960,7 +13053,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         t_night,
-                        name_col="Hitter", sub_col="Team",
+                        name_col="Player", sub_col="Team",
                         score_col="Edge (Day − Night)", score_label="Edge",
                         chip_cols=["Night HR", "Night PA", "Night HR/PA",
                                    "Day HR", "Day PA", "Day HR/PA"],

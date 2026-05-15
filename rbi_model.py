@@ -923,6 +923,160 @@ def _label_style(label: str) -> str:
     return "background:#fee2e2;color:#991b1b;font-weight:700;"
 
 
+# ---------------------------------------------------------------------------
+# Mobile player-card stack — matches the universal Slate-Pitchers visual
+# language used elsewhere in app.py (purple/gold brand, dark gradient cards,
+# colored stat chips, no horizontal scrolling). Kept inline here so the module
+# stays self-contained.
+# ---------------------------------------------------------------------------
+
+_RBI_MOBILE_CSS = (
+    "<style>"
+    ".rbi-desktop { display:block; }"
+    ".rbi-mobile  { display:none; }"
+    "@media (max-width: 640px) {"
+    "  .rbi-desktop { display:none !important; }"
+    "  .rbi-mobile  { display:block !important; }"
+    "  div[data-testid='stHorizontalBlock'] { flex-wrap: wrap !important; }"
+    "  div[data-testid='stHorizontalBlock'] > div { "
+    "    min-width: 0 !important; width: 100% !important; "
+    "    flex: 1 1 100% !important; }"
+    "}"
+    ".rbi-grid { display:grid; grid-template-columns: 1fr; gap: 12px; "
+    "  margin: 6px 0 12px 0; }"
+    "@media (min-width: 480px) and (max-width: 640px) {"
+    "  .rbi-grid { grid-template-columns: repeat(2, 1fr); }"
+    "}"
+    ".rbi-card { background: linear-gradient(180deg, #15102b 0%, #0b0820 100%); "
+    "  border:1px solid #2a1e4a; border-radius:14px; padding:12px 13px; "
+    "  color:#e9e6f5; box-shadow: 0 4px 12px rgba(0,0,0,.30); "
+    "  display:flex; flex-direction:column; gap:8px; min-width:0; }"
+    ".rbi-head { display:flex; align-items:flex-start; gap:8px; min-width:0; }"
+    ".rbi-rank { font-variant-numeric: tabular-nums; font-weight:900; "
+    "  font-size:.78rem; color:#fcd34d; background:#3b1f6b; "
+    "  border:1px solid #5b3aa0; padding:2px 7px; border-radius:8px; "
+    "  flex:0 0 auto; line-height:1.3; }"
+    ".rbi-id { display:flex; flex-direction:column; min-width:0; flex:1 1 auto; }"
+    ".rbi-name { font-weight:800; font-size:1.0rem; line-height:1.15; "
+    "  color:#f8fafc; word-break:break-word; }"
+    ".rbi-sub { font-size:.74rem; color:#a3a0c4; margin-top:2px; "
+    "  word-break:break-word; }"
+    ".rbi-score { font-variant-numeric: tabular-nums; font-weight:900; "
+    "  font-size:1.05rem; color:#fcd34d; text-align:right; flex:0 0 auto; "
+    "  padding-left:6px; line-height:1.05; }"
+    ".rbi-score small { display:block; font-size:.6rem; color:#a3a0c4; "
+    "  font-weight:700; letter-spacing:.06em; text-transform:uppercase; "
+    "  margin-top:2px; }"
+    ".rbi-tiers { display:flex; flex-wrap:wrap; gap:5px; }"
+    ".rbi-tier { display:inline-block; padding: 2px 8px; border-radius:999px; "
+    "  font-size:.66rem; font-weight:800; letter-spacing:.03em; "
+    "  border:1px solid transparent; text-transform:uppercase; }"
+    ".rbi-tier.elite  { background: rgba(16,185,129,.18); color:#86efac; "
+    "  border-color: rgba(110,231,183,.40); }"
+    ".rbi-tier.strong { background: rgba(132,204,22,.16); color:#bef264; "
+    "  border-color: rgba(190,242,100,.40); }"
+    ".rbi-tier.ok     { background: rgba(250,204,21,.14); color:#fde68a; "
+    "  border-color: rgba(253,224,71,.40); }"
+    ".rbi-tier.soft   { background: rgba(249,115,22,.16); color:#fdba74; "
+    "  border-color: rgba(253,186,116,.40); }"
+    ".rbi-tier.poor   { background: rgba(239,68,68,.18); color:#fecaca; "
+    "  border-color: rgba(252,165,165,.40); }"
+    ".rbi-tier.gold   { background: rgba(252,211,77,.16); color:#fde68a; "
+    "  border-color: rgba(253,224,71,.45); }"
+    ".rbi-tier.info   { background: rgba(139,92,246,.20); color:#ddd6fe; "
+    "  border-color: rgba(196,181,253,.40); }"
+    ".rbi-grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 6px; }"
+    ".rbi-chip { background:#1c1340; border:1px solid #2a1e4a; "
+    "  border-radius:9px; padding:6px 8px; min-width:0; }"
+    ".rbi-chip-label { font-size:.62rem; color:#a3a0c4; "
+    "  font-weight:700; letter-spacing:.04em; text-transform:uppercase; "
+    "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+    ".rbi-chip-val { font-size:.95rem; font-weight:800; color:#f8fafc; "
+    "  font-variant-numeric: tabular-nums; margin-top:1px; "
+    "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+    ".rbi-chip-val.na { color:#6b7290; }"
+    ".rbi-foot { font-size:.72rem; color:#a3a0c4; display:flex; "
+    "  flex-wrap:wrap; gap:6px 10px; }"
+    ".rbi-foot b { color:#e9e6f5; }"
+    ".rbi-empty { padding:14px 16px; color:#a3a0c4; background:#15102b; "
+    "  border:1px dashed #2a1e4a; border-radius:14px; text-align:center; }"
+    "</style>"
+)
+
+
+def _rbi_tier_from_label(label: str) -> Tuple[str, str]:
+    s = str(label or "")
+    if "Strong" in s: return ("elite",  "Strong Edge")
+    if "Moderate" in s: return ("strong", "Moderate Edge")
+    if "Marginal" in s: return ("ok",    "Marginal")
+    if "Fade" in s:     return ("poor",  "Fade")
+    return ("ok", s or "—")
+
+
+def _rbi_chip(label: str, val: Any) -> str:
+    if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
+        return (
+            '<div class="rbi-chip">'
+            f'<div class="rbi-chip-label">{label}</div>'
+            f'<div class="rbi-chip-val na">—</div></div>'
+        )
+    return (
+        '<div class="rbi-chip">'
+        f'<div class="rbi-chip-label">{label}</div>'
+        f'<div class="rbi-chip-val">{val}</div></div>'
+    )
+
+
+def _rbi_card_html(*, rank: int | None, name: str, sub: str,
+                   score: float | None, score_label: str = "RBI Edge",
+                   tiers: List[Tuple[str, str]] | None = None,
+                   chips: List[Tuple[str, Any]] | None = None,
+                   foot_bits: List[str] | None = None) -> str:
+    rank_html = f'<span class="rbi-rank">#{rank}</span>' if rank is not None else ""
+    score_html = ""
+    if score is not None:
+        try:
+            score_html = (
+                f'<div class="rbi-score">{float(score):.2f}'
+                f'<small>{score_label}</small></div>'
+            )
+        except Exception:
+            score_html = ""
+    tier_html = ""
+    if tiers:
+        tier_html = (
+            '<div class="rbi-tiers">' +
+            "".join(f'<span class="rbi-tier {cls}">{lab}</span>'
+                    for cls, lab in tiers) +
+            '</div>'
+        )
+    chips_html = ""
+    if chips:
+        chips_html = (
+            '<div class="rbi-grid2">' +
+            "".join(_rbi_chip(lbl, val) for lbl, val in chips) +
+            '</div>'
+        )
+    foot_html = ""
+    if foot_bits:
+        foot_html = (
+            '<div class="rbi-foot">' + " · ".join(foot_bits) + "</div>"
+        )
+    return (
+        '<div class="rbi-card">'
+        '<div class="rbi-head">'
+        f'{rank_html}'
+        f'<div class="rbi-id"><div class="rbi-name">{name}</div>'
+        f'<div class="rbi-sub">{sub}</div></div>'
+        f'{score_html}'
+        '</div>'
+        f'{tier_html}'
+        f'{chips_html}'
+        f'{foot_html}'
+        '</div>'
+    )
+
+
 def _render_leaderboard(scored: pd.DataFrame) -> None:
     st.markdown("### 🏆 Leaderboard — Today's RBI Edge Targets")
 
@@ -1000,7 +1154,76 @@ def _render_leaderboard(scored: pd.DataFrame) -> None:
         return styles
 
     styled = show.style.apply(_row_style, axis=1).format({"RBI Edge": "{:.2f}"})
+    st.markdown('<div class="rbi-desktop">', unsafe_allow_html=True)
     st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---- Mobile player-card stack (no horizontal scroll) -----------------
+    f_sorted = f.sort_values("score", ascending=False).reset_index(drop=True)
+    cards: List[str] = []
+    for i, row in f_sorted.iterrows():
+        tier_cls, tier_lab = _rbi_tier_from_label(row.get("label", ""))
+        tiers: List[Tuple[str, str]] = [(tier_cls, tier_lab)]
+        status = str(row.get("lineup_status", "Confirmed"))
+        if status == "Projected":
+            tiers.append(("info", "Projected"))
+        else:
+            tiers.append(("gold", "Confirmed"))
+        if row.get("platoon_advantage"):
+            tiers.append(("gold", "Platoon"))
+
+        def _fmt(val, kind="num"):
+            try:
+                if val is None or (isinstance(val, float) and pd.isna(val)):
+                    return None
+            except Exception:
+                pass
+            try:
+                f_v = float(val)
+            except Exception:
+                return str(val)
+            if kind == "rate3":
+                return f"{f_v:.3f}".lstrip("0") if 0 <= f_v < 1 else f"{f_v:.3f}"
+            if kind == "pct":
+                return f"{f_v*100:.1f}%" if f_v <= 1.5 else f"{f_v:.1f}%"
+            if kind == "int":
+                return f"{int(round(f_v))}"
+            return f"{f_v:.2f}"
+
+        chips: List[Tuple[str, Any]] = [
+            ("Slot", _fmt(row.get("lineup_slot"), "int")),
+            ("Est. Prob", row.get("prob") or "—"),
+            ("xwOBA L15", _fmt(row.get("xwoba_l15"), "rate3")),
+            ("xSLG", _fmt(row.get("xslg"), "rate3")),
+            ("Barrel%", _fmt(row.get("barrel_pct"), "pct")),
+            ("HardHit%", _fmt(row.get("hard_hit_pct"), "pct")),
+            ("Team OBP L14", _fmt(row.get("team_obp_l14"), "rate3")),
+            ("Total", _fmt(row.get("game_total"))),
+        ]
+        foot_bits: List[str] = []
+        matchup = row.get("matchup")
+        if matchup:
+            foot_bits.append(f"<b>{matchup}</b>")
+        flags = str(row.get("flags") or "").strip()
+        if flags:
+            foot_bits.append(flags)
+        cards.append(_rbi_card_html(
+            rank=i + 1,
+            name=str(row.get("player", "") or "—"),
+            sub=f'{row.get("team","")}'.strip(" ·"),
+            score=float(row.get("score", 0.0) or 0.0),
+            score_label="RBI Edge",
+            tiers=tiers,
+            chips=chips,
+            foot_bits=foot_bits,
+        ))
+    st.markdown(
+        _RBI_MOBILE_CSS +
+        '<div class="rbi-mobile"><div class="rbi-grid">'
+        + "".join(cards) +
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _render_parlays(scored: pd.DataFrame, n_legs: int) -> None:
@@ -1063,8 +1286,51 @@ def _render_parlays(scored: pd.DataFrame, n_legs: int) -> None:
     # TypeError that occurs when Rank is left as int64.
     ranks = [f"{i + 1} ⭐" if i < 3 else str(i + 1) for i in range(len(df))]
     df.insert(0, "Rank", ranks)
-    df = df.drop(columns=["_prob"])
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    df_view = df.drop(columns=["_prob"])
+
+    st.markdown('<div class="rbi-desktop">', unsafe_allow_html=True)
+    st.dataframe(df_view, use_container_width=True, hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---- Mobile cards: one card per parlay row ---------------------------
+    cards: List[str] = []
+    leg_keys = [f"Player {chr(65 + i)}" for i in range(n_legs)]
+    for i, r in df_view.iterrows():
+        player_lines = [str(r.get(k, "")) for k in leg_keys if r.get(k)]
+        first_name = player_lines[0] if player_lines else f"{n_legs}-leg parlay"
+        sub = " · ".join(player_lines[1:]) if len(player_lines) > 1 else f"{n_legs}-leg combo"
+        try:
+            combined = float(r.get("Combined Score", 0.0))
+        except Exception:
+            combined = 0.0
+        tiers: List[Tuple[str, str]] = []
+        rank_str = str(r.get("Rank", ""))
+        if "⭐" in rank_str:
+            tiers.append(("gold", "Best Bet ⭐"))
+        tiers.append(("info", f"{n_legs}-leg"))
+        chips: List[Tuple[str, Any]] = [
+            ("Est. Probability", r.get("Est. Probability", "—")),
+            ("Implied Odds", r.get("Implied Odds", "—")),
+        ]
+        # Show every leg explicitly in foot for clarity.
+        foot_bits = [f"<b>Leg {idx+1}:</b> {p}" for idx, p in enumerate(player_lines)]
+        cards.append(_rbi_card_html(
+            rank=(i + 1),
+            name=first_name,
+            sub=sub,
+            score=combined,
+            score_label="Combined",
+            tiers=tiers,
+            chips=chips,
+            foot_bits=foot_bits,
+        ))
+    st.markdown(
+        _RBI_MOBILE_CSS +
+        '<div class="rbi-mobile"><div class="rbi-grid">'
+        + "".join(cards) +
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
     st.caption(
         f"⭐ = Best Bet (top 3 by estimated probability). All legs are from different games "
         f"to avoid SGP correlation. Score floor for {n_legs}-leg pool: {threshold:.2f}."
@@ -1146,7 +1412,35 @@ def _render_deep_dive(scored: pd.DataFrame) -> None:
                      "Threshold": "Yes",
                      "Signal": "✅ Above" if row.get("lineup_stable", True) else "❌ Below"})
 
-    st.dataframe(pd.DataFrame(rows_out), use_container_width=True, hide_index=True)
+    feat_df = pd.DataFrame(rows_out)
+    st.markdown('<div class="rbi-desktop">', unsafe_allow_html=True)
+    st.dataframe(feat_df, use_container_width=True, hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Mobile: render the same feature table as a compact stacked card so it
+    # never overflows the viewport horizontally.
+    feat_rows_html = []
+    for _, fr in feat_df.iterrows():
+        signal = str(fr.get("Signal", ""))
+        tone_cls = "elite" if signal.startswith("✅") else "soft"
+        feat_rows_html.append(
+            '<div class="rbi-card" style="padding:8px 12px;">'
+            '<div class="rbi-head" style="align-items:center;">'
+            f'<div class="rbi-id"><div class="rbi-name" style="font-size:.92rem;">{fr.get("Feature","")}</div>'
+            f'<div class="rbi-sub">Threshold {fr.get("Threshold","")}</div></div>'
+            f'<div class="rbi-score" style="font-size:.92rem;">{fr.get("Value","—")}'
+            f'<small style="text-transform:none;letter-spacing:0;">'
+            f'<span class="rbi-tier {tone_cls}" style="margin-top:4px;">{signal}</span>'
+            '</small></div>'
+            '</div></div>'
+        )
+    st.markdown(
+        _RBI_MOBILE_CSS +
+        '<div class="rbi-mobile"><div class="rbi-grid">'
+        + "".join(feat_rows_html) +
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------------------------------------------------------

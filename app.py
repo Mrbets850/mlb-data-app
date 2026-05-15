@@ -3279,7 +3279,7 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
             "Team": norm_team(r["team"]),
             "Matchup": m,
             "Crushes": crushes,
-            "Likely": _likely_label(m, cl),
+            "Likely": _likely_label(m, cl, b_row=b_row, p_row=p_row, khr=khr, hr_form_pct_val=hrf),
             # Internal-only fields powering the AI HR / Sleepers / parlay engines.
             # Underscore-prefixed so style_matchup_table / leaderboards hide them.
             "_TestScore": ts,
@@ -3576,17 +3576,149 @@ def _heatmap_color_for(col, value):
     text = "#0f172a" if lum > 0.55 else "#ffffff"
     return (rgb, text)
 
-def _likely_label(matchup, ceiling):
-    """Synthesize a 'Likely' outcome chip from Matchup + Ceiling tiers."""
+def _likely_label(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pct_val=None):
+    """Synthesize a 'Likely' outcome chip from live player + pitcher stats.
+
+    Categories (in priority order, one is picked per batter):
+      HR 🔥        — strong HR conditions: high barrel/HH/HR-form vs vulnerable
+                     pitcher (low pitcher K%, high HR allowed / xSLG-against).
+      Long Shot HR 💥 — power profile present (ISO/Barrel) but matchup/form
+                     tougher than an outright HR call.
+      Strikeout ❌  — combined batter+pitcher K% high enough to flag a K.
+      HRR 💎       — Hits + Runs + RBIs blend: contact + lineup-spot RBI ops,
+                     not pure power.
+      BASES 🧭     — at least one total base likely (XBH/hit pace via
+                     SLG/ISO/xwOBA), the default neutral-positive case.
+
+    Falls back to the legacy Matchup+Ceiling tiers when batter/pitcher rows
+    aren't supplied (keeps existing two-arg callers working).
+    """
     try:
-        m = float(matchup); c = float(ceiling)
+        m_val = float(matchup)
     except Exception:
-        return "—"
-    if m >= 145 and c >= 75: return "🔥 HR"
-    if m >= 130 and c >= 65: return "💪 XBH"
-    if m >= 115:             return "✅ Hit"
-    if m >= 100:             return "➖ Avg"
-    return "❌ Tough"
+        m_val = None
+    try:
+        c_val = float(ceiling)
+    except Exception:
+        c_val = None
+
+    # No live rows → degrade gracefully to the old behavior so non-heatmap
+    # callers don't crash.
+    if b_row is None and p_row is None:
+        if m_val is None or c_val is None:
+            return "—"
+        if m_val >= 145 and c_val >= 75: return "HR 🔥"
+        if m_val >= 130 and c_val >= 65: return "Long Shot HR 💥"
+        if m_val >= 115:                 return "BASES 🧭"
+        if m_val >= 100:                 return "HRR 💎"
+        return "Strikeout ❌"
+
+    def _bf(row, key, default):
+        if row is None:
+            return default
+        try:
+            v = row.get(key)
+            if v is None or pd.isna(v):
+                return default
+            return float(v)
+        except Exception:
+            return default
+
+    # Batter pieces
+    b_k       = _bf(b_row, "K%",         22.0)
+    b_bb      = _bf(b_row, "BB%",         8.0)
+    b_barrel  = _bf(b_row, "Barrel%",     8.0)
+    b_hardhit = _bf(b_row, "HardHit%",   38.0)
+    b_iso     = _bf(b_row, "ISO",         0.155)
+    b_xwoba   = _bf(b_row, "xwOBA",       0.318)
+    b_xslg    = _bf(b_row, "xSLG",        0.410)
+    b_slg     = _bf(b_row, "SLG",         b_xslg)
+    b_pullair = (_bf(b_row, "Pull%", 40.0) * _bf(b_row, "FB%", 34.0)) / 100.0
+
+    # Pitcher pieces — vulnerability + K rate
+    p_k       = _bf(p_row, "K%",         22.0)
+    p_xslg    = _bf(p_row, "xSLG",        0.410)
+    p_barrel  = _bf(p_row, "Barrel%",     8.0)
+    p_hardhit = _bf(p_row, "HardHit%",   38.0)
+    p_hr      = _bf(p_row, "HR",          0.0)
+
+    # Composite scores 0..100-ish
+    combined_k = (b_k + p_k) / 2.0
+    # Pitcher hr-vulnerability: high xSLG/Barrel-against + HR allowed = juicy.
+    pitcher_vuln = (
+        (p_xslg - 0.380) * 140
+        + (p_barrel - 7.0) * 3.0
+        + (p_hardhit - 36.0) * 0.5
+        + p_hr * 0.4
+        - (p_k - 22.0) * 0.6
+    )
+    # Batter HR engine: barrel/HH/ISO/PullAir — the inputs that actually drive HRs.
+    hr_engine = (
+        (b_barrel - 7.0) * 4.0
+        + (b_hardhit - 36.0) * 0.8
+        + (b_iso - 0.155) * 180
+        + (b_pullair - 14.0) * 1.2
+    )
+    if hr_form_pct_val is not None:
+        try:
+            hr_engine += (float(hr_form_pct_val) - 40.0) * 0.25
+        except Exception:
+            pass
+
+    # 1) HR 🔥 — both engines firing, K risk under control, K-adj HR confirms.
+    khr_val = None
+    try:
+        khr_val = float(khr) if khr is not None else None
+    except Exception:
+        khr_val = None
+    hr_call = (
+        hr_engine >= 14
+        and pitcher_vuln >= 8
+        and combined_k <= 26
+        and (m_val is None or m_val >= 130)
+        and (c_val is None or c_val >= 65)
+        and (khr_val is None or khr_val >= 55)
+    )
+    if hr_call:
+        return "HR 🔥"
+
+    # 2) Strikeout — combined K% genuinely elevated and not offset by elite contact.
+    if combined_k >= 26 and b_barrel < 9.0 and b_iso < 0.170:
+        return "Strikeout ❌"
+
+    # 3) HRR (Hits + Runs + RBIs) — contact-leaning hitters with on-base/xwOBA
+    #    strength and lower K risk; not pure power but threat across H/R/RBI.
+    #    Checked BEFORE Long Shot HR so a high-xwOBA / low-K contact bat doesn't
+    #    get tagged as a HR long shot when power isn't the dominant signal.
+    hrr_call = (
+        b_xwoba >= 0.330
+        and combined_k <= 24
+        and (b_barrel >= 7.0 or b_hardhit >= 38.0)
+        and b_iso < 0.200
+    )
+    if hrr_call:
+        return "HRR 💎"
+
+    # 4) Long Shot HR — real power profile but matchup/form short of outright HR.
+    long_shot = (
+        (hr_engine >= 8 or b_iso >= 0.180 or b_barrel >= 10.0)
+        and combined_k <= 30
+        and (c_val is None or c_val >= 55)
+    )
+    if long_shot:
+        return "Long Shot HR 💥"
+
+    # 5) BASES — default positive bucket: at least 1+ total bases likely
+    #    (decent SLG/ISO/xwOBA, not flagged as a K).
+    bases_call = (
+        (b_slg >= 0.380 or b_iso >= 0.140 or b_xwoba >= 0.310)
+        and combined_k < 28
+    )
+    if bases_call:
+        return "BASES 🧭"
+
+    # Anything left = tough K-prone matchup.
+    return "Strikeout ❌"
 
 def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_name,
                                 weather, park_factor,
@@ -3778,7 +3910,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "LA": round(la, 1) if la is not None else None,
             "xwOBA": round(xwoba, 3) if xwoba is not None else None,
             "SweetSpot%": round(sweet, 1) if sweet is not None else None,
-            "Likely": _likely_label(m, cl),
+            "Likely": _likely_label(m, cl, b_row=b_row, p_row=p_row, khr=khr, hr_form_pct_val=hrf),
         })
     df = pd.DataFrame(rows)
     if not df.empty:

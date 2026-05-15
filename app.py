@@ -10,6 +10,7 @@ import urllib.parse
 import io
 import os
 import base64
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -74,7 +75,7 @@ OPTIONAL_CSVS = {"batters_prev", "bat_tracking_prev"}
 # Brand assets (logo + player headshots)
 # ---------------------------------------------------------------------------
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-LOGO_FILENAME = "mrbets850_logo.jpg"
+LOGO_FILENAME = "mlb_edge_logo.jpeg"
 
 @st.cache_data(show_spinner=False)
 def _logo_data_uri() -> str:
@@ -108,8 +109,8 @@ def player_headshot_url(player_id) -> str:
     )
 
 st.set_page_config(
-    page_title="MrBets850 — MLB Edge",
-    page_icon="👑",
+    page_title="THE MLB EDGE",
+    page_icon="⚾",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -426,25 +427,29 @@ html, body, [class*="css"] {
 .element-container:has(> .stMarkdown:only-child > [data-testid="stMarkdownContainer"]:empty) { display: none; }
 
 /* ---- brand bar ---- */
+/* MLB Edge palette: deep purple/night background, bright gold/yellow
+   primary accent, electric violet secondary accent. Matches the
+   uploaded MLB EDGE logo so the app header feels of-a-piece with the
+   brand mark in the top-left tile. */
 .brand-bar {
     display: flex; align-items: center; justify-content: space-between; gap: 18px;
     padding: 14px 22px; border-radius: 18px;
-    background: linear-gradient(110deg, #04130b 0%, #0d2a18 55%, #133a23 100%);
-    box-shadow: 0 12px 28px rgba(5,20,12,0.32);
-    border: 1px solid rgba(250,204,21,0.35);
+    background: linear-gradient(110deg, #14062e 0%, #2a0f5c 55%, #4c1d95 100%);
+    box-shadow: 0 12px 28px rgba(20, 5, 50, 0.45);
+    border: 1px solid rgba(250,204,21,0.55);
     margin-bottom: 14px; color: #fff;
 }
 .brand-bar .brand-left { display:flex; align-items:center; gap: 14px; min-width: 0; }
 .brand-bar .brand-logo {
     width: 64px; height: 64px; flex: 0 0 64px;
-    border-radius: 14px; background: #0a1f12;
-    border: 1px solid rgba(250,204,21,0.45);
-    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    border-radius: 14px; background: #1a0b3a;
+    border: 1px solid rgba(250,204,21,0.55);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.45);
     object-fit: contain; padding: 4px;
 }
 .brand-name { font-size: 1.55rem; font-weight: 900; letter-spacing: 0.04em; line-height: 1.05;
-    color: #facc15; text-shadow: 0 1px 0 rgba(0,0,0,0.35); }
-.brand-tag  { color: #fde68a; font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 700; }
+    color: #facc15; text-shadow: 0 1px 0 rgba(0,0,0,0.45); }
+.brand-tag  { color: #fde68a; font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 800; }
 .brand-meta { text-align: right; color: #fde68a; font-size: 0.92rem; font-weight: 700; }
 .brand-meta .big { font-size: 1.1rem; color: #fff; font-weight: 800; }
 @media (max-width: 600px) {
@@ -489,11 +494,11 @@ html, body, [class*="css"] {
     color: inherit !important;
     user-select: none;
 }
-.game-pill:hover { border-color: #94a3b8; background: #eef2f7; transform: translateY(-1px); }
+.game-pill:hover { border-color: #a78bfa; background: #f5f3ff; transform: translateY(-1px); }
 .game-pill.active {
-    border-color: #1d4ed8;
-    background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
-    box-shadow: 0 4px 14px rgba(29,78,216,0.22);
+    border-color: #facc15;
+    background: linear-gradient(180deg, #fef9c3 0%, #fde68a 100%);
+    box-shadow: 0 4px 14px rgba(124,58,237,0.30);
 }
 .game-pill .logos {
     display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -546,10 +551,11 @@ html, body, [class*="css"] {
     border: 1px solid #1e3a8a; color:#fff;
 }
 .section-title, .section-title-lg {
-    /* Vibrant green that pops on BOTH light and dark backgrounds.
-       #16a34a = tailwind green-600, readable on white; the text-shadow
-       gives it a soft halo so it stays crisp on dark too. */
-    color: #16a34a; font-size: 1.1rem; font-weight: 900;
+    /* MLB Edge electric-violet headline. Pops on BOTH light and dark
+       backgrounds — #7c3aed is tailwind violet-600, readable on white,
+       and the text-shadow gives it a soft halo so it stays crisp on the
+       dark purple panels. */
+    color: #7c3aed; font-size: 1.1rem; font-weight: 900;
     margin: 0 0 10px; letter-spacing: -0.01em;
     display: flex; align-items: center; gap: 10px;
     text-shadow: 0 1px 0 rgba(255,255,255,0.35), 0 0 1px rgba(0,0,0,0.15);
@@ -622,11 +628,11 @@ html, body, [class*="css"] {
 .stTabs { position: relative; }
 .stTabs [data-baseweb="tab-list"] {
     gap: 6px;
-    background: linear-gradient(180deg, #0b1f15 0%, #0f3a2e 100%);
+    background: linear-gradient(180deg, #14062e 0%, #3b1f6b 100%);
     padding: 8px;
     border-radius: 14px;
     border: 2px solid #facc15;
-    box-shadow: 0 4px 14px rgba(5, 20, 12, .25), inset 0 1px 0 rgba(250,204,21,.25);
+    box-shadow: 0 4px 14px rgba(20, 5, 50, .35), inset 0 1px 0 rgba(250,204,21,.25);
     overflow-x: auto;
     scrollbar-width: thin;
 }
@@ -643,7 +649,7 @@ html, body, [class*="css"] {
     content: "";
     position: absolute; top: 0; right: 0; bottom: 0; width: 36px;
     pointer-events: none;
-    background: linear-gradient(90deg, rgba(15,58,46,0) 0%, rgba(15,58,46,.85) 100%);
+    background: linear-gradient(90deg, rgba(59,31,107,0) 0%, rgba(59,31,107,.9) 100%);
     border-radius: 0 14px 14px 0;
 }
 .stTabs [data-baseweb="tab"] {
@@ -663,9 +669,9 @@ html, body, [class*="css"] {
 }
 .stTabs [aria-selected="true"] {
     background: #ffffff !important;
-    color: #0f3a2e !important;
+    color: #3b1f6b !important;
     border-color: #facc15 !important;
-    box-shadow: 0 0 0 2px rgba(250,204,21,.40), 0 4px 10px rgba(5,20,12,.30) !important;
+    box-shadow: 0 0 0 2px rgba(250,204,21,.45), 0 4px 10px rgba(20,5,50,.35) !important;
     transform: translateY(-1px);
 }
 .stTabs [data-baseweb="tab-highlight"] { background: #facc15 !important; height: 3px !important; }
@@ -697,9 +703,9 @@ html, body, [class*="css"] {
 /* ---- input polish ---- */
 .stButton > button {
     border-radius: 12px; font-weight: 800;
-    border: 1px solid #1d4ed8; background: #1d4ed8; color: #fff; padding: 8px 16px;
+    border: 1px solid #7c3aed; background: #7c3aed; color: #fff; padding: 8px 16px;
 }
-.stButton > button:hover { background: #1e40af; border-color: #1e40af; color:#fff; }
+.stButton > button:hover { background: #6d28d9; border-color: #6d28d9; color:#fff; }
 
 /* ---- dataframe polish - ensures heatmap shows clearly ---- */
 [data-testid="stDataFrame"] {
@@ -744,9 +750,9 @@ html, body, [class*="css"] {
     color: #e2e8f0 !important;
 }
 [data-theme="dark"] .section-title, [data-theme="dark"] .section-title-lg {
-    /* Brighter green on true dark theme so the title glows */
-    color: #4ade80 !important;
-    text-shadow: 0 0 8px rgba(74, 222, 128, 0.35) !important;
+    /* Brighter violet on true dark theme so the title glows */
+    color: #c4b5fd !important;
+    text-shadow: 0 0 8px rgba(167, 139, 250, 0.45) !important;
 }
 [data-theme="dark"] [style*="color:#475569"],
 [data-theme="dark"] [style*="color: #475569"],
@@ -765,7 +771,7 @@ html, body, [class*="css"] {
     border-color: #475569 !important;
 }
 [data-theme="dark"] .top-tab-row .top-tab-pill.active {
-    background: linear-gradient(110deg, #04130b 0%, #0f3a2e 60%, #1d5a3f 100%) !important;
+    background: linear-gradient(110deg, #14062e 0%, #3b1f6b 60%, #6b21a8 100%) !important;
     color: #facc15 !important;
     border-color: #facc15 !important;
 }
@@ -1852,7 +1858,7 @@ def render_team_injury_panel(team_label, team_abbr, injuries):
     """Render a single team's injury list as styled HTML."""
     if not injuries:
         return (
-            f"<div style='background:#0f3a2e;border:2px solid #facc15;border-radius:14px;"
+            f"<div style='background:#3b1f6b;border:2px solid #facc15;border-radius:14px;"
             f"padding:14px 16px;margin:8px 0;'>"
             f"<div style='color:#facc15;font-weight:900;font-size:1.05rem;margin-bottom:6px;'>"
             f"{team_label} <span style='opacity:0.7;font-weight:700;'>({team_abbr})</span></div>"
@@ -1914,7 +1920,7 @@ def render_team_injury_panel(team_label, team_abbr, injuries):
         summary_bits.append(f"{count_dtd} day-to-day")
     summary = " · ".join(summary_bits) if summary_bits else f"{len(injuries)} reported"
     return (
-        f"<div style='background:#0f3a2e;border:2px solid #facc15;border-radius:14px;"
+        f"<div style='background:#3b1f6b;border:2px solid #facc15;border-radius:14px;"
         f"padding:14px 16px;margin:8px 0;'>"
         f"<div style='display:flex;justify-content:space-between;align-items:center;"
         f"margin-bottom:6px;flex-wrap:wrap;gap:6px;'>"
@@ -4881,7 +4887,7 @@ def render_hr_sleepers_html(df):
         ".hrs-table { width:100%; border-collapse: separate; border-spacing: 0; "
         "  font-size:.92rem; background:#fff; border-radius:12px; overflow:hidden; "
         "  box-shadow: 0 2px 10px rgba(15,23,42,.06); }"
-        ".hrs-table th { background:#0f3a2e; color:#fcd34d; text-align:left; "
+        ".hrs-table th { background:#3b1f6b; color:#fcd34d; text-align:left; "
         "  font-weight:800; padding:9px 10px; letter-spacing:.03em; font-size:.78rem; "
         "  text-transform:uppercase; }"
         ".hrs-table td { padding:8px 10px; border-bottom:1px solid #f1f5f9; "
@@ -5199,7 +5205,7 @@ def render_targets_html(df, mode="tb"):
         ".tg-table { width:100%; border-collapse: separate; border-spacing: 0; "
         "  font-size:.92rem; background:#fff; border-radius:12px; overflow:hidden; "
         "  box-shadow: 0 2px 10px rgba(15,23,42,.06); }"
-        ".tg-table th { background:#0f3a2e; color:#fcd34d; text-align:left; "
+        ".tg-table th { background:#3b1f6b; color:#fcd34d; text-align:left; "
         "  font-weight:800; padding:9px 10px; letter-spacing:.03em; font-size:.78rem; "
         "  text-transform:uppercase; }"
         ".tg-table td { padding:8px 10px; border-bottom:1px solid #f1f5f9; "
@@ -5408,8 +5414,8 @@ def render_brand_bar(slate_count):
         <div class="brand-left">
             {logo_html}
             <div>
-                <div class="brand-tag">👑 MrBets850 · MLB Edge</div>
-                <div class="brand-name">MLB Matchup Board</div>
+                <div class="brand-tag">⚾ THE MLB EDGE</div>
+                <div class="brand-name">MLB Edge — Matchup Board</div>
             </div>
         </div>
         <div class="brand-meta">
@@ -5575,7 +5581,7 @@ def render_weather_impact_card(weather: dict, park_factor, home_abbr: str,
         'padding:0; margin-top:14px; overflow:hidden; '
         'box-shadow:0 2px 8px rgba(15,23,42,.06);">'
         # ---- Top chip strip: temp, dew, wind, rain, sky, sample ----
-        '<div style="background:linear-gradient(180deg,#0f3a2e 0%,#0b1f15 100%); '
+        '<div style="background:linear-gradient(180deg,#3b1f6b 0%,#1a0b3a 100%); '
         'color:#fef3c7; padding:10px 14px; display:flex; flex-wrap:wrap; gap:10px 18px; '
         'align-items:center; border-bottom:2px solid #facc15;">'
         f'<div style="font-size:1.05rem; font-weight:900;">{temp_str}'
@@ -5980,8 +5986,8 @@ _loading_logo = (
 )
 _brand_bar_slot.markdown(
     f'<div class="brand-bar"><div class="brand-left">{_loading_logo}'
-    '<div><div class="brand-tag">👑 MrBets850 · MLB Edge</div>'
-    '<div class="brand-name">MLB Matchup Board</div></div></div>'
+    '<div><div class="brand-tag">⚾ THE MLB EDGE</div>'
+    '<div class="brand-name">MLB Edge — Matchup Board</div></div></div>'
     '<div class="brand-meta"><div class="big">Loading slate…</div></div></div>',
     unsafe_allow_html=True,
 )
@@ -6140,7 +6146,7 @@ def _render_rbi_hero_strip():
         "  background:#fff; border-radius:12px; padding:10px 12px; "
         "  scroll-snap-align: start; "
         "  box-shadow: 0 2px 6px rgba(0,0,0,.15); }"
-        ".rbi-card-rank { display:inline-block; background:#0f3a2e; color:#facc15; "
+        ".rbi-card-rank { display:inline-block; background:#3b1f6b; color:#facc15; "
         "  font-weight:900; font-size:.72rem; padding:2px 8px; border-radius:999px; "
         "  letter-spacing:.05em; }"
         ".rbi-card-score { float:right; font-weight:900; font-size:1.05rem; "
@@ -6201,6 +6207,10 @@ def _render_rbi_hero_strip():
 # ===========================================================================
 _TOP_VIEW_OPTIONS = [
     "⚾ Games",
+    "🔥 Hot Batters",
+    "🧊 Cold Batters",
+    "💣 HR Milestones",
+    "☀️🌙 Day vs Night HR",
     "🥎 Slate Pitchers",
     "💎 HR Sleepers",
     "📊 Total Bases 1.5+",
@@ -6238,16 +6248,16 @@ st.markdown(
     "  display:inline-flex; align-items:center; justify-content:center; }"
     ".apps-gen-header { display:flex; align-items:baseline; justify-content:space-between; "
     "  margin: 6px 4px 4px; padding: 0 2px; gap: 10px; flex-wrap:wrap; }"
-    ".apps-gen-title { font-weight:900; font-size:1.18rem; color:#0f3a2e; "
+    ".apps-gen-title { font-weight:900; font-size:1.18rem; color:#3b1f6b; "
     "  letter-spacing:.01em; text-shadow:0 1px 0 rgba(255,255,255,.4); }"
     ".apps-gen-sub { font-size:.8rem; color:#475569; font-weight:600; }"
-    ".top-tab-pill:hover { border-color:#0f3a2e; transform:translateY(-1px); "
-    "  box-shadow:0 4px 10px rgba(15,58,46,.12); color:#0f172a; "
+    ".top-tab-pill:hover { border-color:#7c3aed; transform:translateY(-1px); "
+    "  box-shadow:0 4px 10px rgba(124,58,237,.18); color:#0f172a; "
     "  text-decoration:none; }"
     ".top-tab-pill.active { "
-    "  background:linear-gradient(110deg, #04130b 0%, #0f3a2e 60%, #1d5a3f 100%); "
+    "  background:linear-gradient(110deg, #14062e 0%, #3b1f6b 55%, #6b21a8 100%); "
     "  color:#facc15; border-color:#facc15; "
-    "  box-shadow:0 0 0 3px rgba(250,204,21,.25), 0 6px 16px rgba(5,20,12,.35); "
+    "  box-shadow:0 0 0 3px rgba(250,204,21,.30), 0 6px 16px rgba(20,5,50,.45); "
     "  transform:translateY(-1px); text-decoration:none; }"
     ".top-tab-pill.active:hover { color:#facc15; }"
     # Mobile: replace horizontal pill carousel with a visible grid of
@@ -6493,7 +6503,7 @@ if _view == "💎 HR Sleepers":
     if _hrs_excl > 0:
         st.markdown(
             f'<div style="margin:0 0 10px 0; padding:8px 12px; '
-            f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+            f'border-left:3px solid #7c3aed; background:#f5f3ff; '
             f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
             f'🕒 Using <b>{_hrs_elig}</b> pre-game matchup'
             f'{"s" if _hrs_elig != 1 else ""}; '
@@ -6603,7 +6613,7 @@ if _view == "📊 Total Bases 1.5+":
     if _tb_excl > 0:
         st.markdown(
             f'<div style="margin:0 0 10px 0; padding:8px 12px; '
-            f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+            f'border-left:3px solid #7c3aed; background:#f5f3ff; '
             f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
             f'🕒 Using <b>{_tb_elig}</b> pre-game matchup'
             f'{"s" if _tb_elig != 1 else ""}; '
@@ -6721,7 +6731,7 @@ if _view == "🎯 HRR 1.5+":
     if _hrr_excl > 0:
         st.markdown(
             f'<div style="margin:0 0 10px 0; padding:8px 12px; '
-            f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+            f'border-left:3px solid #7c3aed; background:#f5f3ff; '
             f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
             f'🕒 Using <b>{_hrr_elig}</b> pre-game matchup'
             f'{"s" if _hrr_elig != 1 else ""}; '
@@ -6922,7 +6932,7 @@ if _view == "🤖 AI HR Parlay":
 
     st.markdown(
         f'<div style="margin:0 0 10px 0; padding:8px 12px; '
-        f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+        f'border-left:3px solid #7c3aed; background:#f5f3ff; '
         f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
         f'🕒 Using <b>{_n_elig}</b> pre-game matchup'
         f'{"s" if _n_elig != 1 else ""}; '
@@ -7591,11 +7601,11 @@ if _view == "🤖 AI HR Parlay":
         "<style>"
         ".aip-card { background:#fff; border-radius:14px; padding:14px 14px 8px 14px; "
         "  box-shadow:0 2px 12px rgba(15,23,42,.07); margin: 8px 0 16px 0; "
-        "  border-left:5px solid #0f3a2e; }"
+        "  border-left:5px solid #3b1f6b; }"
         ".aip-card.aip-empty { border-left-color:#cbd5e1; padding:14px; }"
         ".aip-card-head { display:flex; align-items:center; justify-content:space-between; "
         "  gap:10px; margin-bottom:6px; flex-wrap:wrap; }"
-        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#0f3a2e; "
+        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#3b1f6b; "
         "  letter-spacing:.01em; }"
         ".aip-card-sub { color:#64748b; font-size:.82rem; margin-top:2px; }"
         ".aip-badge { font-size:.74rem; }"
@@ -7603,7 +7613,7 @@ if _view == "🤖 AI HR Parlay":
         ".aip-leg:first-of-type { border-top:none; }"
         ".aip-leg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }"
         ".aip-leg-num { font-size:.72rem; font-weight:800; letter-spacing:.06em; "
-        "  text-transform:uppercase; color:#fcd34d; background:#0f3a2e; "
+        "  text-transform:uppercase; color:#fcd34d; background:#3b1f6b; "
         "  padding:3px 8px; border-radius:6px; }"
         ".aip-leg-name { font-weight:800; color:#0f172a; flex:1 1 200px; "
         "  font-size:.98rem; }"
@@ -7742,7 +7752,7 @@ if _view == "👑 HR Round Robin":
     st.markdown(
         "<style>"
         ".rr-hero { display:flex; align-items:center; gap:18px; "
-        "  background: linear-gradient(110deg, #04130b 0%, #0f3a2e 55%, #1d5a3f 100%); "
+        "  background: linear-gradient(110deg, #14062e 0%, #3b1f6b 55%, #6b21a8 100%); "
         "  border: 2px solid #facc15; border-radius:18px; "
         "  padding:14px 18px; margin: 6px 0 14px 0; "
         "  box-shadow: 0 0 0 3px rgba(250,204,21,.18), 0 8px 22px rgba(5,20,12,.35); }"
@@ -7765,12 +7775,12 @@ if _view == "👑 HR Round Robin":
         "  border-left:6px solid #facc15; }"
         ".rr-card .rr-rank { display:inline-block; min-width:28px; "
         "  text-align:center; font-weight:900; color:#facc15; "
-        "  background:#0f3a2e; border-radius:6px; padding:3px 8px; "
+        "  background:#3b1f6b; border-radius:6px; padding:3px 8px; "
         "  font-size:.78rem; letter-spacing:.06em; }"
         ".rr-card .rr-name { font-weight:900; color:#0f172a; font-size:1.04rem; "
         "  margin-left:8px; }"
         ".rr-card .rr-meta { color:#475569; font-size:.84rem; margin-top:2px; }"
-        ".rr-card .rr-score { float:right; font-weight:900; color:#0f3a2e; "
+        ".rr-card .rr-score { float:right; font-weight:900; color:#3b1f6b; "
         "  font-size:1.06rem; font-variant-numeric: tabular-nums; }"
         ".rr-card .rr-stats { color:#0f172a; font-size:.84rem; "
         "  background:#f8fafc; border-radius:6px; padding:6px 9px; margin-top:6px; "
@@ -7779,7 +7789,7 @@ if _view == "👑 HR Round Robin":
         "  font-size:.86rem; }"
         ".rr-card .rr-why li { margin: 1px 0; line-height:1.35; }"
         # Combos panel
-        ".rr-combos { background:#0f3a2e; color:#fde68a; border-radius:14px; "
+        ".rr-combos { background:#3b1f6b; color:#fde68a; border-radius:14px; "
         "  padding:14px 16px; margin: 12px 0 8px 0; "
         "  border:2px solid #facc15; "
         "  box-shadow: 0 0 0 3px rgba(250,204,21,.15), 0 6px 18px rgba(5,20,12,.30); }"
@@ -8347,7 +8357,7 @@ if _view == "🎯 AI K Generator":
 
     st.markdown(
         f'<div style="margin:0 0 10px 0; padding:8px 12px; '
-        f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+        f'border-left:3px solid #7c3aed; background:#f5f3ff; '
         f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
         f'🕒 Using <b>{_k_elig}</b> upcoming/live game'
         f'{"s" if _k_elig != 1 else ""}; '
@@ -9628,7 +9638,7 @@ if _view == "🥎 AI 1+ Hits Parlay":
 
     st.markdown(
         f'<div style="margin:0 0 10px 0; padding:8px 12px; '
-        f'border-left:3px solid #0f3a2e; background:#ecfdf5; '
+        f'border-left:3px solid #7c3aed; background:#f5f3ff; '
         f'border-radius:6px; color:#065f46; font-size:0.88rem;">'
         f'🕒 Using <b>{_h_elig}</b> pre-game matchup'
         f'{"s" if _h_elig != 1 else ""}; '
@@ -10279,11 +10289,11 @@ if _view == "🥎 AI 1+ Hits Parlay":
         "<style>"
         ".aip-card { background:#fff; border-radius:14px; padding:14px 14px 8px 14px; "
         "  box-shadow:0 2px 12px rgba(15,23,42,.07); margin: 8px 0 16px 0; "
-        "  border-left:5px solid #0f3a2e; }"
+        "  border-left:5px solid #3b1f6b; }"
         ".aip-card.aip-empty { border-left-color:#cbd5e1; padding:14px; }"
         ".aip-card-head { display:flex; align-items:center; justify-content:space-between; "
         "  gap:10px; margin-bottom:6px; flex-wrap:wrap; }"
-        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#0f3a2e; "
+        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#3b1f6b; "
         "  letter-spacing:.01em; }"
         ".aip-card-sub { color:#64748b; font-size:.82rem; margin-top:2px; }"
         ".aip-badge { font-size:.74rem; }"
@@ -10291,7 +10301,7 @@ if _view == "🥎 AI 1+ Hits Parlay":
         ".aip-leg:first-of-type { border-top:none; }"
         ".aip-leg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }"
         ".aip-leg-num { font-size:.72rem; font-weight:800; letter-spacing:.06em; "
-        "  text-transform:uppercase; color:#fcd34d; background:#0f3a2e; "
+        "  text-transform:uppercase; color:#fcd34d; background:#3b1f6b; "
         "  padding:3px 8px; border-radius:6px; }"
         ".aip-leg-name { font-weight:800; color:#0f172a; flex:1 1 200px; "
         "  font-size:.98rem; }"
@@ -10465,30 +10475,45 @@ home_matchup = build_matchup_table(ctx["home_lineup"], batters_df, pitchers_df, 
                                    slate_date=selected_date)
 
 # ----- Tabs -----
-# Prominent header for the per-game views — these are the prime area now
-# that the Top 15 2+ RBI hero strip has been removed from the top of the
-# page. We promote the Matchup / Hot Batters tab carousel with a bigger,
-# higher-contrast banner so mobile users immediately see what's here.
-st.markdown(
-    "<div style='display:flex;align-items:center;gap:10px;"
-    "margin:12px 2px 8px;padding:10px 14px;"
-    "background:linear-gradient(110deg,#04130b 0%,#0f3a2e 60%,#1d5a3f 100%);"
-    "border:2px solid #facc15;border-radius:14px;"
-    "box-shadow:0 4px 14px rgba(5,20,12,.30);'>"
-    "<span style='display:inline-flex;align-items:center;justify-content:center;"
-    "width:30px;height:30px;border-radius:50%;background:#facc15;color:#0f3a2e;"
-    "font-weight:900;font-size:1.05rem;'>☰</span>"
-    "<span style='font-weight:900;font-size:1.08rem;color:#facc15;"
-    "letter-spacing:.01em;'>Game views</span>"
-    "<span class='game-views-sub' style='color:#fde68a;font-weight:600;font-size:.88rem;"
-    "margin-left:auto;'>Tap any tab to switch</span>"
-    "</div>",
-    unsafe_allow_html=True,
-)
-tab_matchup, tab_hot, tab_cold, tab_hr_milestones, tab_day_night, tab_injuries = st.tabs(
-    ["📊 Matchup", "🔥 Hot Batters", "🧊 Cold Batters", "💣 HR Milestones",
-     "☀️🌙 Day vs Night HR", "🏥 Injuries"]
-)
+# Game views are now simplified to just Matchup + Injuries. The slate-wide
+# leaderboards (Hot / Cold / HR Milestones / Day vs Night HR) have moved up
+# into the Apps & Generators pill row above, so this section stays focused
+# on the selected matchup. We still render a header banner so mobile users
+# clearly see they're inside the per-game area.
+_is_games_view = (_view == "⚾ Games")
+if _is_games_view:
+    st.markdown(
+        "<div style='display:flex;align-items:center;gap:10px;"
+        "margin:12px 2px 8px;padding:10px 14px;"
+        "background:linear-gradient(110deg,#1a0b2e 0%,#3b1f6b 55%,#6b21a8 100%);"
+        "border:2px solid #facc15;border-radius:14px;"
+        "box-shadow:0 4px 14px rgba(20,5,40,.45);'>"
+        "<span style='display:inline-flex;align-items:center;justify-content:center;"
+        "width:30px;height:30px;border-radius:50%;background:#facc15;color:#3b1f6b;"
+        "font-weight:900;font-size:1.05rem;'>☰</span>"
+        "<span style='font-weight:900;font-size:1.08rem;color:#facc15;"
+        "letter-spacing:.01em;'>Game views</span>"
+        "<span class='game-views-sub' style='color:#fde68a;font-weight:600;font-size:.88rem;"
+        "margin-left:auto;'>Matchup · Injuries</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    tab_matchup, tab_injuries = st.tabs(["📊 Matchup", "🏥 Injuries"])
+    # Slate-wide views render nothing here — they live in Apps & Generators.
+    tab_hot = nullcontext()
+    tab_cold = nullcontext()
+    tab_hr_milestones = nullcontext()
+    tab_day_night = nullcontext()
+else:
+    # User picked a slate-wide leaderboard from Apps & Generators above.
+    # Suppress the per-game Matchup + Injuries panels and only run the
+    # selected slate-wide section below.
+    tab_matchup = nullcontext()
+    tab_injuries = nullcontext()
+    tab_hot = st.container() if _view == "🔥 Hot Batters" else nullcontext()
+    tab_cold = st.container() if _view == "🧊 Cold Batters" else nullcontext()
+    tab_hr_milestones = st.container() if _view == "💣 HR Milestones" else nullcontext()
+    tab_day_night = st.container() if _view == "☀️🌙 Day vs Night HR" else nullcontext()
 
 # ============== Matchup tab ==============
 with tab_matchup:
@@ -11672,7 +11697,7 @@ def _render_data_status_table() -> str:
         ".ds-tbl { width:100%; border-collapse: separate; border-spacing:0; "
         "  font-size:.92rem; background:#fff; border-radius:12px; overflow:hidden; "
         "  box-shadow: 0 2px 10px rgba(15,23,42,.06); margin: 6px 0 4px 0; }"
-        ".ds-tbl th { background:#0f3a2e; color:#fcd34d; text-align:left; "
+        ".ds-tbl th { background:#3b1f6b; color:#fcd34d; text-align:left; "
         "  font-weight:800; padding:9px 10px; letter-spacing:.03em; font-size:.78rem; "
         "  text-transform:uppercase; }"
         ".ds-tbl td { padding:8px 10px; border-bottom:1px solid #f1f5f9; "
@@ -11734,7 +11759,7 @@ with st.expander("📊 Data status & sources", expanded=False):
         st.markdown(f"- **{label}**: [{CSV_FILES[label]}]({url})")
 
 st.markdown(
-    '<div class="footer">⚾ <b>MrBets850 MLB Edge</b> · '
+    '<div class="footer">⚾ <b>THE MLB EDGE</b> · '
     'Powered by Baseball Savant + MLB StatsAPI + Open-Meteo · '
     'Tiers: Elite 🟢 (≥130) · Strong 🟢 (110-129) · OK 🟡 (95-109) · Avoid 🔴 (&lt;95) · '
     'Heatmaps: Green = Strong · Yellow = OK · Red = Avoid · For research purposes only.</div>',

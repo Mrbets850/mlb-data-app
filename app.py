@@ -7060,6 +7060,7 @@ _TOP_VIEW_OPTIONS = [
     "🎯 AI K Generator",
     "🌬️ Ballpark Weather",
     "🥎 AI 1+ Hits Parlay",
+    "🏟️ Live HR Tracker",
 ]
 
 st.markdown(
@@ -11435,6 +11436,34 @@ if _view == "🥎 AI 1+ Hits Parlay":
             "rather than dropping the bat — so coverage stays high even when "
             "Whiff% / Bat-speed / xBA aren't filled in for a player."
         )
+    st.stop()
+
+
+# ============== Live HR Tracker view ==============
+# Real-time home run feed with flaming activation banner, confetti burst,
+# team-colored player cards, and a sticky counter/ticker strip. The page
+# ships with a Demo mode by default; wire a real MLB-feed fetcher into
+# render_live_hr_tracker(fetcher=...) once a polling source is available.
+if _view == "🏟️ Live HR Tracker":
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '🏟️ Live HR Tracker</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
+        'Real-time home run feed. Every homer fires a flaming banner, '
+        'confetti burst, and a team-colored player card with season HR, OPS, '
+        'ISO and Barrel%. Toggle <b>Demo mode</b> off once a real MLB feed '
+        'is wired into the polling hook.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    try:
+        from live_hr_tracker import render_live_hr_tracker as _render_lhrt
+        _render_lhrt(fetcher=None)
+    except Exception as _lhrt_err:
+        st.error(f"Live HR Tracker failed to load: {_lhrt_err}")
     st.stop()
 
 

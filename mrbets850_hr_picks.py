@@ -32,6 +32,9 @@ PICKS_FILENAME = "mrbets850_hr_picks.json"
 PICKS_PATH = os.path.join(_THIS_DIR, PICKS_FILENAME)
 ASSETS_DIR = os.path.join(_THIS_DIR, "assets")
 LOGO_FILENAME = "mrbets850_logo.jpg"
+# MLB Edge brand mark — same asset used by app.py's top brand bar so the
+# HR picks header feels of-a-piece with the rest of the app.
+BRAND_LOGO_FILENAME = "mlb_edge_logo.jpeg"
 
 MAX_PICKS = 25
 
@@ -146,16 +149,24 @@ def save_picks(state: dict[str, Any]) -> tuple[bool, str]:
 # any external network calls.
 # ---------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
-def _logo_data_uri() -> str:
-    path = os.path.join(ASSETS_DIR, LOGO_FILENAME)
+def _image_data_uri(filename: str) -> str:
+    path = os.path.join(ASSETS_DIR, filename)
     try:
         with open(path, "rb") as f:
             data = f.read()
     except Exception:
         return ""
-    ext = os.path.splitext(LOGO_FILENAME)[1].lower().lstrip(".") or "jpeg"
+    ext = os.path.splitext(filename)[1].lower().lstrip(".") or "jpeg"
     mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def _logo_data_uri() -> str:
+    return _image_data_uri(LOGO_FILENAME)
+
+
+def _brand_logo_data_uri() -> str:
+    return _image_data_uri(BRAND_LOGO_FILENAME)
 
 
 # ---------------------------------------------------------------------------
@@ -252,74 +263,235 @@ def _build_stat_grid(row: pd.Series | None) -> list[tuple[str, str]]:
 # Rendering
 # ---------------------------------------------------------------------------
 def _inject_css() -> None:
+    # MLB Edge palette (matches app.py brand bar):
+    #   deep-purple gradient #14062e → #2a0f5c → #4c1d95
+    #   gold accent #facc15, light gold #fde68a, electric violet #7c3aed
+    #
+    # The header keeps the dark purple/gold look in BOTH themes — gold-on-
+    # purple is the brand mark and reads cleanly against either Streamlit
+    # background. The cards, stat grid, notes, empty-state, and editor
+    # surfaces use CSS custom properties scoped to `.mrbets850-hr-wrap`
+    # that flip via `@media (prefers-color-scheme: dark)`, so body text
+    # never lands as low-contrast gold-on-white in light mode or
+    # dark-purple-on-dark in dark mode.
     st.markdown(
-        "<style>"
-        ".mrbets850-hr-wrap { margin: 6px 0 14px 0; }"
-        ".mrbets850-hr-header { display:flex; align-items:center; gap:14px; "
-        "  padding:14px 18px; "
-        "  background: linear-gradient(120deg, #0a3d0a 0%, #11421f 55%, #0f3a17 100%); "
-        "  border-radius: 18px; border: 2px solid #facc15; "
-        "  box-shadow: 0 6px 18px rgba(15,58,23,.5), inset 0 1px 0 rgba(255,255,255,.05); }"
-        ".mrbets850-hr-logo { width:72px; height:72px; border-radius:14px; "
-        "  background:#062006; padding:6px; object-fit:contain; "
-        "  border:1.5px solid #facc15; box-shadow:0 0 0 2px rgba(250,204,21,.18); }"
-        ".mrbets850-hr-title { font-weight:900; font-size:1.32rem; color:#facc15; "
-        "  letter-spacing:.02em; line-height:1.15; "
-        "  text-shadow: 0 2px 6px rgba(0,0,0,.5); }"
-        ".mrbets850-hr-sub { color:#fde68a; font-size:.9rem; font-weight:600; "
-        "  margin-top:2px; }"
-        ".mrbets850-hr-meta { margin-left:auto; text-align:right; "
-        "  color:#facc15; font-weight:700; font-size:.85rem; }"
-        ".mrbets850-card-grid { display:grid; gap:12px; margin-top:14px; "
-        "  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }"
-        ".mrbets850-card { position:relative; padding:14px 14px 12px 14px; "
-        "  border-radius:14px; border:1.5px solid #facc15; "
-        "  background: linear-gradient(160deg, #11151c 0%, #1a1f2b 60%, #232a36 100%); "
-        "  box-shadow: 0 4px 12px rgba(0,0,0,.35); }"
-        ".mrbets850-card .rank-badge { position:absolute; top:-10px; left:-10px; "
-        "  width:36px; height:36px; border-radius:50%; "
-        "  background: linear-gradient(135deg,#facc15,#b45309); "
-        "  color:#11151c; font-weight:900; font-size:1rem; "
-        "  display:flex; align-items:center; justify-content:center; "
-        "  border:2px solid #11151c; box-shadow:0 2px 6px rgba(0,0,0,.45); }"
-        ".mrbets850-card .head { display:flex; align-items:center; gap:10px; "
-        "  margin-bottom:8px; }"
-        ".mrbets850-card .head img.headshot { width:52px; height:52px; "
-        "  border-radius:50%; object-fit:cover; background:#0f172a; "
-        "  border:2px solid #facc15; }"
-        ".mrbets850-card .head .name { font-weight:800; font-size:1.02rem; "
-        "  color:#fafafa; line-height:1.2; }"
-        ".mrbets850-card .head .team { font-size:.78rem; color:#fde68a; "
-        "  font-weight:700; letter-spacing:.04em; }"
-        ".mrbets850-card .confidence { display:inline-block; margin-left:6px; "
-        "  padding:1px 8px; border-radius:999px; font-size:.7rem; "
-        "  font-weight:800; background:#facc15; color:#11151c; }"
-        ".mrbets850-card .stat-grid { display:grid; "
-        "  grid-template-columns: repeat(3, minmax(0,1fr)); gap:6px 8px; "
-        "  margin-top:6px; }"
-        ".mrbets850-card .stat { background:#0f172a; padding:6px 8px; "
-        "  border-radius:8px; border:1px solid #1f2937; }"
-        ".mrbets850-card .stat .lbl { font-size:.65rem; color:#94a3b8; "
-        "  font-weight:700; text-transform:uppercase; letter-spacing:.04em; }"
-        ".mrbets850-card .stat .val { font-size:.95rem; font-weight:800; "
-        "  color:#facc15; }"
-        ".mrbets850-card .stat .val.na { color:#64748b; font-weight:700; }"
-        ".mrbets850-card .note { margin-top:8px; padding:8px 10px; "
-        "  background:rgba(250,204,21,.08); border-left:3px solid #facc15; "
-        "  border-radius:8px; color:#fde68a; font-size:.85rem; "
-        "  line-height:1.35; }"
-        ".mrbets850-empty { padding:18px; border-radius:14px; "
-        "  border:1.5px dashed #facc15; background:rgba(250,204,21,.04); "
-        "  color:#fde68a; text-align:center; font-weight:700; }"
-        "@media (max-width: 640px) { "
-        "  .mrbets850-hr-header { flex-wrap:wrap; padding:12px; gap:10px; } "
-        "  .mrbets850-hr-logo { width:56px; height:56px; } "
-        "  .mrbets850-hr-title { font-size:1.12rem; } "
-        "  .mrbets850-hr-meta { width:100%; text-align:left; "
-        "    margin-left:0; font-size:.78rem; } "
-        "  .mrbets850-card-grid { grid-template-columns: 1fr; } "
-        "}"
-        "</style>",
+        """
+<style>
+.mrbets850-hr-wrap {
+    /* Light-theme defaults */
+    --mrb-card-bg: linear-gradient(160deg, #ffffff 0%, #fdfaff 60%, #f5efff 100%);
+    --mrb-card-border: rgba(124,58,237,0.35);
+    --mrb-card-shadow: 0 4px 12px rgba(20,5,50,0.10);
+    --mrb-text-strong: #1a0b3a;        /* deep-purple/near-black */
+    --mrb-text-muted: #4c1d95;         /* MLB Edge violet for labels */
+    --mrb-text-subtle: #6b7280;        /* slate-500 for N/A */
+    --mrb-stat-bg: #f5f3ff;            /* violet-50 */
+    --mrb-stat-border: rgba(124,58,237,0.18);
+    --mrb-stat-value: #4c1d95;         /* violet-900 */
+    --mrb-note-bg: rgba(124,58,237,0.06);
+    --mrb-note-border: #facc15;
+    --mrb-note-text: #3b0764;          /* dark violet, readable on lightviolet */
+    --mrb-empty-bg: rgba(124,58,237,0.04);
+    --mrb-empty-border: rgba(124,58,237,0.35);
+    --mrb-empty-text: #4c1d95;
+    --mrb-accent: #facc15;
+    --mrb-accent-soft: #fde68a;
+    --mrb-violet: #7c3aed;
+    --mrb-editor-bg: linear-gradient(180deg, #faf8ff 0%, #f3eeff 100%);
+    --mrb-editor-border: rgba(124,58,237,0.25);
+    --mrb-editor-text: #1a0b3a;
+    --mrb-editor-muted: #4c1d95;
+    margin: 6px 0 14px 0;
+}
+@media (prefers-color-scheme: dark) {
+    .mrbets850-hr-wrap {
+        --mrb-card-bg: linear-gradient(160deg, #1a0b3a 0%, #221152 55%, #2a0f5c 100%);
+        --mrb-card-border: rgba(250,204,21,0.55);
+        --mrb-card-shadow: 0 6px 18px rgba(0,0,0,0.45);
+        --mrb-text-strong: #fafafa;
+        --mrb-text-muted: #fde68a;
+        --mrb-text-subtle: #a1a1aa;
+        --mrb-stat-bg: rgba(255,255,255,0.06);
+        --mrb-stat-border: rgba(250,204,21,0.25);
+        --mrb-stat-value: #facc15;
+        --mrb-note-bg: rgba(250,204,21,0.10);
+        --mrb-note-border: #facc15;
+        --mrb-note-text: #fde68a;
+        --mrb-empty-bg: rgba(250,204,21,0.06);
+        --mrb-empty-border: rgba(250,204,21,0.55);
+        --mrb-empty-text: #fde68a;
+        --mrb-editor-bg: linear-gradient(180deg, #14062e 0%, #1f0c44 100%);
+        --mrb-editor-border: rgba(250,204,21,0.35);
+        --mrb-editor-text: #fafafa;
+        --mrb-editor-muted: #fde68a;
+    }
+}
+
+/* ---- Brand header (always dark purple + gold — readable on both themes) ---- */
+.mrbets850-hr-wrap .mrbets850-hr-header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 18px; border-radius: 18px;
+    background: linear-gradient(110deg, #14062e 0%, #2a0f5c 55%, #4c1d95 100%);
+    border: 1.5px solid rgba(250,204,21,0.60);
+    box-shadow: 0 12px 28px rgba(20,5,50,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
+    color: #fff;
+}
+.mrbets850-hr-wrap .mrbets850-hr-brand-logo {
+    width: 64px; height: 64px; flex: 0 0 64px;
+    border-radius: 14px; background: #1a0b3a; padding: 4px;
+    object-fit: contain;
+    border: 1px solid rgba(250,204,21,0.55);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+}
+.mrbets850-hr-wrap .mrbets850-hr-logo {
+    width: 56px; height: 56px; border-radius: 12px;
+    background: #1a0b3a; padding: 5px; object-fit: contain;
+    border: 1.5px solid #facc15;
+    box-shadow: 0 0 0 2px rgba(250,204,21,0.18);
+}
+.mrbets850-hr-wrap .mrbets850-hr-text { min-width: 0; }
+.mrbets850-hr-wrap .mrbets850-hr-eyebrow {
+    color: #fde68a; font-size: 0.72rem; letter-spacing: 0.18em;
+    text-transform: uppercase; font-weight: 800;
+}
+.mrbets850-hr-wrap .mrbets850-hr-title {
+    font-weight: 900; font-size: 1.35rem; color: #facc15;
+    letter-spacing: 0.02em; line-height: 1.15;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.55);
+}
+.mrbets850-hr-wrap .mrbets850-hr-sub {
+    color: #fde68a; font-size: 0.9rem; font-weight: 600; margin-top: 2px;
+}
+.mrbets850-hr-wrap .mrbets850-hr-meta {
+    margin-left: auto; text-align: right;
+    color: #fde68a; font-weight: 700; font-size: 0.85rem;
+}
+.mrbets850-hr-wrap .mrbets850-hr-meta .big {
+    font-size: 1rem; color: #facc15; font-weight: 800;
+}
+
+/* ---- Cards ---- */
+.mrbets850-hr-wrap .mrbets850-card-grid {
+    display: grid; gap: 12px; margin-top: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.mrbets850-hr-wrap .mrbets850-card {
+    position: relative; padding: 14px 14px 12px 14px;
+    border-radius: 14px;
+    border: 1.5px solid var(--mrb-card-border);
+    background: var(--mrb-card-bg);
+    box-shadow: var(--mrb-card-shadow);
+    color: var(--mrb-text-strong);
+}
+.mrbets850-hr-wrap .mrbets850-card .rank-badge {
+    position: absolute; top: -10px; left: -10px;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: linear-gradient(135deg, #facc15, #b45309);
+    color: #14062e; font-weight: 900; font-size: 1rem;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid #14062e;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+}
+.mrbets850-hr-wrap .mrbets850-card .head {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+}
+.mrbets850-hr-wrap .mrbets850-card .head img.headshot {
+    width: 52px; height: 52px; border-radius: 50%;
+    object-fit: cover; background: #1a0b3a;
+    border: 2px solid var(--mrb-accent);
+}
+.mrbets850-hr-wrap .mrbets850-card .head .headshot.placeholder {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--mrb-accent); font-weight: 900;
+}
+.mrbets850-hr-wrap .mrbets850-card .head .name {
+    font-weight: 800; font-size: 1.02rem;
+    color: var(--mrb-text-strong); line-height: 1.2;
+}
+.mrbets850-hr-wrap .mrbets850-card .head .team {
+    font-size: 0.78rem; color: var(--mrb-text-muted);
+    font-weight: 700; letter-spacing: 0.04em;
+}
+.mrbets850-hr-wrap .mrbets850-card .confidence {
+    display: inline-block; margin-left: 6px;
+    padding: 1px 8px; border-radius: 999px;
+    font-size: 0.7rem; font-weight: 800;
+    background: var(--mrb-accent); color: #14062e;
+    border: 1px solid rgba(20,6,46,0.20);
+}
+.mrbets850-hr-wrap .mrbets850-card .stat-grid {
+    display: grid; grid-template-columns: repeat(3, minmax(0,1fr));
+    gap: 6px 8px; margin-top: 6px;
+}
+.mrbets850-hr-wrap .mrbets850-card .stat {
+    background: var(--mrb-stat-bg);
+    padding: 6px 8px; border-radius: 8px;
+    border: 1px solid var(--mrb-stat-border);
+}
+.mrbets850-hr-wrap .mrbets850-card .stat .lbl {
+    font-size: 0.65rem; color: var(--mrb-text-muted);
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.mrbets850-hr-wrap .mrbets850-card .stat .val {
+    font-size: 0.95rem; font-weight: 800; color: var(--mrb-stat-value);
+}
+.mrbets850-hr-wrap .mrbets850-card .stat .val.na {
+    color: var(--mrb-text-subtle); font-weight: 700;
+}
+.mrbets850-hr-wrap .mrbets850-card .note {
+    margin-top: 8px; padding: 8px 10px;
+    background: var(--mrb-note-bg);
+    border-left: 3px solid var(--mrb-note-border);
+    border-radius: 8px;
+    color: var(--mrb-note-text);
+    font-size: 0.85rem; line-height: 1.35; font-weight: 600;
+}
+.mrbets850-hr-wrap .mrbets850-empty {
+    padding: 18px; border-radius: 14px;
+    border: 1.5px dashed var(--mrb-empty-border);
+    background: var(--mrb-empty-bg);
+    color: var(--mrb-empty-text);
+    text-align: center; font-weight: 700;
+}
+
+/* ---- Editor surfaces (visible only when developer is unlocked) ---- */
+.mrbets850-hr-wrap .mrbets850-editor-panel {
+    margin-top: 16px; padding: 14px 16px;
+    border-radius: 16px;
+    background: var(--mrb-editor-bg);
+    border: 1.5px solid var(--mrb-editor-border);
+    color: var(--mrb-editor-text);
+}
+.mrbets850-hr-wrap .mrbets850-editor-title {
+    color: var(--mrb-violet); font-weight: 900; font-size: 1.05rem;
+    letter-spacing: 0.01em; margin: 0 0 4px 0;
+}
+@media (prefers-color-scheme: dark) {
+    .mrbets850-hr-wrap .mrbets850-editor-title { color: #facc15; }
+}
+.mrbets850-hr-wrap .mrbets850-editor-sub {
+    color: var(--mrb-editor-muted); font-weight: 600; font-size: 0.85rem;
+}
+.mrbets850-hr-wrap .mrbets850-row-team {
+    color: var(--mrb-editor-muted); font-size: 0.85rem; font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+@media (max-width: 640px) {
+    .mrbets850-hr-wrap .mrbets850-hr-header {
+        flex-wrap: wrap; padding: 12px; gap: 10px;
+    }
+    .mrbets850-hr-wrap .mrbets850-hr-brand-logo { width: 48px; height: 48px; flex-basis: 48px; }
+    .mrbets850-hr-wrap .mrbets850-hr-logo { width: 44px; height: 44px; }
+    .mrbets850-hr-wrap .mrbets850-hr-title { font-size: 1.12rem; }
+    .mrbets850-hr-wrap .mrbets850-hr-meta {
+        width: 100%; text-align: left;
+        margin-left: 0; font-size: 0.78rem;
+    }
+    .mrbets850-hr-wrap .mrbets850-card-grid { grid-template-columns: 1fr; }
+}
+</style>
+""",
         unsafe_allow_html=True,
     )
 
@@ -335,29 +507,44 @@ def _format_last_updated(iso: str | None) -> str:
 
 
 def _render_header(last_updated: str | None, count: int) -> None:
+    brand_uri = _brand_logo_data_uri()
     logo_uri = _logo_data_uri()
+    if brand_uri:
+        brand_html = (
+            f'<img class="mrbets850-hr-brand-logo" src="{brand_uri}" '
+            'alt="MLB Edge" />'
+        )
+    else:
+        brand_html = (
+            '<div class="mrbets850-hr-brand-logo" '
+            'style="display:flex;align-items:center;justify-content:center;'
+            'font-size:1.8rem;color:#facc15;">⚾</div>'
+        )
     if logo_uri:
-        logo_html = (
+        mrbets_html = (
             f'<img class="mrbets850-hr-logo" src="{logo_uri}" '
             'alt="MrBets850" />'
         )
     else:
-        logo_html = (
+        mrbets_html = (
             '<div class="mrbets850-hr-logo" '
             'style="display:flex;align-items:center;justify-content:center;'
-            'font-size:1.8rem;color:#facc15;">👑</div>'
+            'font-size:1.6rem;color:#facc15;">👑</div>'
         )
     st.markdown(
         '<div class="mrbets850-hr-header">'
-        + logo_html
-        + '<div><div class="mrbets850-hr-title">'
+        + brand_html
+        + mrbets_html
+        + '<div class="mrbets850-hr-text">'
+        '<div class="mrbets850-hr-eyebrow">MLB Edge · MrBets850</div>'
+        '<div class="mrbets850-hr-title">'
         '👑 MRBETS850 HOMERUN PICKS OF DAY</div>'
         '<div class="mrbets850-hr-sub">'
         f'Daily hand-picked HR plays — Top {MAX_PICKS}, ranked by MrBets850</div>'
         '</div>'
         '<div class="mrbets850-hr-meta">'
-        f'<div>📌 {count}/{MAX_PICKS} picks</div>'
-        f'<div>🕒 Updated {_format_last_updated(last_updated)}</div>'
+        f'<div><span class="big">{count}/{MAX_PICKS}</span> picks</div>'
+        f'<div>🕒 {_format_last_updated(last_updated)}</div>'
         '</div>'
         '</div>',
         unsafe_allow_html=True,
@@ -396,10 +583,7 @@ def _render_card(pick: dict[str, Any], batters_df: pd.DataFrame | None) -> str:
     if headshot:
         head_html = f'<img class="headshot" src="{headshot}" alt="{name}" />'
     else:
-        head_html = (
-            '<div class="headshot" style="display:flex;align-items:center;'
-            'justify-content:center;color:#facc15;font-weight:900;">⚾</div>'
-        )
+        head_html = '<div class="headshot placeholder">⚾</div>'
 
     stat_grid_html_parts: list[str] = []
     for lbl, val in _build_stat_grid(row):
@@ -543,8 +727,16 @@ def _resolve_player_id(batters_df: pd.DataFrame | None, name: str, team: str) ->
 
 
 def _render_editor(state: dict[str, Any], batters_df: pd.DataFrame | None) -> None:
-    st.markdown("---")
-    st.markdown("### 🛠️ Developer editor")
+    st.markdown(
+        '<div class="mrbets850-editor-panel">'
+        '<div class="mrbets850-editor-title">🛠️ Developer editor</div>'
+        '<div class="mrbets850-editor-sub">'
+        f'Add, edit, reorder, or clear today\'s Top {MAX_PICKS}. '
+        'Changes persist to disk immediately.'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     picks: list[dict[str, Any]] = list(state.get("picks", []))
 
     options = _batter_dropdown_options(batters_df)
@@ -663,7 +855,7 @@ def _render_editor(state: dict[str, Any], batters_df: pd.DataFrame | None) -> No
                     with cols[1]:
                         st.markdown(
                             f"**{_html_escape(p.get('name'))}** "
-                            f"<span style='color:#94a3b8;font-size:.85rem;'>"
+                            f"<span class='mrbets850-row-team'>"
                             f"{_html_escape(p.get('team') or '')}</span>",
                             unsafe_allow_html=True,
                         )
@@ -759,6 +951,11 @@ def render_mrbets850_hr_picks(batters_df: pd.DataFrame | None = None) -> None:
     logo + ranked player cards; the developer sees an additional editor once
     the PIN is entered."""
     _inject_css()
+    # Open a single wrapper so the CSS custom properties (--mrb-*) apply
+    # to the header, public cards, AND the editor surface — keeping the
+    # whole tab in a consistent MLB Edge theme and switching cleanly
+    # between light/dark via prefers-color-scheme.
+    st.markdown('<div class="mrbets850-hr-wrap">', unsafe_allow_html=True)
     state = load_picks()
     picks = state.get("picks", [])
 
@@ -768,3 +965,4 @@ def render_mrbets850_hr_picks(batters_df: pd.DataFrame | None = None) -> None:
     _render_unlock_form()
     if _is_unlocked():
         _render_editor(state, batters_df)
+    st.markdown('</div>', unsafe_allow_html=True)

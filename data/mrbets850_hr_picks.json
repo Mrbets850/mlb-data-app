@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:38:43Z",
+  "last_updated": "2026-05-16T08:38:57Z",
   "picks": [
     {
       "rank": 1,
@@ -190,6 +190,14 @@
       "name": "Ryan Jeffers",
       "team": "",
       "player_id": 680777,
+      "note": "",
+      "confidence": "💸 Long Shot"
+    },
+    {
+      "rank": 25,
+      "name": "Samuel Basallo",
+      "team": "",
+      "player_id": 694212,
       "note": "",
       "confidence": "💸 Long Shot"
     }

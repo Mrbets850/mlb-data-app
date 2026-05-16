@@ -27,8 +27,13 @@ import json
 import random
 import time
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable
+
+try:  # Python 3.9+ stdlib
+    from zoneinfo import ZoneInfo  # type: ignore
+except Exception:  # pragma: no cover - fallback to manual offsets
+    ZoneInfo = None  # type: ignore
 
 import streamlit as st
 
@@ -629,10 +634,69 @@ def _normalize_abbr(raw: str | None, full_name: str | None = None) -> str:
     return ""
 
 
+# MLB's "baseball date" for US viewers tracks the local-stadium calendar day.
+# A Streamlit Cloud server runs in UTC, so `datetime.now()` rolls over to the
+# next day at 00:00 UTC — which is 7:00 PM CDT / 8:00 PM EDT. That means a
+# user watching live games at 8 PM Central sees the *next* day's schedule
+# (preview only) and the tracker looks "broken." We anchor the tracking date
+# to America/Chicago so the calendar day matches what the user expects for
+# the night's slate. ET would also work, but Central is the most-conservative
+# midpoint of US baseball viewing and matches the reporting user's timezone.
+_BASEBALL_TZ_NAME = "America/Chicago"
+
+
+def _baseball_tz() -> timezone | Any:
+    """Return a tzinfo for America/Chicago. Falls back to a fixed -05:00 (CDT)
+    offset if the system has no zoneinfo db (e.g. minimal docker image)."""
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo(_BASEBALL_TZ_NAME)
+        except Exception:
+            pass
+    # Best-effort fallback. CDT (-05:00) is correct for the May→Nov MLB season;
+    # CST (-06:00) is fine for off-season early-spring training pages.
+    now_utc_month = datetime.now(timezone.utc).month
+    # Rough DST window: mid-Mar through early-Nov in the US.
+    if 3 <= now_utc_month <= 11:
+        return timezone(timedelta(hours=-5))
+    return timezone(timedelta(hours=-6))
+
+
+def _baseball_now() -> datetime:
+    """Current wall-clock time in MLB's reference timezone (America/Chicago)."""
+    return datetime.now(timezone.utc).astimezone(_baseball_tz())
+
+
 def _today_iso() -> str:
-    """Today's date in YYYY-MM-DD using the user's local clock — MLB schedule
-    accepts a plain calendar date and resolves it across MLB timezones."""
-    return datetime.now().astimezone().strftime("%Y-%m-%d")
+    """Today's MLB calendar date in YYYY-MM-DD, anchored to America/Chicago.
+
+    Using Central time keeps the "today" boundary aligned with US night-game
+    viewing — UTC midnight strikes mid-evening Central, which previously made
+    the tracker flip to tomorrow's slate while live games were still playing.
+    """
+    return _baseball_now().strftime("%Y-%m-%d")
+
+
+def _baseball_dates_to_scan(now: datetime | None = None) -> list[str]:
+    """Pick the date(s) the tracker should query.
+
+    Always returns the Central-time "today." If the UTC date currently
+    disagrees with the Central date (which happens every evening Central
+    between roughly 7 PM and midnight), we also include the UTC date as a
+    secondary scan target so we still pick up any late-night games whose
+    schedule entry sits on the next calendar day in StatsAPI's UTC view.
+
+    The list preserves order: Central date first, adjacent date second.
+    Callers dedupe events by their stable `event_id`.
+    """
+    tz_ct = _baseball_tz()
+    n = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    ct_today = n.astimezone(tz_ct).strftime("%Y-%m-%d")
+    utc_today = n.strftime("%Y-%m-%d")
+    dates = [ct_today]
+    if utc_today != ct_today:
+        dates.append(utc_today)
+    return dates
 
 
 @dataclass
@@ -646,7 +710,9 @@ class FeedStatus:
     games_preview: int = 0
     hrs_today: int = 0
     last_error: str = ""
-    schedule_date: str = ""
+    schedule_date: str = ""               # primary (Central-time) date
+    schedule_dates: list[str] = field(default_factory=list)  # all scanned
+    timezone_label: str = _BASEBALL_TZ_NAME
     source: str = "MLB StatsAPI"  # which feed served the most recent batch
     fallback_used: bool = False
     per_game_errors: int = 0
@@ -667,10 +733,24 @@ class MLBLiveHRFeed:
     """
 
     def __init__(self, *, date_iso: str | None = None,
+                 dates_iso: list[str] | None = None,
                  status: FeedStatus | None = None) -> None:
-        self.date_iso = date_iso or _today_iso()
+        # ``dates_iso`` wins when both are supplied — used by the renderer to
+        # scan Central date + (when they differ) the UTC date. When neither
+        # is supplied we auto-pick the right window for the current moment.
+        if dates_iso:
+            self.dates_iso: list[str] = list(dict.fromkeys(dates_iso))
+        elif date_iso:
+            self.dates_iso = [date_iso]
+        else:
+            self.dates_iso = _baseball_dates_to_scan()
+        # Keep the legacy single-date attribute for backwards compatibility
+        # with any external callers / tests.
+        self.date_iso = self.dates_iso[0]
         self.status = status or FeedStatus()
         self.status.schedule_date = self.date_iso
+        self.status.schedule_dates = list(self.dates_iso)
+        self.status.timezone_label = _BASEBALL_TZ_NAME
 
     # ---- HTTP ----
     def _get_json(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -694,16 +774,37 @@ class MLBLiveHRFeed:
 
     # ---- Schedule ----
     def fetch_schedule(self) -> list[dict[str, Any]]:
-        """Return today's games (each entry is a StatsAPI ``game`` dict)."""
-        data = self._get_json(
-            f"{_STATSAPI_BASE}/api/v1/schedule",
-            {"sportId": 1, "date": self.date_iso, "hydrate": "team,linescore"},
-        )
-        games: list[dict[str, Any]] = []
-        for d in data.get("dates", []) or []:
-            for g in d.get("games", []) or []:
-                games.append(g)
-        return games
+        """Return today's games (each entry is a StatsAPI ``game`` dict).
+
+        Scans every date in ``self.dates_iso`` and dedupes by ``gamePk`` so a
+        late-night game that appears on both the Central and UTC calendar
+        rows is counted once.
+        """
+        all_games: list[dict[str, Any]] = []
+        seen_pks: set[int] = set()
+        for d_iso in self.dates_iso:
+            try:
+                data = self._get_json(
+                    f"{_STATSAPI_BASE}/api/v1/schedule",
+                    {"sportId": 1, "date": d_iso, "hydrate": "team,linescore"},
+                )
+            except Exception as e:
+                # Record the first error but keep trying other dates so a
+                # single bad date doesn't blank the slate.
+                if not self.status.last_error:
+                    self.status.last_error = f"schedule {d_iso}: {e}"
+                continue
+            for d in data.get("dates", []) or []:
+                for g in d.get("games", []) or []:
+                    try:
+                        pk = int(g.get("gamePk"))
+                    except Exception:
+                        continue
+                    if pk in seen_pks:
+                        continue
+                    seen_pks.add(pk)
+                    all_games.append(g)
+        return all_games
 
     # ---- Live feed ----
     def fetch_game_feed(self, game_pk: int) -> dict[str, Any]:
@@ -801,17 +902,26 @@ class MLBLiveHRFeed:
         out: list[dict[str, Any]] = []
         self.status.last_checked = time.time()
         self.status.per_game_errors = 0
-        try:
-            games = self.fetch_schedule()
-        except Exception as e:
-            self.status.last_error = f"StatsAPI schedule failed: {e}"
-            # Try ESPN fallback for the whole slate.
-            espn_out = _fetch_espn_hr_events(self.date_iso, seen_ids, self.status)
+        # fetch_schedule never throws — it records the first error in status
+        # and returns whatever it could collect.
+        prior_err = self.status.last_error
+        self.status.last_error = ""
+        games = self.fetch_schedule()
+        if not games:
+            # Total schedule miss across all dates → try ESPN fallback so the
+            # page still serves something. We feed ESPN the primary Central
+            # date; ESPN's `dates` param accepts a single YYYYMMDD.
+            if not self.status.last_error:
+                self.status.last_error = prior_err  # keep previous if newly empty
+            espn_out: list[dict[str, Any]] = []
+            for d_iso in self.dates_iso:
+                espn_out.extend(
+                    _fetch_espn_hr_events(d_iso, seen_ids, self.status)
+                )
             if espn_out:
                 self.status.source = "ESPN MLB (fallback)"
                 self.status.fallback_used = True
             return espn_out
-        self.status.last_error = ""
         self.status.source = "MLB StatsAPI"
         self.status.fallback_used = False
         self.status.games_scanned = len(games)
@@ -1443,7 +1553,13 @@ def render_live_hr_tracker(
     else:
         src_icon = "📡" if not status.fallback_used else "🛟"
         status_bits.append(f"{src_icon} {status.source or 'MLB StatsAPI'}")
-    status_bits.append(f"📅 {status.schedule_date or _today_iso()}")
+    # Date(s) and timezone — make it impossible to misread which calendar day
+    # the tracker is on. If we're scanning more than one date (Central + UTC
+    # overlap during evening hours) show both, separated by "+".
+    scan_dates = list(status.schedule_dates) or [status.schedule_date or _today_iso()]
+    date_label = " + ".join(scan_dates)
+    tz_label = status.timezone_label or _BASEBALL_TZ_NAME
+    status_bits.append(f"📅 {date_label} ({tz_label})")
     status_bits.append(
         f"🎮 {status.games_scanned} games "
         f"(🔴 {status.games_live} live · ✅ {status.games_final} final · "

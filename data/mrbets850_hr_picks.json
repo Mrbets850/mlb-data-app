@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:28:05Z",
+  "last_updated": "2026-05-16T08:28:53Z",
   "picks": [
     {
       "rank": 1,
@@ -19,6 +19,14 @@
     },
     {
       "rank": 3,
+      "name": "Aaron Judge",
+      "team": "",
+      "player_id": 592450,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 4,
       "name": "Daylen Lile",
       "team": "",
       "player_id": 695734,

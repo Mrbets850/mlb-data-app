@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:35:38Z",
+  "last_updated": "2026-05-16T08:35:56Z",
   "picks": [
     {
       "rank": 1,
@@ -152,6 +152,14 @@
       "player_id": 668709,
       "note": "",
       "confidence": "💎 Strong"
+    },
+    {
+      "rank": 20,
+      "name": "José Ramírez",
+      "team": "",
+      "player_id": 608070,
+      "note": "",
+      "confidence": "🎯 Lean"
     }
   ]
 }

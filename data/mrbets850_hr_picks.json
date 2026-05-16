@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:31:35Z",
+  "last_updated": "2026-05-16T08:31:50Z",
   "picks": [
     {
       "rank": 1,
@@ -70,6 +70,14 @@
       "name": "Hunter Goodman",
       "team": "",
       "player_id": 696100,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 10,
+      "name": "Mickey Moniak",
+      "team": "",
+      "player_id": 666160,
       "note": "",
       "confidence": "💎 Strong"
     }

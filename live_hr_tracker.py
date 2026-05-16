@@ -1159,6 +1159,62 @@ def _confetti_html(count: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Self-contained auto-refresh fallback
+# ---------------------------------------------------------------------------
+def _render_query_param_autorefresh(interval_ms: int) -> None:
+    """Soft auto-refresh that does NOT reload the page.
+
+    Strategy: a 0-height component schedules a single setTimeout. When it
+    fires, it bumps a ``?_lhrt_tick=<ts>`` query parameter on the PARENT
+    page using ``history.replaceState`` and then dispatches a
+    ``popstate`` event. Streamlit listens for URL changes and triggers a
+    soft rerun on the server, preserving session_state, scroll position,
+    and any open expanders.
+
+    If ``window.parent`` access is blocked (cross-origin iframe sandbox),
+    we fall back to clicking the visible "Refresh now" button by data-key,
+    which is also a soft rerun. Worst-case both fail and the user can hit
+    the manual button — the page is never frozen.
+    """
+    safe_ms = max(2000, int(interval_ms))
+    st.components.v1.html(
+        f"""
+<script>
+(function() {{
+  var INTERVAL = {safe_ms};
+  if (window.__lhrtTickArmed) {{ return; }}
+  window.__lhrtTickArmed = true;
+  setTimeout(function() {{
+    window.__lhrtTickArmed = false;
+    try {{
+      var w = window.parent || window;
+      var url = new URL(w.location.href);
+      url.searchParams.set('_lhrt_tick', String(Date.now()));
+      w.history.replaceState({{}}, '', url.toString());
+      // Streamlit listens for popstate to pick up URL changes.
+      w.dispatchEvent(new PopStateEvent('popstate'));
+    }} catch (e) {{
+      try {{
+        // Last-ditch fallback: click the visible Refresh button.
+        var doc = (window.parent && window.parent.document) || document;
+        var btns = doc.querySelectorAll('button');
+        for (var i = 0; i < btns.length; i++) {{
+          if ((btns[i].innerText || '').indexOf('Refresh now') !== -1) {{
+            btns[i].click();
+            break;
+          }}
+        }}
+      }} catch (err) {{ /* ignore */ }}
+    }}
+  }}, INTERVAL);
+}})();
+</script>
+""".strip(),
+        height=0,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Top-level renderer
 # ---------------------------------------------------------------------------
 def _ensure_state() -> dict[str, Any]:
@@ -1229,6 +1285,14 @@ def render_live_hr_tracker(
     inject synthetic events for visual QA.
     """
     s = _ensure_state()
+    # The query-param autorefresh fallback sets ?_lhrt_tick=<ts>; strip it
+    # immediately so the URL never accumulates stale ticks (and so the host
+    # app's own ?view= / ?g= deep-link logic isn't confused by it).
+    try:
+        if "_lhrt_tick" in st.query_params:
+            del st.query_params["_lhrt_tick"]
+    except Exception:
+        pass
     st.markdown(_PAGE_CSS, unsafe_allow_html=True)
     st.markdown('<div class="lhrt-wrap">', unsafe_allow_html=True)
 
@@ -1301,51 +1365,66 @@ def render_live_hr_tracker(
 
     # ---- Auto-refresh: must NEVER use time.sleep() + st.rerun() because that
     # blocks the script execution and freezes the page after the first run.
-    # Instead, we use streamlit-autorefresh (a tiny JS component that
-    # triggers a rerun via Streamlit's component message bus) if available,
-    # else a meta-refresh HTML component fallback that reloads the iframe at
-    # the chosen cadence.
+    # Must NEVER use window.parent.location.reload() either: that triggers a
+    # full app reload which is slow on a heavy multi-page app and visually
+    # looks like the page is "broken" (constant flash / loading spinner).
+    #
+    # We prefer streamlit-autorefresh (a tiny JS component that triggers a
+    # SOFT Streamlit rerun via the component message bus — no page reload).
+    # If that import failed (e.g. Streamlit Cloud hasn't reinstalled the
+    # requirements yet), we fall back to a self-contained component that
+    # bumps a `?lhrt_tick=` query-param on the parent page, which Streamlit
+    # treats as a soft rerun and preserves session_state. Either way the
+    # script thread is never blocked.
     if auto_refresh:
+        _refresh_ms = max(2000, int(interval) * 1000)
         if st_autorefresh is not None:
-            st_autorefresh(
-                interval=int(interval) * 1000,
-                key=f"lhrt_autorefresh_{int(interval)}",
-            )
+            try:
+                st_autorefresh(
+                    interval=_refresh_ms,
+                    key=f"lhrt_autorefresh_{int(interval)}",
+                )
+            except Exception:
+                # Component failed at runtime — drop to the self-contained
+                # fallback below so the page still ticks.
+                _render_query_param_autorefresh(_refresh_ms)
         else:
-            # Fallback: HTML/JS meta-refresh inside a 0-height component.
-            # Uses window.parent.location to reload the Streamlit page.
-            st.components.v1.html(
-                f"""<script>
-                setTimeout(function() {{
-                  try {{ window.parent.location.reload(); }}
-                  catch(e) {{ window.location.reload(); }}
-                }}, {int(interval) * 1000});
-                </script>""",
-                height=0,
-            )
+            _render_query_param_autorefresh(_refresh_ms)
 
     # ---- Poll new events ----
     now = time.time()
-    if (now - s["lhrt_last_poll"]) >= float(interval) or not s["lhrt_backfilled"]:
+    poll_due = (now - float(s.get("lhrt_last_poll") or 0.0)) >= float(interval)
+    if poll_due or not s["lhrt_backfilled"]:
         first_load = not s["lhrt_backfilled"]
         s["lhrt_last_poll"] = now
         new_events: list[HRPlayer] = []
-        if demo_mode:
-            # Light random chance of a synthetic event per poll.
-            if random.random() < 0.35:
-                s["lhrt_demo_seq"] += 1
-                new_events.append(_simulate_event(s["lhrt_demo_seq"]))
-        else:
-            # Thread the current seen_ids into the cached fetcher just before calling.
-            if hasattr(real_fetcher, "__self__") is False:
-                try:
-                    setattr(real_fetcher, "_seen_ids", s["lhrt_seen_ids"])
-                except Exception:
-                    pass
-            new_events = poll_live_hr_events(real_fetcher, seen_ids=s["lhrt_seen_ids"])
+        try:
+            if demo_mode:
+                # Light random chance of a synthetic event per poll.
+                if random.random() < 0.35:
+                    s["lhrt_demo_seq"] += 1
+                    new_events.append(_simulate_event(s["lhrt_demo_seq"]))
+            else:
+                # Thread the current seen_ids into the cached fetcher just before calling.
+                if hasattr(real_fetcher, "__self__") is False:
+                    try:
+                        setattr(real_fetcher, "_seen_ids", s["lhrt_seen_ids"])
+                    except Exception:
+                        pass
+                new_events = poll_live_hr_events(real_fetcher, seen_ids=s["lhrt_seen_ids"])
+        except Exception as poll_err:
+            # Belt + suspenders: poll_live_hr_events already swallows fetcher
+            # errors, but if anything else trips (seen_ids attr, simulator,
+            # etc.) we keep the page alive and surface a warning.
+            status.last_error = f"Poll failed: {poll_err}"
+            new_events = []
 
         if new_events:
-            newest = _ingest_events(new_events)
+            try:
+                newest = _ingest_events(new_events)
+            except Exception as ingest_err:
+                status.last_error = f"Ingest failed: {ingest_err}"
+                newest = None
             # On the very first load, populate the feed silently — no banner /
             # confetti — so the user sees today's HR history without 14 chained
             # "ACTIVATED" pulses. Subsequent polls fire the celebration.
@@ -1373,10 +1452,16 @@ def render_live_hr_tracker(
     status_bits.append(f"💥 {s['lhrt_today']} HR today")
     status_bits.append(f"🕒 Checked {_format_relative(status.last_checked)}")
     if auto_refresh:
-        next_in = max(0, int(interval) - int(time.time() - s["lhrt_last_poll"]))
+        # ``lhrt_last_poll`` was just refreshed to ``now`` above when a poll
+        # fired, so the displayed countdown is roughly the full interval —
+        # which is what the user expects ("next refresh in 15s"). We clamp
+        # to interval so a stale lhrt_last_poll can't show "next in -42s".
+        _elapsed = max(0, int(time.time() - float(s.get("lhrt_last_poll") or time.time())))
+        next_in = max(0, int(interval) - _elapsed)
+        next_in = min(next_in, int(interval))
         status_bits.append(f"⏱️ Auto-refresh every {int(interval)}s (next in ~{next_in}s)")
     else:
-        status_bits.append("⏸️ Auto-refresh OFF")
+        status_bits.append("⏸️ Auto-refresh OFF — use 🔄 Refresh now")
     if status.per_game_errors:
         status_bits.append(f"⚠️ {status.per_game_errors} game feed errors")
     status_html = (
@@ -1456,9 +1541,38 @@ def render_live_hr_tracker(
     # ---- Feed ----
     events = s["lhrt_events"]
     if not events:
+        # Make the empty state informative: the user must be able to tell
+        # the tracker is alive and polling, not broken. Show what we know.
+        last_check = _format_relative(status.last_checked)
+        if status.games_scanned == 0 and status.games_live == 0 and status.games_final == 0:
+            empty_main = "No MLB games found for today."
+            empty_sub = "Off-day, lockout, or the schedule API is unreachable. Use 🧪 Demo to preview."
+        elif status.games_live > 0:
+            empty_main = (
+                f"⚾ Tracking {status.games_live} live game"
+                f"{'s' if status.games_live != 1 else ''} — no HRs hit yet."
+            )
+            empty_sub = (
+                f"Polling every {int(interval)}s · last checked {last_check} · "
+                f"source: {status.source}"
+            )
+        elif status.games_preview > 0 and status.games_live == 0 and status.games_final == 0:
+            empty_main = f"⏳ {status.games_preview} games scheduled — first pitch coming up."
+            empty_sub = f"Tracker is armed and will catch the first HR of the slate. Checked {last_check}."
+        elif status.games_final > 0 and status.games_live == 0:
+            empty_main = f"✅ All {status.games_final} games final — no HRs detected today."
+            empty_sub = "Try a historical date via the Dev panel, or wait for tomorrow's slate."
+        else:
+            empty_main = "No HRs in the feed yet."
+            empty_sub = f"Polling every {int(interval)}s · last checked {last_check}."
         st.markdown(
-            '<div class="lhrt-empty">No HRs yet — toggle Demo mode or hit '
-            '<b>💥 Fire HR</b> to preview the experience.</div>',
+            f'<div class="lhrt-empty">'
+            f'<div style="font-weight:800;color:#fcd34d;margin-bottom:4px;">{_esc(empty_main)}</div>'
+            f'<div style="font-size:.82rem;">{_esc(empty_sub)}</div>'
+            f'<div style="font-size:.78rem;margin-top:6px;color:#94a3b8;">'
+            f'Tip: open <b>🧪 Dev / demo controls</b> above and hit <b>💥 Fire test HR</b> '
+            f'to confirm the tracker UI is working end-to-end.</div>'
+            f'</div>',
             unsafe_allow_html=True,
         )
     else:

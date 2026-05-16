@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:32:23Z",
+  "last_updated": "2026-05-16T08:32:40Z",
   "picks": [
     {
       "rank": 1,
@@ -86,6 +86,14 @@
       "name": "Bobby Witt Jr.",
       "team": "",
       "player_id": 677951,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 12,
+      "name": "Jordan Walker",
+      "team": "",
+      "player_id": 691023,
       "note": "",
       "confidence": "💎 Strong"
     }

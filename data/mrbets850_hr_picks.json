@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:32:40Z",
+  "last_updated": "2026-05-16T08:32:59Z",
   "picks": [
     {
       "rank": 1,
@@ -94,6 +94,14 @@
       "name": "Jordan Walker",
       "team": "",
       "player_id": 691023,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 13,
+      "name": "Shea Langeliers",
+      "team": "",
+      "player_id": 669127,
       "note": "",
       "confidence": "💎 Strong"
     }

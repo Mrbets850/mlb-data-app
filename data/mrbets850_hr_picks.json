@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:35:18Z",
+  "last_updated": "2026-05-16T08:35:38Z",
   "picks": [
     {
       "rank": 1,
@@ -144,6 +144,14 @@
       "player_id": 682829,
       "note": "",
       "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 19,
+      "name": "JJ Bleday",
+      "team": "",
+      "player_id": 668709,
+      "note": "",
+      "confidence": "💎 Strong"
     }
   ]
 }

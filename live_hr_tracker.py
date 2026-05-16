@@ -37,6 +37,13 @@ try:
 except Exception:  # pragma: no cover - requests is in requirements.txt
     requests = None  # type: ignore
 
+# Optional safe auto-rerun helper. Falls back to a JS meta-refresh component
+# if the package is missing, so the page still auto-updates without freezing.
+try:
+    from streamlit_autorefresh import st_autorefresh  # type: ignore
+except Exception:  # pragma: no cover - optional dep
+    st_autorefresh = None  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Team color palette (compact fallback — used only if the host app doesn't
@@ -580,7 +587,36 @@ _ABBR_ALIASES: dict[str, str] = {
 }
 
 _STATSAPI_BASE = "https://statsapi.mlb.com"
+_ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+_ESPN_SUMMARY = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary"
 _HTTP_TIMEOUT = 12  # seconds
+_HTTP_MAX_RETRIES = 2  # additional attempts after the first failure
+
+# Set of lowercase tokens that identify a HR event in StatsAPI / ESPN payloads.
+_HR_EVENT_TOKENS = {
+    "home_run", "home run", "homer", "homers", "homered",
+    "inside-the-park home run", "inside the park home run",
+    "grand slam",
+}
+
+
+def _is_hr_event(event_type: str | None, event: str | None,
+                 description: str | None = None) -> bool:
+    """Return True if any of the StatsAPI play fields identify the play as a HR.
+
+    Checks eventType, event, and (as a last resort) the play description so we
+    catch rare casing/punctuation variants in the live feed without depending
+    on a single field. Matching is whole-token / substring against a fixed
+    allow-list to avoid false positives like ""home runner"" hypotheticals.
+    """
+    for raw in (event_type, event, description):
+        if not raw:
+            continue
+        low = str(raw).lower()
+        for tok in _HR_EVENT_TOKENS:
+            if tok in low:
+                return True
+    return False
 
 
 def _normalize_abbr(raw: str | None, full_name: str | None = None) -> str:
@@ -611,6 +647,9 @@ class FeedStatus:
     hrs_today: int = 0
     last_error: str = ""
     schedule_date: str = ""
+    source: str = "MLB StatsAPI"  # which feed served the most recent batch
+    fallback_used: bool = False
+    per_game_errors: int = 0
 
 
 class MLBLiveHRFeed:
@@ -637,10 +676,21 @@ class MLBLiveHRFeed:
     def _get_json(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if requests is None:
             raise RuntimeError("requests is not installed")
-        r = requests.get(url, params=params or {}, timeout=_HTTP_TIMEOUT,
-                         headers={"User-Agent": "live-hr-tracker/1.0"})
-        r.raise_for_status()
-        return r.json() or {}
+        last_exc: Exception | None = None
+        for attempt in range(_HTTP_MAX_RETRIES + 1):
+            try:
+                r = requests.get(
+                    url, params=params or {}, timeout=_HTTP_TIMEOUT,
+                    headers={"User-Agent": "live-hr-tracker/1.0"},
+                )
+                r.raise_for_status()
+                return r.json() or {}
+            except Exception as e:
+                last_exc = e
+                if attempt < _HTTP_MAX_RETRIES:
+                    time.sleep(0.4 * (attempt + 1))
+        assert last_exc is not None
+        raise last_exc
 
     # ---- Schedule ----
     def fetch_schedule(self) -> list[dict[str, Any]]:
@@ -694,8 +744,9 @@ class MLBLiveHRFeed:
                      play: dict[str, Any],
                      away_abbr: str, home_abbr: str) -> dict[str, Any] | None:
         result = play.get("result") or {}
-        ev = (result.get("eventType") or result.get("event") or "").lower()
-        if ev not in ("home_run", "home run"):
+        if not _is_hr_event(
+            result.get("eventType"), result.get("event"), result.get("description"),
+        ):
             return None
         matchup = play.get("matchup") or {}
         about = play.get("about") or {}
@@ -741,18 +792,31 @@ class MLBLiveHRFeed:
     # ---- Public ----
     def fetch_new_events(self, seen_ids: set[str]) -> list[dict[str, Any]]:
         """Pull all completed HR plays for today's slate; skip any whose
-        event_id is already in ``seen_ids``."""
+        event_id is already in ``seen_ids``.
+
+        Uses MLB StatsAPI as the primary source. If the schedule call itself
+        fails (network, outage, rate-limit) we fall back to ESPN's public
+        scoreboard so the page keeps serving today's HRs.
+        """
         out: list[dict[str, Any]] = []
         self.status.last_checked = time.time()
+        self.status.per_game_errors = 0
         try:
             games = self.fetch_schedule()
         except Exception as e:
-            self.status.last_error = f"schedule fetch failed: {e}"
-            return out
-        else:
-            self.status.last_error = ""
+            self.status.last_error = f"StatsAPI schedule failed: {e}"
+            # Try ESPN fallback for the whole slate.
+            espn_out = _fetch_espn_hr_events(self.date_iso, seen_ids, self.status)
+            if espn_out:
+                self.status.source = "ESPN MLB (fallback)"
+                self.status.fallback_used = True
+            return espn_out
+        self.status.last_error = ""
+        self.status.source = "MLB StatsAPI"
+        self.status.fallback_used = False
         self.status.games_scanned = len(games)
         live = final_n = preview_n = 0
+        first_game_err: str = ""
         for g in games:
             gpk = g.get("gamePk")
             if not gpk:
@@ -779,8 +843,12 @@ class MLBLiveHRFeed:
             try:
                 feed = self.fetch_game_feed(int(gpk))
             except Exception as e:
-                # one game failing should not poison the slate
-                self.status.last_error = f"game {gpk} feed failed: {e}"
+                # one game failing should not poison the slate — keep the
+                # first error so the user can see something went wrong
+                # without overwriting it on every subsequent game.
+                self.status.per_game_errors += 1
+                if not first_game_err:
+                    first_game_err = f"game {gpk} feed failed: {e}"
                 continue
             plays = ((feed.get("liveData") or {}).get("plays") or {}).get("allPlays") or []
             for play in plays:
@@ -793,6 +861,8 @@ class MLBLiveHRFeed:
         self.status.games_live = live
         self.status.games_final = final_n
         self.status.games_preview = preview_n
+        if first_game_err and not self.status.last_error:
+            self.status.last_error = first_game_err
         # Note: hrs_today is incremented by the renderer once the events are
         # ingested — we don't double-count here.
         return out
@@ -855,6 +925,140 @@ def _enrich_event(ev: dict[str, Any]) -> dict[str, Any]:
         if stats.get(k) is not None and ev.get(k) is None:
             ev[k] = stats[k]
     return ev
+
+
+def _fetch_espn_hr_events(date_iso: str, seen_ids: set[str],
+                          status: FeedStatus) -> list[dict[str, Any]]:
+    """Public-API fallback when MLB StatsAPI is unavailable.
+
+    Pulls today's slate from ESPN's MLB scoreboard, then per-event summary,
+    and extracts plays whose ``type.text == "Home Run"``. Returns events in
+    the same dict-shape as the StatsAPI path so callers do not branch.
+    """
+    if requests is None:
+        return []
+    out: list[dict[str, Any]] = []
+    # ESPN expects YYYYMMDD with no dashes
+    date_compact = date_iso.replace("-", "")
+    try:
+        r = requests.get(
+            _ESPN_SCOREBOARD, params={"dates": date_compact},
+            timeout=_HTTP_TIMEOUT,
+            headers={"User-Agent": "live-hr-tracker/1.0"},
+        )
+        r.raise_for_status()
+        sb = r.json() or {}
+    except Exception as e:
+        status.last_error = f"{status.last_error or ''} | ESPN scoreboard failed: {e}".strip(" |")
+        return out
+    events = sb.get("events", []) or []
+    status.games_scanned = len(events)
+    live = final_n = preview_n = 0
+    for game in events:
+        gid = game.get("id")
+        if not gid:
+            continue
+        comp = ((game.get("competitions") or [{}])[0]) or {}
+        state = (((game.get("status") or {}).get("type") or {}).get("state") or "").lower()
+        if state == "in":
+            live += 1
+        elif state == "post":
+            final_n += 1
+        elif state == "pre":
+            preview_n += 1
+            continue
+        # ESPN home/away team abbreviations
+        comps = comp.get("competitors") or []
+        away_abbr = home_abbr = ""
+        for c in comps:
+            ab = ((c.get("team") or {}).get("abbreviation") or "").upper()
+            ab = _ABBR_ALIASES.get(ab, ab)
+            if c.get("homeAway") == "home":
+                home_abbr = ab
+            else:
+                away_abbr = ab
+        try:
+            sr = requests.get(
+                _ESPN_SUMMARY, params={"event": gid},
+                timeout=_HTTP_TIMEOUT,
+                headers={"User-Agent": "live-hr-tracker/1.0"},
+            )
+            sr.raise_for_status()
+            summary = sr.json() or {}
+        except Exception:
+            status.per_game_errors += 1
+            continue
+        plays = summary.get("plays") or []
+        # ESPN emits one "Home Run" type play per HR + a follow-up "Play Result"
+        # with the descriptive text/distance. We pair them by adjacent index.
+        for i, p in enumerate(plays):
+            ptype = ((p.get("type") or {}).get("text") or "").lower()
+            if ptype != "home run":
+                continue
+            # Find the next "Play Result" for description.
+            description = ""
+            for j in range(i + 1, min(i + 4, len(plays))):
+                pj = plays[j]
+                if ((pj.get("type") or {}).get("text") or "").lower() == "play result":
+                    description = pj.get("text") or ""
+                    break
+            participants = p.get("participants") or []
+            batter_name = ""
+            batter_id = None
+            for part in participants:
+                if (part.get("type") or "").lower() == "batter":
+                    ath = part.get("athlete") or {}
+                    batter_name = ath.get("displayName") or ath.get("shortName") or ""
+                    batter_id = ath.get("id")
+                    break
+            # If batter not in participants, fall back to parsing "X homered" from description.
+            if not batter_name and description:
+                # crude split: "Smith homered to ..." → "Smith"
+                first = description.split(" homered", 1)[0].split(" homers", 1)[0]
+                batter_name = first.strip()
+            # Period / inning
+            period = p.get("period") or {}
+            half = (p.get("periodType") or "").lower()
+            half_short = "T" if "top" in half else ("B" if "bottom" in half else "")
+            inning_num = period.get("number") or 0
+            inning_tag = f"{half_short}{inning_num}" if inning_num else ""
+            # Distance from description "(421 feet)"
+            distance: int | None = None
+            if "(" in description and "feet" in description:
+                try:
+                    distance = int(
+                        description.rsplit("(", 1)[1].split(" feet", 1)[0].strip()
+                    )
+                except Exception:
+                    distance = None
+            batter_team = away_abbr if half_short == "T" else home_abbr
+            opp_team = home_abbr if half_short == "T" else away_abbr
+            event_id = f"espn-{gid}-{p.get('id') or i}"
+            if event_id in seen_ids:
+                continue
+            matchup_parts = []
+            if batter_team and opp_team:
+                matchup_parts.append(f"{batter_team} vs {opp_team}")
+            if inning_tag:
+                matchup_parts.append(inning_tag)
+            out.append({
+                "event_id": event_id,
+                "name": batter_name or "Unknown",
+                "team": batter_team,
+                "jersey": "",
+                "player_id": batter_id,
+                "rbi": 1,  # ESPN doesn't expose RBI per-play cleanly; default 1
+                "exit_velo": None,
+                "distance": distance,
+                "matchup": " · ".join(matchup_parts) or batter_team,
+                "timestamp": p.get("wallclock") or datetime.now(timezone.utc).isoformat(),
+                "season_hr": None, "ops": None, "iso": None, "barrel_pct": None,
+                "_batter_id": batter_id,
+            })
+    status.games_live = live
+    status.games_final = final_n
+    status.games_preview = preview_n
+    return out
 
 
 def make_mlb_fetcher(
@@ -1025,8 +1229,8 @@ def render_live_hr_tracker(
     inject synthetic events for visual QA.
     """
     s = _ensure_state()
-    st.markdown('<div class="lhrt-wrap">', unsafe_allow_html=True)
     st.markdown(_PAGE_CSS, unsafe_allow_html=True)
+    st.markdown('<div class="lhrt-wrap">', unsafe_allow_html=True)
 
     # Build (or reuse) the real MLB fetcher. We keep it on session_state so
     # the same FeedStatus instance survives across reruns.
@@ -1070,11 +1274,14 @@ def render_live_hr_tracker(
             _ensure_state()
             st.rerun()
 
-    # Dev/demo toggle is tucked under an expander so it never fires by accident.
+    # Dev/demo toggle is tucked under an expander, collapsed by default so it
+    # never fires by accident. ``demo_mode`` is read after the expander closes
+    # via session_state so the variable is always defined regardless of
+    # whether the user has expanded the panel this rerun.
     with st.expander("🧪 Dev / demo controls", expanded=False):
         d1, d2 = st.columns([1, 1])
         with d1:
-            demo_mode = st.toggle(
+            st.toggle(
                 "Demo mode (synthetic HR events)",
                 value=False,
                 help="Synthesize fake HRs every poll. Use only for visual QA.",
@@ -1090,6 +1297,32 @@ def render_live_hr_tracker(
                 s["lhrt_last_banner"] = (
                     f"🔥 {ev.name} — {_hr_type(ev.rbi)} ACTIVATED 🔥"
                 )
+    demo_mode = bool(s.get("lhrt_demo_toggle", False))
+
+    # ---- Auto-refresh: must NEVER use time.sleep() + st.rerun() because that
+    # blocks the script execution and freezes the page after the first run.
+    # Instead, we use streamlit-autorefresh (a tiny JS component that
+    # triggers a rerun via Streamlit's component message bus) if available,
+    # else a meta-refresh HTML component fallback that reloads the iframe at
+    # the chosen cadence.
+    if auto_refresh:
+        if st_autorefresh is not None:
+            st_autorefresh(
+                interval=int(interval) * 1000,
+                key=f"lhrt_autorefresh_{int(interval)}",
+            )
+        else:
+            # Fallback: HTML/JS meta-refresh inside a 0-height component.
+            # Uses window.parent.location to reload the Streamlit page.
+            st.components.v1.html(
+                f"""<script>
+                setTimeout(function() {{
+                  try {{ window.parent.location.reload(); }}
+                  catch(e) {{ window.location.reload(); }}
+                }}, {int(interval) * 1000});
+                </script>""",
+                height=0,
+            )
 
     # ---- Poll new events ----
     now = time.time()
@@ -1128,6 +1361,9 @@ def render_live_hr_tracker(
     status_bits = []
     if demo_mode:
         status_bits.append("🧪 Demo mode")
+    else:
+        src_icon = "📡" if not status.fallback_used else "🛟"
+        status_bits.append(f"{src_icon} {status.source or 'MLB StatsAPI'}")
     status_bits.append(f"📅 {status.schedule_date or _today_iso()}")
     status_bits.append(
         f"🎮 {status.games_scanned} games "
@@ -1136,6 +1372,13 @@ def render_live_hr_tracker(
     )
     status_bits.append(f"💥 {s['lhrt_today']} HR today")
     status_bits.append(f"🕒 Checked {_format_relative(status.last_checked)}")
+    if auto_refresh:
+        next_in = max(0, int(interval) - int(time.time() - s["lhrt_last_poll"]))
+        status_bits.append(f"⏱️ Auto-refresh every {int(interval)}s (next in ~{next_in}s)")
+    else:
+        status_bits.append("⏸️ Auto-refresh OFF")
+    if status.per_game_errors:
+        status_bits.append(f"⚠️ {status.per_game_errors} game feed errors")
     status_html = (
         '<div style="display:flex; flex-wrap:wrap; gap:8px 14px; '
         'background:rgba(15,23,42,.55); border:1px solid #312e81; '
@@ -1259,7 +1502,3 @@ render_live_hr_tracker(fetcher=my_fetcher)
             """
         )
 
-    # ---- Schedule the next rerun for auto-refresh ----
-    if auto_refresh:
-        time.sleep(float(interval))
-        st.rerun()

@@ -7269,6 +7269,7 @@ _TOP_VIEW_OPTIONS = [
     "🌬️ Ballpark Weather",
     "🥎 AI 1+ Hits Parlay",
     "🏟️ Live HR Tracker",
+    "👑 MRBETS850 HOMERUN PICKS OF DAY",
 ]
 
 st.markdown(
@@ -11673,6 +11674,21 @@ if _view == "🏟️ Live HR Tracker":
         _render_lhrt()
     except Exception as _lhrt_err:
         st.error(f"Live HR Tracker failed to load: {_lhrt_err}")
+    st.stop()
+
+
+# ============== MRBETS850 HOMERUN PICKS OF DAY view ==============
+# Developer-managed daily Top 25 homerun picks. Public users see the
+# logo + ranked player cards (stats sourced from the same batters_df the
+# rest of the app uses). Developer unlock is gated by a PIN configured
+# via st.secrets / env (MRBETS850_ADMIN_PIN or MLB_EDGE_ADMIN_PIN);
+# without unlock no editing controls render. See mrbets850_hr_picks.py.
+if _view == "👑 MRBETS850 HOMERUN PICKS OF DAY":
+    try:
+        from mrbets850_hr_picks import render_mrbets850_hr_picks as _render_mrbets850
+        _render_mrbets850(batters_df)
+    except Exception as _mrbets_err:
+        st.error(f"MRBETS850 Homerun Picks tab failed to load: {_mrbets_err}")
     st.stop()
 
 

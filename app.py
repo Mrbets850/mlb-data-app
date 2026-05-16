@@ -7407,8 +7407,126 @@ def _build_top_tab_href(idx: int) -> str:
             _parts.append(f"{_k}={_v}")
     return "?" + "&".join(_parts)
 
+# ===========================================================================
+# 👑 MRBETS850 HOMERUN PICKS — top-of-page hero CTA
+# Promoted out of the Apps & Generators grid into a bold, color-schemed,
+# mobile-first call-to-action that is the first thing users see when the
+# app opens. Clicking the CTA selects the same "👑 MRBETS850 HOMERUN PICKS
+# OF DAY" view via the existing ?top_view=<idx> deep-link handler, so all
+# underlying navigation/data logic in mrbets850_hr_picks.py is unchanged.
+# ===========================================================================
+_MRBETS_OPTION = "👑 MRBETS850 HOMERUN PICKS OF DAY"
+try:
+    _mrbets_idx = _TOP_VIEW_OPTIONS.index(_MRBETS_OPTION)
+except ValueError:
+    _mrbets_idx = None
+
+if _mrbets_idx is not None:
+    _mrbets_logo_html = (
+        f'<img src="{LOGO_URI}" alt="MRBETS850" '
+        'style="width:64px;height:64px;border-radius:14px;object-fit:cover;'
+        'border:2px solid #facc15;box-shadow:0 2px 8px rgba(0,0,0,.35);'
+        'flex:0 0 auto;background:#0b0420;" />'
+        if LOGO_URI else
+        '<div style="width:64px;height:64px;border-radius:14px;background:#facc15;'
+        'color:#3b1f6b;font-size:2rem;font-weight:900;display:flex;align-items:center;'
+        'justify-content:center;flex:0 0 auto;border:2px solid #facc15;'
+        'box-shadow:0 2px 8px rgba(0,0,0,.35);">👑</div>'
+    )
+    st.markdown(
+        "<style>"
+        ".mrbets-hero-cta { display:block; text-decoration:none !important; "
+        "  margin: 2px 0 18px 0; padding: 18px 18px; "
+        "  background: linear-gradient(120deg, #14062e 0%, #3b1f6b 45%, #6b21a8 100%); "
+        "  border: 3px solid #facc15; border-radius: 20px; "
+        "  box-shadow: 0 8px 28px rgba(20,5,50,.55), "
+        "    inset 0 1px 0 rgba(250,204,21,.35), 0 0 0 4px rgba(250,204,21,.18); "
+        "  position: relative; overflow: hidden; "
+        "  animation: mrbetsGlow 2.6s ease-in-out infinite alternate; }"
+        ".mrbets-hero-cta:hover { transform: translateY(-1px); "
+        "  box-shadow: 0 12px 34px rgba(20,5,50,.65), "
+        "    inset 0 1px 0 rgba(250,204,21,.5), 0 0 0 5px rgba(250,204,21,.28); }"
+        "@keyframes mrbetsGlow { "
+        "  from { box-shadow: 0 8px 28px rgba(20,5,50,.55), "
+        "    inset 0 1px 0 rgba(250,204,21,.35), 0 0 0 4px rgba(250,204,21,.18); } "
+        "  to   { box-shadow: 0 8px 30px rgba(20,5,50,.65), "
+        "    inset 0 1px 0 rgba(250,204,21,.55), 0 0 0 5px rgba(250,204,21,.38); } }"
+        ".mrbets-hero-inner { display:flex; align-items:center; gap:16px; "
+        "  position:relative; z-index:1; }"
+        ".mrbets-hero-text { flex:1 1 auto; min-width:0; }"
+        ".mrbets-hero-eyebrow { font-size:.74rem; font-weight:900; "
+        "  letter-spacing:.18em; text-transform:uppercase; color:#facc15; "
+        "  text-shadow: 0 1px 2px rgba(0,0,0,.5); margin-bottom: 4px; }"
+        ".mrbets-hero-title { font-size:1.55rem; font-weight:900; color:#ffffff; "
+        "  line-height:1.1; letter-spacing:.01em; "
+        "  text-shadow: 0 2px 6px rgba(0,0,0,.5); margin: 0; }"
+        ".mrbets-hero-title .crown { color:#facc15; "
+        "  text-shadow: 0 0 8px rgba(250,204,21,.55); }"
+        ".mrbets-hero-title .accent { color:#facc15; }"
+        ".mrbets-hero-sub { color:#e9d5ff; font-size:.92rem; font-weight:600; "
+        "  margin-top:6px; line-height:1.3; }"
+        ".mrbets-hero-cta-btn { display:inline-flex; align-items:center; gap:8px; "
+        "  margin-top:12px; padding:10px 18px; border-radius:999px; "
+        "  background: linear-gradient(180deg, #facc15 0%, #f59e0b 100%); "
+        "  color:#3b1f6b !important; font-weight:900; font-size:.95rem; "
+        "  letter-spacing:.04em; text-transform:uppercase; "
+        "  box-shadow: 0 4px 12px rgba(245,158,11,.45), "
+        "    inset 0 1px 0 rgba(255,255,255,.6); "
+        "  border: 2px solid #fde68a; }"
+        ".mrbets-hero-cta-btn .arrow { transition: transform .18s ease; }"
+        ".mrbets-hero-cta:hover .mrbets-hero-cta-btn .arrow { "
+        "  transform: translateX(3px); }"
+        ".mrbets-hero-sparkle { position:absolute; top:-40%; right:-10%; "
+        "  width:55%; height:180%; pointer-events:none; "
+        "  background: radial-gradient(closest-side, rgba(250,204,21,.22) 0%, "
+        "    rgba(250,204,21,0) 70%); transform: rotate(18deg); z-index:0; }"
+        "@media (max-width: 640px) { "
+        "  .mrbets-hero-cta { padding: 16px 14px; border-radius:18px; "
+        "    border-width:2px; margin-bottom: 14px; } "
+        "  .mrbets-hero-inner { gap:12px; } "
+        "  .mrbets-hero-title { font-size:1.22rem; } "
+        "  .mrbets-hero-sub { font-size:.84rem; } "
+        "  .mrbets-hero-cta-btn { padding:9px 14px; font-size:.86rem; "
+        "    width:100%; justify-content:center; } "
+        "}"
+        "@media (max-width: 380px) { "
+        "  .mrbets-hero-title { font-size:1.06rem; } "
+        "  .mrbets-hero-eyebrow { font-size:.68rem; letter-spacing:.14em; } "
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    _mrbets_href = _build_top_tab_href(_mrbets_idx)
+    st.markdown(
+        f'<a class="mrbets-hero-cta" href="{_mrbets_href}" target="_self">'
+        '<div class="mrbets-hero-sparkle"></div>'
+        '<div class="mrbets-hero-inner">'
+        f'{_mrbets_logo_html}'
+        '<div class="mrbets-hero-text">'
+        '<div class="mrbets-hero-eyebrow">⭐ Today\'s Premium Picks</div>'
+        '<div class="mrbets-hero-title">'
+        '<span class="crown">👑</span> MRBETS850 '
+        '<span class="accent">HOMERUN PICKS</span> OF THE DAY'
+        '</div>'
+        '<div class="mrbets-hero-sub">'
+        'Hand-picked Top 25 home-run plays for tonight\'s slate — '
+        'ranked, stats-backed, updated daily.'
+        '</div>'
+        '<span class="mrbets-hero-cta-btn">View Today\'s Picks '
+        '<span class="arrow">→</span></span>'
+        '</div>'
+        '</div>'
+        '</a>',
+        unsafe_allow_html=True,
+    )
+
+# Apps & Generators pill grid — the MRBETS850 entry is intentionally excluded
+# from this list because it has been promoted to the hero CTA above. Keeping
+# it in _TOP_VIEW_OPTIONS preserves the deep-link handler + view-render logic.
 _pills_html = []
 for _i, _opt in enumerate(_TOP_VIEW_OPTIONS):
+    if _opt == _MRBETS_OPTION:
+        continue
     _active = " active" if _opt == _view else ""
     _href = _build_top_tab_href(_i)
     _pills_html.append(

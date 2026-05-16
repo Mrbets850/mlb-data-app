@@ -176,14 +176,18 @@ def _brand_logo_data_uri() -> str:
 # ---------------------------------------------------------------------------
 _POWER_STAT_LABELS: list[tuple[str, str, str]] = [
     # (display label, batters_df column, format spec)
-    ("ISO",        "ISO",        "{:.3f}"),
-    ("EV",         "EV",         "{:.1f} mph"),
-    ("Barrel %",   "Barrel%",    "{:.1f}%"),
-    ("Hard-Hit %", "HardHit%",   "{:.1f}%"),
-    ("FB %",       "FB%",        "{:.1f}%"),
-    ("Pull %",     "Pull%",      "{:.1f}%"),
-    ("HR",         "HR",         "{:.0f}"),
-    ("xwOBA",      "xwOBA",      "{:.3f}"),
+    # Labels kept short — they render inside compact stat chips in the
+    # square tile layout, so anything wider than ~7 characters wraps and
+    # blows the card height up. "Barrel%"/"HardHit%"/"FB%"/"Pull%" match
+    # the Savant column names directly so they read at a glance.
+    ("ISO",     "ISO",      "{:.3f}"),
+    ("EV",      "EV",       "{:.1f}"),
+    ("Barrel%", "Barrel%",  "{:.1f}%"),
+    ("HardHit", "HardHit%", "{:.1f}%"),
+    ("FB%",     "FB%",      "{:.1f}%"),
+    ("Pull%",   "Pull%",    "{:.1f}%"),
+    ("HR",      "HR",       "{:.0f}"),
+    ("xwOBA",   "xwOBA",    "{:.3f}"),
 ]
 
 
@@ -255,7 +259,7 @@ def _build_stat_grid(row: pd.Series | None) -> list[tuple[str, str]]:
             v = None
         out.append((label, _fmt(v, fmt)))
     # Pull Air% is derived (matches app.py PullAir% definition).
-    out.insert(5, ("Pull Air", _compute_pull_air(row)))
+    out.insert(5, ("PullAir", _compute_pull_air(row)))
     return out
 
 
@@ -370,81 +374,106 @@ def _inject_css() -> None:
     font-size: 1rem; color: #facc15; font-weight: 800;
 }
 
-/* ---- Cards ---- */
+/* ---- Cards (compact square tiles) ----
+   The grid uses small min-width tiles so 25 picks tile densely instead of
+   forcing one-card-per-row on mobile. Each card is a self-contained
+   block: rank chip + headshot + name on the top row, a 2-col stat chip
+   grid below. No element should stretch a tile to look like a list row. */
 .mrbets850-hr-wrap .mrbets850-card-grid {
-    display: grid; gap: 12px; margin-top: 14px;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    display: grid; gap: 10px; margin-top: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 }
 .mrbets850-hr-wrap .mrbets850-card {
-    position: relative; padding: 14px 14px 12px 14px;
+    position: relative; padding: 10px 10px 10px 10px;
     border-radius: 14px;
     border: 1.5px solid var(--mrb-card-border);
     background: var(--mrb-card-bg);
     box-shadow: var(--mrb-card-shadow);
     color: var(--mrb-text-strong);
+    overflow: hidden;
+    display: flex; flex-direction: column;
 }
-.mrbets850-hr-wrap .mrbets850-card .rank-badge {
-    position: absolute; top: -10px; left: -10px;
-    width: 36px; height: 36px; border-radius: 50%;
-    background: linear-gradient(135deg, #facc15, #b45309);
-    color: #14062e; font-weight: 900; font-size: 1rem;
-    display: flex; align-items: center; justify-content: center;
-    border: 2px solid #14062e;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.35);
-}
+/* The header row keeps the rank pill, headshot, and name on one line so the
+   card stays roughly square — never the tall stacked-text shape that
+   prompted this redesign. */
 .mrbets850-hr-wrap .mrbets850-card .head {
-    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px; min-width: 0;
 }
-.mrbets850-hr-wrap .mrbets850-card .head img.headshot {
-    width: 52px; height: 52px; border-radius: 50%;
+.mrbets850-hr-wrap .mrbets850-card .rank-pill {
+    flex: 0 0 auto;
+    min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px;
+    background: linear-gradient(135deg, #facc15, #b45309);
+    color: #14062e; font-weight: 900; font-size: 0.78rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1.5px solid #14062e;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.30);
+    line-height: 1;
+}
+.mrbets850-hr-wrap .mrbets850-card .head img.headshot,
+.mrbets850-hr-wrap .mrbets850-card .head .headshot {
+    width: 36px; height: 36px; flex: 0 0 36px;
+    border-radius: 50%;
     object-fit: cover; background: #1a0b3a;
     border: 2px solid var(--mrb-accent);
 }
 .mrbets850-hr-wrap .mrbets850-card .head .headshot.placeholder {
     display: flex; align-items: center; justify-content: center;
-    color: var(--mrb-accent); font-weight: 900;
+    color: var(--mrb-accent); font-weight: 900; font-size: 0.9rem;
+}
+.mrbets850-hr-wrap .mrbets850-card .head .id {
+    min-width: 0; flex: 1 1 auto;
 }
 .mrbets850-hr-wrap .mrbets850-card .head .name {
-    font-weight: 800; font-size: 1.02rem;
-    color: var(--mrb-text-strong); line-height: 1.2;
+    font-weight: 800; font-size: 0.9rem;
+    color: var(--mrb-text-strong); line-height: 1.15;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mrbets850-hr-wrap .mrbets850-card .head .team {
-    font-size: 0.78rem; color: var(--mrb-text-muted);
+    font-size: 0.7rem; color: var(--mrb-text-muted);
     font-weight: 700; letter-spacing: 0.04em;
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
 }
 .mrbets850-hr-wrap .mrbets850-card .confidence {
-    display: inline-block; margin-left: 6px;
-    padding: 1px 8px; border-radius: 999px;
-    font-size: 0.7rem; font-weight: 800;
+    display: inline-block;
+    padding: 1px 6px; border-radius: 999px;
+    font-size: 0.62rem; font-weight: 800;
     background: var(--mrb-accent); color: #14062e;
     border: 1px solid rgba(20,6,46,0.20);
+    line-height: 1.4;
 }
+/* Two columns by default so labels never wrap inside the chip — three
+   would shrink chip widths below the width of strings like "Barrel%". */
 .mrbets850-hr-wrap .mrbets850-card .stat-grid {
-    display: grid; grid-template-columns: repeat(3, minmax(0,1fr));
-    gap: 6px 8px; margin-top: 6px;
+    display: grid; grid-template-columns: repeat(2, minmax(0,1fr));
+    gap: 4px 6px; margin-top: 2px;
 }
 .mrbets850-hr-wrap .mrbets850-card .stat {
     background: var(--mrb-stat-bg);
-    padding: 6px 8px; border-radius: 8px;
+    padding: 4px 6px; border-radius: 7px;
     border: 1px solid var(--mrb-stat-border);
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 4px; min-width: 0;
 }
 .mrbets850-hr-wrap .mrbets850-card .stat .lbl {
-    font-size: 0.65rem; color: var(--mrb-text-muted);
-    font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    font-size: 0.6rem; color: var(--mrb-text-muted);
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    white-space: nowrap;
 }
 .mrbets850-hr-wrap .mrbets850-card .stat .val {
-    font-size: 0.95rem; font-weight: 800; color: var(--mrb-stat-value);
+    font-size: 0.78rem; font-weight: 800; color: var(--mrb-stat-value);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mrbets850-hr-wrap .mrbets850-card .stat .val.na {
     color: var(--mrb-text-subtle); font-weight: 700;
 }
 .mrbets850-hr-wrap .mrbets850-card .note {
-    margin-top: 8px; padding: 8px 10px;
+    margin-top: 6px; padding: 5px 7px;
     background: var(--mrb-note-bg);
     border-left: 3px solid var(--mrb-note-border);
-    border-radius: 8px;
+    border-radius: 6px;
     color: var(--mrb-note-text);
-    font-size: 0.85rem; line-height: 1.35; font-weight: 600;
+    font-size: 0.72rem; line-height: 1.25; font-weight: 600;
 }
 .mrbets850-hr-wrap .mrbets850-empty {
     padding: 18px; border-radius: 14px;
@@ -454,29 +483,44 @@ def _inject_css() -> None:
     text-align: center; font-weight: 700;
 }
 
-/* ---- Editor surfaces (visible only when developer is unlocked) ---- */
-.mrbets850-hr-wrap .mrbets850-editor-panel {
+/* ---- Editor surfaces (visible only when developer is unlocked) ----
+   Selectors here intentionally DO NOT require `.mrbets850-hr-wrap` as
+   an ancestor. The editor renders via interactive Streamlit widgets
+   that can't be wedged into a single HTML payload, so the wrapper
+   div isn't around them. Standalone selectors + inlined light/dark
+   colors keep the editor styled correctly regardless of DOM nesting. */
+.mrbets850-editor-panel {
     margin-top: 16px; padding: 14px 16px;
     border-radius: 16px;
-    background: var(--mrb-editor-bg);
-    border: 1.5px solid var(--mrb-editor-border);
-    color: var(--mrb-editor-text);
+    background: linear-gradient(180deg, #faf8ff 0%, #f3eeff 100%);
+    border: 1.5px solid rgba(124,58,237,0.25);
+    color: #1a0b3a;
 }
-.mrbets850-hr-wrap .mrbets850-editor-title {
-    color: var(--mrb-violet); font-weight: 900; font-size: 1.05rem;
+.mrbets850-editor-title {
+    color: #7c3aed; font-weight: 900; font-size: 1.05rem;
     letter-spacing: 0.01em; margin: 0 0 4px 0;
 }
-@media (prefers-color-scheme: dark) {
-    .mrbets850-hr-wrap .mrbets850-editor-title { color: #facc15; }
+.mrbets850-editor-sub {
+    color: #4c1d95; font-weight: 600; font-size: 0.85rem;
 }
-.mrbets850-hr-wrap .mrbets850-editor-sub {
-    color: var(--mrb-editor-muted); font-weight: 600; font-size: 0.85rem;
-}
-.mrbets850-hr-wrap .mrbets850-row-team {
-    color: var(--mrb-editor-muted); font-size: 0.85rem; font-weight: 700;
+.mrbets850-row-team {
+    color: #4c1d95; font-size: 0.85rem; font-weight: 700;
     letter-spacing: 0.04em;
 }
+@media (prefers-color-scheme: dark) {
+    .mrbets850-editor-panel {
+        background: linear-gradient(180deg, #14062e 0%, #1f0c44 100%);
+        border-color: rgba(250,204,21,0.35);
+        color: #fafafa;
+    }
+    .mrbets850-editor-title { color: #facc15; }
+    .mrbets850-editor-sub,
+    .mrbets850-row-team { color: #fde68a; }
+}
 
+/* Mobile portrait — keep 2 columns of compact tiles so 25 picks aren't a
+   long vertical scroll. Below ~360px we fall back to 1 column so chip
+   labels still fit without truncation. */
 @media (max-width: 640px) {
     .mrbets850-hr-wrap .mrbets850-hr-header {
         flex-wrap: wrap; padding: 12px; gap: 10px;
@@ -488,6 +532,21 @@ def _inject_css() -> None:
         width: 100%; text-align: left;
         margin-left: 0; font-size: 0.78rem;
     }
+    .mrbets850-hr-wrap .mrbets850-card-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+    .mrbets850-hr-wrap .mrbets850-card { padding: 8px; border-radius: 12px; }
+    .mrbets850-hr-wrap .mrbets850-card .head img.headshot,
+    .mrbets850-hr-wrap .mrbets850-card .head .headshot {
+        width: 32px; height: 32px; flex-basis: 32px;
+    }
+    .mrbets850-hr-wrap .mrbets850-card .head .name { font-size: 0.82rem; }
+    .mrbets850-hr-wrap .mrbets850-card .stat { padding: 3px 5px; }
+    .mrbets850-hr-wrap .mrbets850-card .stat .lbl { font-size: 0.55rem; }
+    .mrbets850-hr-wrap .mrbets850-card .stat .val { font-size: 0.72rem; }
+}
+@media (max-width: 360px) {
     .mrbets850-hr-wrap .mrbets850-card-grid { grid-template-columns: 1fr; }
 }
 </style>
@@ -506,7 +565,7 @@ def _format_last_updated(iso: str | None) -> str:
         return str(iso)
 
 
-def _render_header(last_updated: str | None, count: int) -> None:
+def _build_header_html(last_updated: str | None, count: int) -> str:
     brand_uri = _brand_logo_data_uri()
     logo_uri = _logo_data_uri()
     if brand_uri:
@@ -531,7 +590,7 @@ def _render_header(last_updated: str | None, count: int) -> None:
             'style="display:flex;align-items:center;justify-content:center;'
             'font-size:1.6rem;color:#facc15;">👑</div>'
         )
-    st.markdown(
+    return (
         '<div class="mrbets850-hr-header">'
         + brand_html
         + mrbets_html
@@ -546,8 +605,7 @@ def _render_header(last_updated: str | None, count: int) -> None:
         f'<div><span class="big">{count}/{MAX_PICKS}</span> picks</div>'
         f'<div>🕒 {_format_last_updated(last_updated)}</div>'
         '</div>'
-        '</div>',
-        unsafe_allow_html=True,
+        '</div>'
     )
 
 
@@ -607,10 +665,10 @@ def _render_card(pick: dict[str, Any], batters_df: pd.DataFrame | None) -> str:
 
     return (
         '<div class="mrbets850-card">'
-        f'<div class="rank-badge">#{rank}</div>'
         '<div class="head">'
+        f'<div class="rank-pill">#{rank}</div>'
         + head_html
-        + '<div>'
+        + '<div class="id">'
         f'<div class="name">{_html_escape(name)}</div>'
         + team_html
         + '</div></div>'
@@ -634,19 +692,36 @@ def _html_escape(s: Any) -> str:
     )
 
 
-def _render_public_cards(picks: list[dict[str, Any]], batters_df: pd.DataFrame | None) -> None:
+def _build_public_cards_html(picks: list[dict[str, Any]], batters_df: pd.DataFrame | None) -> str:
     if not picks:
-        st.markdown(
+        return (
             '<div class="mrbets850-empty">'
             "No homerun picks posted yet. Check back soon — MrBets850 posts the "
             "daily Top 25 once lineups settle."
-            '</div>',
-            unsafe_allow_html=True,
+            '</div>'
         )
-        return
     cards = [_render_card(p, batters_df) for p in picks]
+    return '<div class="mrbets850-card-grid">' + "".join(cards) + '</div>'
+
+
+def _render_public_block(
+    last_updated: str | None,
+    picks: list[dict[str, Any]],
+    batters_df: pd.DataFrame | None,
+) -> None:
+    # Emit header + cards inside a single wrapper in ONE st.markdown call.
+    # Splitting these across multiple calls lets Streamlit insert its own
+    # element-container divs between them, which breaks descendant CSS
+    # selectors like `.mrbets850-hr-wrap .mrbets850-card`. Keeping the
+    # whole block in one markdown call guarantees the cards are real
+    # descendants of the themed wrapper.
+    header_html = _build_header_html(last_updated, count=len(picks))
+    cards_html = _build_public_cards_html(picks, batters_df)
     st.markdown(
-        '<div class="mrbets850-card-grid">' + "".join(cards) + '</div>',
+        '<div class="mrbets850-hr-wrap">'
+        + header_html
+        + cards_html
+        + '</div>',
         unsafe_allow_html=True,
     )
 
@@ -951,18 +1026,16 @@ def render_mrbets850_hr_picks(batters_df: pd.DataFrame | None = None) -> None:
     logo + ranked player cards; the developer sees an additional editor once
     the PIN is entered."""
     _inject_css()
-    # Open a single wrapper so the CSS custom properties (--mrb-*) apply
-    # to the header, public cards, AND the editor surface — keeping the
-    # whole tab in a consistent MLB Edge theme and switching cleanly
-    # between light/dark via prefers-color-scheme.
-    st.markdown('<div class="mrbets850-hr-wrap">', unsafe_allow_html=True)
     state = load_picks()
     picks = state.get("picks", [])
 
-    _render_header(state.get("last_updated"), count=len(picks))
-    _render_public_cards(picks, batters_df)
+    # Public block: header + cards emitted as ONE HTML payload so the
+    # `.mrbets850-hr-wrap` ancestor genuinely contains the cards in the
+    # DOM. Splitting into multiple st.markdown calls lets Streamlit
+    # insert its own container divs between siblings and breaks the
+    # descendant CSS selectors that style the cards.
+    _render_public_block(state.get("last_updated"), picks, batters_df)
 
     _render_unlock_form()
     if _is_unlocked():
         _render_editor(state, batters_df)
-    st.markdown('</div>', unsafe_allow_html=True)

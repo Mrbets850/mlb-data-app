@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:30:59Z",
+  "last_updated": "2026-05-16T08:31:35Z",
   "picks": [
     {
       "rank": 1,
@@ -64,6 +64,14 @@
       "player_id": 682998,
       "note": "",
       "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 9,
+      "name": "Hunter Goodman",
+      "team": "",
+      "player_id": 696100,
+      "note": "",
+      "confidence": "💎 Strong"
     }
   ]
 }

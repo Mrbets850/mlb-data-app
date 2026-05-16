@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:34:29Z",
+  "last_updated": "2026-05-16T08:34:59Z",
   "picks": [
     {
       "rank": 1,
@@ -126,6 +126,14 @@
       "name": "Seiya Suzuki",
       "team": "",
       "player_id": 673548,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 17,
+      "name": "Sal Stewart",
+      "team": "",
+      "player_id": 701398,
       "note": "",
       "confidence": "💎 Strong"
     }

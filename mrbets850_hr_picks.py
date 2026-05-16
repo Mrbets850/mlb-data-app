@@ -16,8 +16,17 @@ from __future__ import annotations
 import base64
 import json
 import os
-from datetime import datetime
+import re
+import unicodedata
+import urllib.error
+import urllib.request
+from datetime import date, datetime, timezone
 from typing import Any
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # py<3.9 — Streamlit Cloud runs 3.10+, but stay safe.
+    ZoneInfo = None  # type: ignore[assignment]
 
 import pandas as pd
 import streamlit as st
@@ -46,14 +55,24 @@ MAX_PICKS = 25
 # Never hardcoded. If none configured, the editor stays locked.
 _ADMIN_PIN_KEYS = ("MRBETS850_ADMIN_PIN", "MLB_EDGE_ADMIN_PIN")
 
+# Remote persistence (GitHub Contents API). All keys optional — when no
+# token is present we silently fall back to local JSON only.
+_GH_TOKEN_KEYS = ("MRBETS850_GITHUB_TOKEN", "GITHUB_TOKEN")
+_GH_REPO_KEYS = ("MRBETS850_PICKS_REPO",)
+_GH_PATH_KEYS = ("MRBETS850_PICKS_PATH",)
+_GH_BRANCH_KEYS = ("MRBETS850_PICKS_BRANCH",)
+_DEFAULT_REPO = "Mrbets850/mlb-data-app"
+_DEFAULT_REMOTE_PATH = "data/mrbets850_hr_picks.json"
+_DEFAULT_BRANCH = "main"
+
 
 # ---------------------------------------------------------------------------
 # Secret resolution + auth gating
 # ---------------------------------------------------------------------------
-def _resolve_admin_pin() -> str:
-    """Pull the admin PIN from st.secrets first, then env. Empty string if
-    nothing is configured — the editor renders a locked notice in that case."""
-    for key in _ADMIN_PIN_KEYS:
+def _resolve_secret(keys: tuple[str, ...]) -> str:
+    """Pull a secret from st.secrets first, then env. Empty string if
+    nothing is configured."""
+    for key in keys:
         try:
             v = st.secrets.get(key) if hasattr(st.secrets, "get") else None
             if v:
@@ -66,15 +85,212 @@ def _resolve_admin_pin() -> str:
                 return str(v).strip()
         except Exception:
             pass
-    for key in _ADMIN_PIN_KEYS:
+    for key in keys:
         v = os.environ.get(key)
         if v:
             return str(v).strip()
     return ""
 
 
+def _resolve_admin_pin() -> str:
+    """Admin PIN — see _ADMIN_PIN_KEYS for lookup order."""
+    return _resolve_secret(_ADMIN_PIN_KEYS)
+
+
 def _is_unlocked() -> bool:
     return bool(st.session_state.get("_mrbets850_admin_unlocked", False))
+
+
+# ---------------------------------------------------------------------------
+# Central-time slate date helper. The live HR tracker uses America/Chicago to
+# define "today's slate" because UTC flips mid-evening Central. We mirror that
+# convention so HR-hit activation lines up with the same slate the tracker
+# shows. Overridable via ``MRBETS850_TODAY_OVERRIDE`` (YYYY-MM-DD) for dev.
+# ---------------------------------------------------------------------------
+_CENTRAL_TZ_NAME = "America/Chicago"
+
+
+def _today_central_date(now: datetime | None = None) -> date:
+    """Return today's date in America/Chicago. Honours the
+    ``MRBETS850_TODAY_OVERRIDE`` env var (or st.secrets key) when set, for
+    deterministic local testing."""
+    override = _resolve_secret(("MRBETS850_TODAY_OVERRIDE",))
+    if override:
+        try:
+            return datetime.strptime(override.strip(), "%Y-%m-%d").date()
+        except Exception:
+            pass
+    if now is None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if ZoneInfo is not None:
+        try:
+            return now.replace(tzinfo=timezone.utc).astimezone(
+                ZoneInfo(_CENTRAL_TZ_NAME)
+            ).date()
+        except Exception:
+            pass
+    # Coarse fallback when zoneinfo is missing (e.g. minimal docker image):
+    # apply a fixed -5h CDT offset for May–Oct, -6h CST otherwise. The MLB
+    # season runs mostly in DST so this is correct almost all the time.
+    from datetime import timedelta
+    offset = -5 if 3 <= now.month <= 10 else -6
+    return (now + timedelta(hours=offset)).date()
+
+
+# ---------------------------------------------------------------------------
+# Remote (GitHub Contents API) persistence backend. Stdlib-only so we don't
+# add a dependency. Returns rich status dicts the UI can surface.
+# ---------------------------------------------------------------------------
+def _remote_config() -> dict[str, str]:
+    return {
+        "token": _resolve_secret(_GH_TOKEN_KEYS),
+        "repo": _resolve_secret(_GH_REPO_KEYS) or _DEFAULT_REPO,
+        "path": _resolve_secret(_GH_PATH_KEYS) or _DEFAULT_REMOTE_PATH,
+        "branch": _resolve_secret(_GH_BRANCH_KEYS) or _DEFAULT_BRANCH,
+    }
+
+
+def _remote_enabled(cfg: dict[str, str] | None = None) -> bool:
+    cfg = cfg or _remote_config()
+    return bool(cfg.get("token") and cfg.get("repo") and cfg.get("path"))
+
+
+def _gh_request(url: str, *, token: str, method: str = "GET",
+                payload: dict[str, Any] | None = None,
+                timeout: float = 10.0) -> tuple[int, dict[str, Any] | None]:
+    """Minimal GitHub Contents API call. Returns (status_code, json|None)."""
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(url, data=body, method=method)
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Accept", "application/vnd.github+json")
+    req.add_header("X-GitHub-Api-Version", "2022-11-28")
+    req.add_header("User-Agent", "mrbets850-hr-picks/1.0")
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            if not raw:
+                return resp.status, None
+            return resp.status, json.loads(raw.decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            raw = e.read()
+            j = json.loads(raw.decode("utf-8")) if raw else None
+        except Exception:
+            j = None
+        return e.code, j
+    except Exception as e:  # network/timeout/decode failure
+        return 0, {"_exception": str(e)}
+
+
+def _gh_contents_url(repo: str, path: str) -> str:
+    # Repo / path are user-configured; build the URL with urllib quoting to
+    # avoid breaking on spaces or subdirectories.
+    from urllib.parse import quote
+    return f"https://api.github.com/repos/{repo}/contents/{quote(path)}"
+
+
+def _normalize_state(data: Any) -> dict[str, Any]:
+    """Validate + normalize an arbitrary blob into the picks schema. Caps to
+    MAX_PICKS and re-ranks 1..N. Never raises."""
+    if not isinstance(data, dict):
+        return _empty_state()
+    picks_in = data.get("picks", [])
+    if not isinstance(picks_in, list):
+        picks_in = []
+    clean: list[dict[str, Any]] = []
+    for p in picks_in[:MAX_PICKS]:
+        if not isinstance(p, dict):
+            continue
+        name = str(p.get("name", "")).strip()
+        if not name:
+            continue
+        clean.append({
+            "rank": int(p.get("rank") or 0) or (len(clean) + 1),
+            "name": name,
+            "team": str(p.get("team", "")).strip().upper(),
+            "player_id": p.get("player_id"),
+            "note": str(p.get("note", "")).strip(),
+            "confidence": str(p.get("confidence", "")).strip(),
+        })
+    clean.sort(key=lambda r: r["rank"])
+    for i, r in enumerate(clean, start=1):
+        r["rank"] = i
+    return {"last_updated": data.get("last_updated"), "picks": clean}
+
+
+def fetch_remote_picks(cfg: dict[str, str] | None = None
+                       ) -> tuple[dict[str, Any] | None, str | None, str]:
+    """Fetch picks JSON from GitHub. Returns (state|None, sha|None, message).
+    ``state`` is None when the file does not exist or the call failed."""
+    cfg = cfg or _remote_config()
+    if not _remote_enabled(cfg):
+        return None, None, "remote disabled"
+    url = _gh_contents_url(cfg["repo"], cfg["path"])
+    code, body = _gh_request(
+        f"{url}?ref={cfg['branch']}", token=cfg["token"], method="GET",
+    )
+    if code == 404:
+        return None, None, "remote file not found"
+    if code != 200 or not isinstance(body, dict):
+        return None, None, f"remote fetch failed (HTTP {code})"
+    raw_b64 = body.get("content") or ""
+    sha = body.get("sha")
+    try:
+        decoded = base64.b64decode(raw_b64).decode("utf-8")
+        data = json.loads(decoded) if decoded.strip() else {}
+    except Exception as e:
+        return None, sha, f"remote JSON parse failed: {e}"
+    return _normalize_state(data), sha, "ok"
+
+
+def push_remote_picks(state: dict[str, Any],
+                      *, sha: str | None,
+                      cfg: dict[str, str] | None = None,
+                      commit_message: str | None = None,
+                      ) -> tuple[bool, str | None, str]:
+    """Push picks JSON to GitHub. Returns (ok, new_sha, message)."""
+    cfg = cfg or _remote_config()
+    if not _remote_enabled(cfg):
+        return False, None, "remote disabled — no token configured"
+    state = _normalize_state(state)
+    state["last_updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    content_str = json.dumps(state, indent=2, ensure_ascii=False)
+    encoded = base64.b64encode(content_str.encode("utf-8")).decode("ascii")
+    payload: dict[str, Any] = {
+        "message": commit_message or
+        f"chore(mrbets850): update HR picks ({len(state['picks'])} picks)",
+        "content": encoded,
+        "branch": cfg["branch"],
+    }
+    if sha:
+        payload["sha"] = sha
+    url = _gh_contents_url(cfg["repo"], cfg["path"])
+    code, body = _gh_request(url, token=cfg["token"], method="PUT",
+                             payload=payload)
+    if code in (200, 201) and isinstance(body, dict):
+        new_sha = ((body.get("content") or {}) if isinstance(body.get("content"), dict)
+                   else {}).get("sha")
+        return True, new_sha, "ok"
+    msg = ""
+    if isinstance(body, dict):
+        msg = body.get("message") or body.get("_exception") or ""
+    return False, None, f"remote save failed (HTTP {code}) {msg}".strip()
+
+
+def _safe_remote_overwrite_allowed(remote_state: dict[str, Any] | None,
+                                   new_state: dict[str, Any]) -> bool:
+    """Guard rail: refuse to push an EMPTY board on top of a non-empty remote
+    unless the caller has explicitly opted in via session state. Prevents a
+    fresh-deploy local cache (which starts empty) from wiping good data."""
+    if remote_state is None:
+        return True
+    remote_picks = remote_state.get("picks") or []
+    new_picks = new_state.get("picks") or []
+    if remote_picks and not new_picks:
+        return bool(st.session_state.get("_mrbets850_allow_remote_clear", False))
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -92,56 +308,91 @@ def _empty_state() -> dict[str, Any]:
     return {"last_updated": None, "picks": []}
 
 
-def load_picks() -> dict[str, Any]:
-    """Read the picks file. Returns an empty state if missing/corrupt — never
-    raises, so the page always renders."""
+def _read_local_picks_file() -> dict[str, Any]:
+    """Read + normalize the local cache file. Never raises."""
     if not os.path.exists(PICKS_PATH):
         return _empty_state()
     try:
         with open(PICKS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return _empty_state()
-        picks = data.get("picks", [])
-        if not isinstance(picks, list):
-            picks = []
-        # Normalise + clamp to MAX_PICKS, re-rank 1..N in case of drift.
-        clean: list[dict[str, Any]] = []
-        for p in picks[:MAX_PICKS]:
-            if not isinstance(p, dict):
-                continue
-            name = str(p.get("name", "")).strip()
-            if not name:
-                continue
-            clean.append({
-                "rank": int(p.get("rank") or 0) or (len(clean) + 1),
-                "name": name,
-                "team": str(p.get("team", "")).strip().upper(),
-                "player_id": p.get("player_id"),
-                "note": str(p.get("note", "")).strip(),
-                "confidence": str(p.get("confidence", "")).strip(),
-            })
-        clean.sort(key=lambda r: r["rank"])
-        for i, r in enumerate(clean, start=1):
-            r["rank"] = i
-        return {
-            "last_updated": data.get("last_updated"),
-            "picks": clean,
-        }
+            return _normalize_state(json.load(f))
     except Exception:
         return _empty_state()
 
 
-def save_picks(state: dict[str, Any]) -> tuple[bool, str]:
-    """Write picks to disk. Returns (ok, message)."""
+def _write_local_picks_file(state: dict[str, Any]) -> tuple[bool, str]:
     try:
-        state = dict(state)
-        state["last_updated"] = datetime.now().isoformat(timespec="seconds")
         with open(PICKS_PATH, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
-        return True, "Saved."
+        return True, "local cache updated"
     except Exception as e:
-        return False, f"Save failed: {e}"
+        return False, f"local save failed: {e}"
+
+
+def load_picks() -> dict[str, Any]:
+    """Load picks. Prefers remote (GitHub) when configured; falls back to
+    local JSON otherwise. Never raises so the page always renders."""
+    cfg = _remote_config()
+    if _remote_enabled(cfg):
+        remote_state, sha, msg = fetch_remote_picks(cfg)
+        if remote_state is not None and remote_state.get("picks"):
+            # Refresh local cache so a future offline render still works.
+            _write_local_picks_file(remote_state)
+            st.session_state["_mrbets850_remote_sha"] = sha
+            st.session_state["_mrbets850_remote_status"] = (
+                f"connected · {len(remote_state['picks'])} picks · {msg}"
+            )
+            return remote_state
+        # Remote configured but empty/missing — fall back to local, and let
+        # the editor offer a migration when admin is unlocked.
+        st.session_state["_mrbets850_remote_sha"] = sha
+        st.session_state["_mrbets850_remote_status"] = (
+            f"connected · remote empty/missing ({msg})"
+        )
+        return _read_local_picks_file()
+    st.session_state["_mrbets850_remote_status"] = (
+        "local fallback only — no GitHub token configured"
+    )
+    return _read_local_picks_file()
+
+
+def save_picks(state: dict[str, Any]) -> tuple[bool, str]:
+    """Persist picks. Writes remote (GitHub) when configured AND the editor
+    is unlocked (so a public view can never trigger a remote write), and
+    always refreshes the local cache. Returns (ok, message)."""
+    state = _normalize_state(state)
+    state["last_updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    cfg = _remote_config()
+    remote_msg = ""
+    remote_ok = True  # only flips to False on an actual failed remote push
+
+    if _remote_enabled(cfg) and _is_unlocked():
+        # Re-check remote so the no-overwrite guard sees the latest state and
+        # we have a fresh sha. (GitHub PUT requires the previous sha when the
+        # file already exists.)
+        remote_state, sha, _ = fetch_remote_picks(cfg)
+        if not _safe_remote_overwrite_allowed(remote_state, state):
+            remote_ok = False
+            remote_msg = (
+                "remote save BLOCKED — refusing to overwrite a non-empty "
+                "remote board with an empty list. Tick 'Allow remote clear' "
+                "in Danger zone to override."
+            )
+        else:
+            ok, new_sha, msg = push_remote_picks(state, sha=sha, cfg=cfg)
+            if ok:
+                st.session_state["_mrbets850_remote_sha"] = new_sha or sha
+                remote_msg = "Saved to GitHub (permanent)."
+            else:
+                remote_ok = False
+                remote_msg = msg
+
+    ok_local, local_msg = _write_local_picks_file(state)
+    if not ok_local and not remote_ok:
+        return False, f"{remote_msg or 'save failed'}; {local_msg}"
+    if remote_msg:
+        return remote_ok, f"{remote_msg}" + (f"; {local_msg}" if ok_local else "")
+    return ok_local, local_msg if ok_local else f"Save failed: {local_msg}"
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +511,115 @@ def _build_stat_grid(row: pd.Series | None) -> list[tuple[str, str]]:
         out.append((label, _fmt(v, fmt)))
     # Pull Air% is derived (matches app.py PullAir% definition).
     out.insert(5, ("PullAir", _compute_pull_air(row)))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# HR-hit activation — pull today's HR events from live_hr_tracker and match
+# them against our picks. A pick is "cashed" when one of its identifying
+# fields lines up with a HR event for the Central-time slate date.
+# ---------------------------------------------------------------------------
+def _normalize_name(s: Any) -> str:
+    """Strip accents, lowercase, drop punctuation. ``José Ramírez`` →
+    ``jose ramirez``. Used to make name matching robust to apostrophes,
+    diacritics, and "Jr."/Sr. suffixes."""
+    if s is None:
+        return ""
+    s = str(s).strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[\.,'`]", "", s)
+    s = re.sub(r"\b(jr|sr|ii|iii|iv)\b", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _fetch_todays_hr_events_cached(date_iso: str) -> list[dict[str, Any]]:
+    """Pull all of today's HR plays from live_hr_tracker. Cached for 60s so
+    the picks page doesn't slam StatsAPI on every Streamlit rerun.
+
+    ``date_iso`` exists purely as a cache key — we still ask the tracker to
+    scan its own Central-date window, which already includes the UTC-adjacent
+    date when needed. Passing the date in keeps the cache scoped to "today."
+    """
+    try:
+        from live_hr_tracker import MLBLiveHRFeed
+    except Exception:
+        return []
+    try:
+        feed = MLBLiveHRFeed(date_iso=date_iso)
+        return feed.fetch_new_events(set())
+    except Exception:
+        return []
+
+
+def fetch_todays_hr_events(today: date | None = None) -> list[dict[str, Any]]:
+    """Public-facing wrapper around the cached fetch. Accepts a date override
+    so tests can pin the slate. Returns [] on any failure."""
+    d = today or _today_central_date()
+    try:
+        return _fetch_todays_hr_events_cached(d.strftime("%Y-%m-%d"))
+    except Exception:
+        return []
+
+
+def compute_hr_hits(picks: list[dict[str, Any]],
+                    events: list[dict[str, Any]] | None,
+                    ) -> dict[int, dict[str, Any]]:
+    """For each pick (keyed by rank), return how many HRs they've hit today
+    plus a representative event. Matching prefers MLB player_id, then falls
+    back to normalized name + team.
+
+    Returns: ``{rank: {"count": int, "events": [...], "first": event_dict}}``
+    """
+    if not picks or not events:
+        return {}
+    # Build lookup indices.
+    by_id: dict[int, list[dict[str, Any]]] = {}
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    by_name_team: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for ev in events:
+        pid = ev.get("player_id") or ev.get("_batter_id")
+        try:
+            pid_int = int(pid) if pid is not None else None
+        except (TypeError, ValueError):
+            pid_int = None
+        if pid_int:
+            by_id.setdefault(pid_int, []).append(ev)
+        nm = _normalize_name(ev.get("name"))
+        if nm:
+            by_name.setdefault(nm, []).append(ev)
+            team = str(ev.get("team") or "").strip().upper()
+            if team:
+                by_name_team.setdefault((nm, team), []).append(ev)
+
+    out: dict[int, dict[str, Any]] = {}
+    for p in picks:
+        try:
+            pid = int(p.get("player_id")) if p.get("player_id") is not None else None
+        except (TypeError, ValueError):
+            pid = None
+        matched: list[dict[str, Any]] = []
+        if pid and pid in by_id:
+            matched = by_id[pid]
+        else:
+            nm = _normalize_name(p.get("name"))
+            team = str(p.get("team") or "").strip().upper()
+            if nm and team and (nm, team) in by_name_team:
+                matched = by_name_team[(nm, team)]
+            elif nm and nm in by_name:
+                matched = by_name[nm]
+        if matched:
+            try:
+                rank_key = int(p.get("rank") or 0)
+            except (TypeError, ValueError):
+                rank_key = 0
+            out[rank_key] = {
+                "count": len(matched),
+                "events": matched,
+                "first": matched[0],
+            }
     return out
 
 
@@ -475,6 +835,56 @@ def _inject_css() -> None:
     color: var(--mrb-note-text);
     font-size: 0.72rem; line-height: 1.25; font-weight: 600;
 }
+/* ---- Cashed-card state ----
+   When the picked player has homered today, swap to a vivid green
+   gradient with a glowing border and stamp a HR-hit badge in the corner.
+   Stays readable in both themes — the badge text and border colour are
+   inlined rather than driven from --mrb-* so the success state pops even
+   inside the dark variant of the wrapper. */
+.mrbets850-hr-wrap .mrbets850-card.cashed {
+    background: linear-gradient(160deg, #052e1a 0%, #064e3b 55%, #047857 100%);
+    border-color: #22c55e;
+    box-shadow: 0 0 0 2px rgba(34,197,94,0.30),
+                0 6px 22px rgba(5,150,105,0.45);
+    color: #ecfdf5;
+}
+.mrbets850-hr-wrap .mrbets850-card.cashed .name,
+.mrbets850-hr-wrap .mrbets850-card.cashed .team,
+.mrbets850-hr-wrap .mrbets850-card.cashed .stat .lbl,
+.mrbets850-hr-wrap .mrbets850-card.cashed .stat .val,
+.mrbets850-hr-wrap .mrbets850-card.cashed .note {
+    color: #ecfdf5;
+}
+.mrbets850-hr-wrap .mrbets850-card.cashed .stat {
+    background: rgba(255,255,255,0.10);
+    border-color: rgba(187,247,208,0.45);
+}
+.mrbets850-hr-wrap .mrbets850-card.cashed .stat .val.na {
+    color: #bbf7d0;
+}
+.mrbets850-hr-wrap .mrbets850-card.cashed .note {
+    background: rgba(255,255,255,0.10);
+    border-left-color: #facc15;
+}
+.mrbets850-hr-wrap .mrbets850-card .cashed-badge {
+    position: absolute; top: 6px; right: 6px;
+    padding: 2px 6px; border-radius: 999px;
+    font-size: 0.62rem; font-weight: 900; letter-spacing: 0.04em;
+    background: linear-gradient(135deg, #facc15, #f59e0b);
+    color: #052e1a;
+    border: 1.5px solid #052e1a;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.40);
+    text-transform: uppercase;
+    line-height: 1.2;
+}
+/* HR-hits summary chip in the header. */
+.mrbets850-hr-wrap .mrbets850-hr-meta .hits-chip {
+    display: inline-block; margin-top: 4px;
+    padding: 2px 8px; border-radius: 999px;
+    background: rgba(34,197,94,0.20); color: #bbf7d0;
+    font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em;
+    border: 1px solid rgba(187,247,208,0.45);
+}
 .mrbets850-hr-wrap .mrbets850-empty {
     padding: 18px; border-radius: 14px;
     border: 1.5px dashed var(--mrb-empty-border);
@@ -565,7 +975,9 @@ def _format_last_updated(iso: str | None) -> str:
         return str(iso)
 
 
-def _build_header_html(last_updated: str | None, count: int) -> str:
+def _build_header_html(last_updated: str | None, count: int,
+                       hr_hits: int | None = None,
+                       hr_eligible: int | None = None) -> str:
     brand_uri = _brand_logo_data_uri()
     logo_uri = _logo_data_uri()
     if brand_uri:
@@ -590,6 +1002,11 @@ def _build_header_html(last_updated: str | None, count: int) -> str:
             'style="display:flex;align-items:center;justify-content:center;'
             'font-size:1.6rem;color:#facc15;">👑</div>'
         )
+    hits_chip = ""
+    if hr_hits is not None and hr_eligible is not None and hr_eligible > 0:
+        hits_chip = (
+            f'<div class="hits-chip">💣 HR hits: {hr_hits}/{hr_eligible}</div>'
+        )
     return (
         '<div class="mrbets850-hr-header">'
         + brand_html
@@ -604,7 +1021,8 @@ def _build_header_html(last_updated: str | None, count: int) -> str:
         '<div class="mrbets850-hr-meta">'
         f'<div><span class="big">{count}/{MAX_PICKS}</span> picks</div>'
         f'<div>🕒 {_format_last_updated(last_updated)}</div>'
-        '</div>'
+        + hits_chip
+        + '</div>'
         '</div>'
     )
 
@@ -623,7 +1041,17 @@ def _player_headshot_url(player_id: Any) -> str:
     )
 
 
-def _render_card(pick: dict[str, Any], batters_df: pd.DataFrame | None) -> str:
+def build_cashed_badge(hit_info: dict[str, Any] | None) -> str:
+    """Return the HTML for the corner ✅/💣 badge, or '' when no HR yet."""
+    if not hit_info:
+        return ""
+    n = int(hit_info.get("count") or 1)
+    label = "💣 CASHED HR" if n == 1 else f"💣 CASHED ×{n}"
+    return f'<div class="cashed-badge">{label}</div>'
+
+
+def _render_card(pick: dict[str, Any], batters_df: pd.DataFrame | None,
+                 hit_info: dict[str, Any] | None = None) -> str:
     name = pick.get("name", "")
     team = pick.get("team", "")
     note = pick.get("note", "")
@@ -663,9 +1091,12 @@ def _render_card(pick: dict[str, Any], batters_df: pd.DataFrame | None) -> str:
         if team else f'<div class="team">{confidence_html}</div>'
     )
 
+    cashed_class = " cashed" if hit_info else ""
+    cashed_badge_html = build_cashed_badge(hit_info)
     return (
-        '<div class="mrbets850-card">'
-        '<div class="head">'
+        f'<div class="mrbets850-card{cashed_class}">'
+        + cashed_badge_html
+        + '<div class="head">'
         f'<div class="rank-pill">#{rank}</div>'
         + head_html
         + '<div class="id">'
@@ -692,7 +1123,10 @@ def _html_escape(s: Any) -> str:
     )
 
 
-def _build_public_cards_html(picks: list[dict[str, Any]], batters_df: pd.DataFrame | None) -> str:
+def _build_public_cards_html(picks: list[dict[str, Any]],
+                             batters_df: pd.DataFrame | None,
+                             hr_hits_by_rank: dict[int, dict[str, Any]] | None = None,
+                             ) -> str:
     if not picks:
         return (
             '<div class="mrbets850-empty">'
@@ -700,7 +1134,12 @@ def _build_public_cards_html(picks: list[dict[str, Any]], batters_df: pd.DataFra
             "daily Top 25 once lineups settle."
             '</div>'
         )
-    cards = [_render_card(p, batters_df) for p in picks]
+    hr_hits_by_rank = hr_hits_by_rank or {}
+    cards = [
+        _render_card(p, batters_df,
+                     hit_info=hr_hits_by_rank.get(int(p.get("rank") or 0)))
+        for p in picks
+    ]
     return '<div class="mrbets850-card-grid">' + "".join(cards) + '</div>'
 
 
@@ -708,6 +1147,8 @@ def _render_public_block(
     last_updated: str | None,
     picks: list[dict[str, Any]],
     batters_df: pd.DataFrame | None,
+    hr_hits_by_rank: dict[int, dict[str, Any]] | None = None,
+    hr_status_msg: str = "",
 ) -> None:
     # Emit header + cards inside a single wrapper in ONE st.markdown call.
     # Splitting these across multiple calls lets Streamlit insert its own
@@ -715,8 +1156,14 @@ def _render_public_block(
     # selectors like `.mrbets850-hr-wrap .mrbets850-card`. Keeping the
     # whole block in one markdown call guarantees the cards are real
     # descendants of the themed wrapper.
-    header_html = _build_header_html(last_updated, count=len(picks))
-    cards_html = _build_public_cards_html(picks, batters_df)
+    hr_hits_by_rank = hr_hits_by_rank or {}
+    hits_count = len(hr_hits_by_rank)
+    header_html = _build_header_html(
+        last_updated, count=len(picks),
+        hr_hits=hits_count if hr_status_msg.startswith("ok") else None,
+        hr_eligible=len(picks) if hr_status_msg.startswith("ok") else None,
+    )
+    cards_html = _build_public_cards_html(picks, batters_df, hr_hits_by_rank)
     st.markdown(
         '<div class="mrbets850-hr-wrap">'
         + header_html
@@ -724,6 +1171,8 @@ def _render_public_block(
         + '</div>',
         unsafe_allow_html=True,
     )
+    if hr_status_msg and not hr_status_msg.startswith("ok"):
+        st.caption(hr_status_msg)
 
 
 # ---------------------------------------------------------------------------
@@ -799,6 +1248,52 @@ def _resolve_player_id(batters_df: pd.DataFrame | None, name: str, team: str) ->
         return int(pid)
     except (TypeError, ValueError):
         return pid
+
+
+def _render_persistence_status(state: dict[str, Any]) -> None:
+    """Surface the persistence backend status so the developer can see at a
+    glance whether picks survive a redeploy. Also exposes a one-click
+    migration when the remote is empty but a local cache exists."""
+    cfg = _remote_config()
+    if _remote_enabled(cfg):
+        st.success(
+            f"💾 Permanent storage: **connected** — GitHub `{cfg['repo']}` "
+            f"@ `{cfg['path']}` (branch `{cfg['branch']}`). "
+            "Picks survive redeploys."
+        )
+        remote_state, _, msg = fetch_remote_picks(cfg)
+        remote_picks = (remote_state or {}).get("picks") or []
+        local_state = _read_local_picks_file()
+        local_picks = local_state.get("picks") or []
+        if not remote_picks and local_picks:
+            st.warning(
+                f"Remote board is empty ({msg}) but the local cache has "
+                f"{len(local_picks)} pick(s). Migrate now so they survive "
+                "the next redeploy."
+            )
+            if st.button("⬆️ Migrate local picks → GitHub",
+                         key="_mrbets850_migrate_btn"):
+                ok, new_sha, push_msg = push_remote_picks(
+                    local_state, sha=None, cfg=cfg,
+                    commit_message="chore(mrbets850): migrate local picks to remote",
+                )
+                if ok:
+                    st.session_state["_mrbets850_remote_sha"] = new_sha
+                    st.success(f"Migrated {len(local_picks)} pick(s) to GitHub.")
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                else:
+                    st.error(push_msg)
+    else:
+        st.warning(
+            "💾 Permanent storage: **local fallback only** — no GitHub token "
+            "configured. Add `MRBETS850_GITHUB_TOKEN` (or `GITHUB_TOKEN`) to "
+            "Streamlit secrets and optionally `MRBETS850_PICKS_REPO` / "
+            "`MRBETS850_PICKS_PATH` / `MRBETS850_PICKS_BRANCH`. Until then, "
+            "picks may be lost on redeploy."
+        )
 
 
 def _render_editor(state: dict[str, Any], batters_df: pd.DataFrame | None) -> None:
@@ -990,10 +1485,24 @@ def _render_editor(state: dict[str, Any], batters_df: pd.DataFrame | None) -> No
 
     # ---- Danger zone ----
     with st.expander("⚠️ Danger zone", expanded=False):
-        st.caption(
-            "Clearing wipes today's board. Picks are persisted at "
-            f"`{PICKS_FILENAME}` next to app.py."
-        )
+        cfg = _remote_config()
+        if _remote_enabled(cfg):
+            st.caption(
+                "Clearing wipes today's board on GitHub "
+                f"(`{cfg['repo']}` @ `{cfg['path']}`) AND the local cache."
+            )
+            st.checkbox(
+                "Allow remote clear (lets save_picks push an empty board)",
+                key="_mrbets850_allow_remote_clear",
+                help="By default the remote save refuses to overwrite a "
+                     "non-empty remote board with an empty list. Tick this "
+                     "to override.",
+            )
+        else:
+            st.caption(
+                "Clearing wipes today's board. Picks are persisted at "
+                f"`{PICKS_FILENAME}` next to app.py (local fallback only)."
+            )
         confirm = st.checkbox(
             "I understand this will delete all picks",
             key="_mrbets850_clear_confirm",
@@ -1029,13 +1538,34 @@ def render_mrbets850_hr_picks(batters_df: pd.DataFrame | None = None) -> None:
     state = load_picks()
     picks = state.get("picks", [])
 
+    # HR-hit activation. Wrap in try/except so any tracker hiccup cannot
+    # blank the page — cards still render with the normal styling.
+    hr_hits_by_rank: dict[int, dict[str, Any]] = {}
+    hr_status_msg = ""
+    try:
+        events = fetch_todays_hr_events()
+        if events:
+            hr_hits_by_rank = compute_hr_hits(picks, events)
+            hr_status_msg = f"ok · {len(events)} HRs scanned"
+        else:
+            hr_status_msg = (
+                "Live HR tracker returned no events yet — picks render as "
+                "normal; the HR-hit highlight will turn on as homers land."
+            )
+    except Exception as e:
+        hr_status_msg = f"Live HR tracker unavailable: {e}"
+
     # Public block: header + cards emitted as ONE HTML payload so the
     # `.mrbets850-hr-wrap` ancestor genuinely contains the cards in the
     # DOM. Splitting into multiple st.markdown calls lets Streamlit
     # insert its own container divs between siblings and breaks the
     # descendant CSS selectors that style the cards.
-    _render_public_block(state.get("last_updated"), picks, batters_df)
+    _render_public_block(
+        state.get("last_updated"), picks, batters_df,
+        hr_hits_by_rank=hr_hits_by_rank, hr_status_msg=hr_status_msg,
+    )
 
     _render_unlock_form()
     if _is_unlocked():
+        _render_persistence_status(state)
         _render_editor(state, batters_df)

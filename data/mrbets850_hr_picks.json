@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:30:06Z",
+  "last_updated": "2026-05-16T08:30:59Z",
   "picks": [
     {
       "rank": 1,
@@ -54,6 +54,14 @@
       "name": "Miguel Vargas",
       "team": "",
       "player_id": 678246,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 8,
+      "name": "Corbin Carroll",
+      "team": "",
+      "player_id": 682998,
       "note": "",
       "confidence": "🔥 Lock"
     }

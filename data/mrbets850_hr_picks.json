@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:35:56Z",
+  "last_updated": "2026-05-16T08:36:20Z",
   "picks": [
     {
       "rank": 1,
@@ -158,6 +158,14 @@
       "name": "José Ramírez",
       "team": "",
       "player_id": 608070,
+      "note": "",
+      "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 21,
+      "name": "Chase DeLauter",
+      "team": "",
+      "player_id": 800050,
       "note": "",
       "confidence": "🎯 Lean"
     }

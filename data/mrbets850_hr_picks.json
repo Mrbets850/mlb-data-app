@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T08:32:59Z",
+  "last_updated": "2026-05-16T08:33:19Z",
   "picks": [
     {
       "rank": 1,
@@ -102,6 +102,14 @@
       "name": "Shea Langeliers",
       "team": "",
       "player_id": 669127,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 14,
+      "name": "Nick Kurtz",
+      "team": "",
+      "player_id": 701762,
       "note": "",
       "confidence": "💎 Strong"
     }

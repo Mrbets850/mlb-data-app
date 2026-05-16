@@ -1,11 +1,19 @@
 {
-  "last_updated": "2026-05-16T08:27:33Z",
+  "last_updated": "2026-05-16T08:27:48Z",
   "picks": [
     {
       "rank": 1,
       "name": "Kyle Schwarber",
       "team": "",
       "player_id": 656941,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 2,
+      "name": "Bryce Harper",
+      "team": "",
+      "player_id": 547180,
       "note": "",
       "confidence": "🔥 Lock"
     }

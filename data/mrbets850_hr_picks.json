@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T15:29:57Z",
+  "last_updated": "2026-05-17T16:15:15Z",
   "picks": [
     {
       "rank": 1,
@@ -155,14 +155,6 @@
     },
     {
       "rank": 20,
-      "name": "David Fry",
-      "team": "",
-      "player_id": 681807,
-      "note": "13 days past due great stats vs pitcher",
-      "confidence": "💸 Long Shot"
-    },
-    {
-      "rank": 21,
       "name": "Tyler Soderstrom",
       "team": "",
       "player_id": 691016,
@@ -170,7 +162,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 22,
+      "rank": 21,
       "name": "Nick Kurtz",
       "team": "",
       "player_id": 701762,
@@ -178,7 +170,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 23,
+      "rank": 22,
       "name": "Ian Happ",
       "team": "",
       "player_id": 664023,
@@ -186,7 +178,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 24,
+      "rank": 23,
       "name": "Dominic Canzone",
       "team": "",
       "player_id": 686527,
@@ -194,7 +186,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 25,
+      "rank": 24,
       "name": "Will Benson",
       "team": "",
       "player_id": 666181,

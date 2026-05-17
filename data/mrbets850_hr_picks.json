@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:04:37Z",
+  "last_updated": "2026-05-17T12:05:03Z",
   "picks": [
     {
       "rank": 1,
@@ -135,6 +135,14 @@
       "team": "",
       "player_id": 545361,
       "note": "12 days bro past due come on",
+      "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 18,
+      "name": "Seiya Suzuki",
+      "team": "",
+      "player_id": 673548,
+      "note": "",
       "confidence": "🎯 Lean"
     }
   ]

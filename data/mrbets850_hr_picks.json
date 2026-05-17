@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:05:03Z",
+  "last_updated": "2026-05-17T12:05:50Z",
   "picks": [
     {
       "rank": 1,
@@ -144,6 +144,14 @@
       "player_id": 673548,
       "note": "",
       "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 19,
+      "name": "Dominic Smith",
+      "team": "",
+      "player_id": 642086,
+      "note": "30 days past due great matchup",
+      "confidence": "💸 Long Shot"
     }
   ]
 }

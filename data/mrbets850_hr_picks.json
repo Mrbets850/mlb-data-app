@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T16:52:21Z",
+  "last_updated": "2026-05-17T16:59:25Z",
   "picks": [
     {
       "rank": 1,
@@ -187,14 +187,6 @@
     },
     {
       "rank": 24,
-      "name": "Kazuma Okamoto",
-      "team": "",
-      "player_id": 672960,
-      "note": "",
-      "confidence": "🎯 Lean"
-    },
-    {
-      "rank": 25,
       "name": "Kyle Schwarber",
       "team": "",
       "player_id": 656941,

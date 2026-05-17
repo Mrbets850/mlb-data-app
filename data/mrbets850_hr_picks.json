@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T11:58:20Z",
+  "last_updated": "2026-05-17T11:58:56Z",
   "picks": [
     {
       "rank": 1,
@@ -62,6 +62,14 @@
       "name": "Adley Rutschman",
       "team": "",
       "player_id": 668939,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 9,
+      "name": "Dillon Dingler",
+      "team": "",
+      "player_id": 693307,
       "note": "",
       "confidence": "💎 Strong"
     }

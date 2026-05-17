@@ -1,4 +1,13 @@
 {
-  "last_updated": "2026-05-17T06:53:36Z",
-  "picks": []
+  "last_updated": "2026-05-17T11:53:33Z",
+  "picks": [
+    {
+      "rank": 1,
+      "name": "Matt Olson",
+      "team": "",
+      "player_id": 621566,
+      "note": "7 days past due",
+      "confidence": "🔥 Lock"
+    }
+  ]
 }

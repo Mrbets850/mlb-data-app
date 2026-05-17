@@ -1,8 +1,16 @@
 {
-  "last_updated": "2026-05-17T11:53:33Z",
+  "last_updated": "2026-05-17T11:54:20Z",
   "picks": [
     {
       "rank": 1,
+      "name": "Colson Montgomery",
+      "team": "",
+      "player_id": 695657,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 2,
       "name": "Matt Olson",
       "team": "",
       "player_id": 621566,

@@ -22,7 +22,34 @@ from services.player_detail import (
     compute_pitcher_rating,
     fetch_batter_game_log,
     format_game_log_rows,
+    headshot_url,
 )
+
+
+class TestHeadshotUrl(unittest.TestCase):
+    """The headshot helper must be a pure URL builder — no I/O, safe on bad
+    inputs (None / 0 / strings / NaN-like). The detail dialog calls it once
+    per render and the browser fetches the image."""
+
+    def test_returns_none_for_missing_id(self):
+        self.assertIsNone(headshot_url(None))
+        self.assertIsNone(headshot_url(0))
+        self.assertIsNone(headshot_url(""))
+
+    def test_returns_none_for_unparseable_id(self):
+        self.assertIsNone(headshot_url("not-a-number"))
+        self.assertIsNone(headshot_url(-12))
+
+    def test_builds_mlb_cdn_url(self):
+        url = headshot_url(660271)  # Shohei Ohtani's MLBAM id, public.
+        self.assertIsNotNone(url)
+        self.assertIn("img.mlbstatic.com", url)
+        self.assertIn("/people/660271/headshot/", url)
+
+    def test_accepts_string_numeric_id(self):
+        url = headshot_url("592450")
+        self.assertIsNotNone(url)
+        self.assertIn("/people/592450/", url)
 
 
 # Canned MLB StatsAPI gameLog payload (15 games across two seasons).

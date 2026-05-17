@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:01:23Z",
+  "last_updated": "2026-05-17T12:01:33Z",
   "picks": [
     {
       "rank": 1,
@@ -94,6 +94,14 @@
       "name": "Juan Soto",
       "team": "",
       "player_id": 665742,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 13,
+      "name": "Yordan Alvarez",
+      "team": "",
+      "player_id": 670541,
       "note": "",
       "confidence": "💎 Strong"
     }

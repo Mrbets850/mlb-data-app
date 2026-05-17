@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:00:53Z",
+  "last_updated": "2026-05-17T12:01:23Z",
   "picks": [
     {
       "rank": 1,
@@ -86,6 +86,14 @@
       "name": "Brandon Lowe",
       "team": "",
       "player_id": 664040,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 12,
+      "name": "Juan Soto",
+      "team": "",
+      "player_id": 665742,
       "note": "",
       "confidence": "💎 Strong"
     }

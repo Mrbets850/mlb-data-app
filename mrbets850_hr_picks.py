@@ -431,6 +431,9 @@ _POWER_STAT_LABELS: list[tuple[str, str, str]] = [
     # square tile layout, so anything wider than ~7 characters wraps and
     # blows the card height up. "Barrel%"/"HardHit%"/"FB%"/"Pull%" match
     # the Savant column names directly so they read at a glance.
+    # OPS leads the grid as the universal bat-quality signal so every
+    # picks card surfaces "is this bat producing?" alongside HR power.
+    ("OPS",     "OPS",      "{:.3f}"),
     ("ISO",     "ISO",      "{:.3f}"),
     ("EV",      "EV",       "{:.1f}"),
     ("Barrel%", "Barrel%",  "{:.1f}%"),
@@ -508,9 +511,27 @@ def _build_stat_grid(row: pd.Series | None) -> list[tuple[str, str]]:
             v = row.get(col) if col in row.index else None
         except Exception:
             v = None
+        # OPS: backfill from OBP + SLG when the canonical column is empty so
+        # cards never collapse to N/A for batters whose feed only ships the
+        # components. standardize_columns already fills most cases; this is
+        # a final safety net for picks invoked outside the main app flow.
+        if col == "OPS":
+            try:
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    obp = row.get("OBP") if "OBP" in row.index else None
+                    slg = row.get("SLG") if "SLG" in row.index else None
+                    if obp is not None and slg is not None:
+                        obp_f = float(obp); slg_f = float(slg)
+                        if not pd.isna(obp_f) and not pd.isna(slg_f):
+                            v = obp_f + slg_f
+            except Exception:
+                pass
         out.append((label, _fmt(v, fmt)))
-    # Pull Air% is derived (matches app.py PullAir% definition).
-    out.insert(5, ("PullAir", _compute_pull_air(row)))
+    # Pull Air% is derived (matches app.py PullAir% definition). With OPS
+    # prepended above, FB% now sits at index 5; insert PullAir right after
+    # it so the original FB% → PullAir → Pull% ordering is preserved.
+    fb_idx = next((i for i, (lbl, *_rest) in enumerate(out) if lbl == "FB%"), 5)
+    out.insert(fb_idx + 1, ("PullAir", _compute_pull_air(row)))
     return out
 
 

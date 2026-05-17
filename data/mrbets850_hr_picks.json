@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:07:16Z",
+  "last_updated": "2026-05-17T12:07:33Z",
   "picks": [
     {
       "rank": 1,
@@ -166,6 +166,14 @@
       "name": "Tyler Soderstrom",
       "team": "",
       "player_id": 691016,
+      "note": "",
+      "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 22,
+      "name": "Nick Kurtz",
+      "team": "",
+      "player_id": 701762,
       "note": "",
       "confidence": "🎯 Lean"
     }

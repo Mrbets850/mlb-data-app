@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:08:52Z",
+  "last_updated": "2026-05-17T12:09:54Z",
   "picks": [
     {
       "rank": 1,
@@ -191,6 +191,14 @@
       "team": "",
       "player_id": 686527,
       "note": "5 days good barrel and iso",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 25,
+      "name": "Jonathan Aranda",
+      "team": "",
+      "player_id": 666018,
+      "note": "",
       "confidence": "💎 Strong"
     }
   ]

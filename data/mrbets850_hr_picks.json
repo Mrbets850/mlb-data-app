@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T16:16:55Z",
+  "last_updated": "2026-05-17T16:23:57Z",
   "picks": [
     {
       "rank": 1,
@@ -67,14 +67,6 @@
     },
     {
       "rank": 9,
-      "name": "Adley Rutschman",
-      "team": "",
-      "player_id": 668939,
-      "note": "",
-      "confidence": "💎 Strong"
-    },
-    {
-      "rank": 10,
       "name": "Dillon Dingler",
       "team": "",
       "player_id": 693307,
@@ -82,7 +74,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 11,
+      "rank": 10,
       "name": "Riley Greene",
       "team": "",
       "player_id": 682985,
@@ -90,7 +82,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 12,
+      "rank": 11,
       "name": "Brandon Lowe",
       "team": "",
       "player_id": 664040,
@@ -98,7 +90,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 13,
+      "rank": 12,
       "name": "Juan Soto",
       "team": "",
       "player_id": 665742,
@@ -106,7 +98,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 14,
+      "rank": 13,
       "name": "Yordan Alvarez",
       "team": "",
       "player_id": 670541,
@@ -114,7 +106,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 15,
+      "rank": 14,
       "name": "Braden Shewmake",
       "team": "",
       "player_id": 669699,
@@ -122,7 +114,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 16,
+      "rank": 15,
       "name": "Byron Buxton",
       "team": "",
       "player_id": 621439,
@@ -130,7 +122,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 17,
+      "rank": 16,
       "name": "Michael Conforto",
       "team": "",
       "player_id": 624424,
@@ -138,7 +130,7 @@
       "confidence": "🔥 Lock"
     },
     {
-      "rank": 18,
+      "rank": 17,
       "name": "Mike Trout",
       "team": "",
       "player_id": 545361,
@@ -146,7 +138,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 19,
+      "rank": 18,
       "name": "Seiya Suzuki",
       "team": "",
       "player_id": 673548,
@@ -154,7 +146,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 20,
+      "rank": 19,
       "name": "Dominic Smith",
       "team": "",
       "player_id": 642086,
@@ -162,7 +154,7 @@
       "confidence": "💸 Long Shot"
     },
     {
-      "rank": 21,
+      "rank": 20,
       "name": "Tyler Soderstrom",
       "team": "",
       "player_id": 691016,
@@ -170,7 +162,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 22,
+      "rank": 21,
       "name": "Nick Kurtz",
       "team": "",
       "player_id": 701762,
@@ -178,7 +170,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 23,
+      "rank": 22,
       "name": "Ian Happ",
       "team": "",
       "player_id": 664023,
@@ -186,7 +178,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 24,
+      "rank": 23,
       "name": "Dominic Canzone",
       "team": "",
       "player_id": 686527,
@@ -194,7 +186,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 25,
+      "rank": 24,
       "name": "Will Benson",
       "team": "",
       "player_id": 666181,

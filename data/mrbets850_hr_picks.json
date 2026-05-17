@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T11:58:56Z",
+  "last_updated": "2026-05-17T11:59:43Z",
   "picks": [
     {
       "rank": 1,
@@ -71,6 +71,14 @@
       "team": "",
       "player_id": 693307,
       "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 10,
+      "name": "Riley Greene",
+      "team": "",
+      "player_id": 682985,
+      "note": "18 days past due high ops",
       "confidence": "💎 Strong"
     }
   ]

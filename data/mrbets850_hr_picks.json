@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T16:24:39Z",
+  "last_updated": "2026-05-17T16:26:38Z",
   "picks": [
     {
       "rank": 1,
@@ -67,22 +67,14 @@
     },
     {
       "rank": 9,
-      "name": "Dillon Dingler",
+      "name": "Riley Greene",
       "team": "",
-      "player_id": 693307,
+      "player_id": 682985,
       "note": "18 days past due high ops",
       "confidence": "💎 Strong"
     },
     {
       "rank": 10,
-      "name": "Riley Greene",
-      "team": "",
-      "player_id": 682985,
-      "note": "",
-      "confidence": "💎 Strong"
-    },
-    {
-      "rank": 11,
       "name": "Brandon Lowe",
       "team": "",
       "player_id": 664040,
@@ -90,7 +82,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 12,
+      "rank": 11,
       "name": "Juan Soto",
       "team": "",
       "player_id": 665742,
@@ -98,7 +90,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 13,
+      "rank": 12,
       "name": "Yordan Alvarez",
       "team": "",
       "player_id": 670541,
@@ -106,7 +98,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 14,
+      "rank": 13,
       "name": "Braden Shewmake",
       "team": "",
       "player_id": 669699,
@@ -114,55 +106,47 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 15,
-      "name": "Byron Buxton",
+      "rank": 14,
+      "name": "Michael Conforto",
       "team": "",
-      "player_id": 621439,
+      "player_id": 624424,
       "note": "",
       "confidence": "💎 Strong"
     },
     {
-      "rank": 16,
-      "name": "Michael Conforto",
+      "rank": 15,
+      "name": "Mike Trout",
       "team": "",
-      "player_id": 624424,
+      "player_id": 545361,
       "note": "High ops and barrel  at right time over due 10 days",
       "confidence": "🔥 Lock"
     },
     {
-      "rank": 17,
-      "name": "Mike Trout",
+      "rank": 16,
+      "name": "Seiya Suzuki",
       "team": "",
-      "player_id": 545361,
+      "player_id": 673548,
       "note": "12 days bro past due come on",
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 18,
-      "name": "Seiya Suzuki",
+      "rank": 17,
+      "name": "Dominic Smith",
       "team": "",
-      "player_id": 673548,
+      "player_id": 642086,
       "note": "",
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 19,
-      "name": "Dominic Smith",
+      "rank": 18,
+      "name": "Tyler Soderstrom",
       "team": "",
-      "player_id": 642086,
+      "player_id": 691016,
       "note": "30 days past due great matchup",
       "confidence": "💸 Long Shot"
     },
     {
-      "rank": 20,
-      "name": "Tyler Soderstrom",
-      "team": "",
-      "player_id": 691016,
-      "note": "",
-      "confidence": "🎯 Lean"
-    },
-    {
-      "rank": 21,
+      "rank": 19,
       "name": "Nick Kurtz",
       "team": "",
       "player_id": 701762,
@@ -170,7 +154,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 22,
+      "rank": 20,
       "name": "Ian Happ",
       "team": "",
       "player_id": 664023,
@@ -178,23 +162,23 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 23,
+      "rank": 21,
       "name": "Dominic Canzone",
       "team": "",
       "player_id": 686527,
+      "note": "",
+      "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 22,
+      "name": "Will Benson",
+      "team": "",
+      "player_id": 666181,
       "note": "5 days good barrel and iso",
       "confidence": "💎 Strong"
     },
     {
-      "rank": 24,
-      "name": "Will Benson",
-      "team": "",
-      "player_id": 666181,
-      "note": "15 past due and great match up",
-      "confidence": "💎 Strong"
-    },
-    {
-      "rank": 25,
+      "rank": 23,
       "name": "Kyle Manzardo",
       "team": "",
       "player_id": 700932,

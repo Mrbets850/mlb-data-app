@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T16:15:15Z",
+  "last_updated": "2026-05-17T16:16:55Z",
   "picks": [
     {
       "rank": 1,
@@ -131,6 +131,14 @@
     },
     {
       "rank": 17,
+      "name": "Michael Conforto",
+      "team": "",
+      "player_id": 624424,
+      "note": "High ops and barrel  at right time over due 10 days",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 18,
       "name": "Mike Trout",
       "team": "",
       "player_id": 545361,
@@ -138,7 +146,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 18,
+      "rank": 19,
       "name": "Seiya Suzuki",
       "team": "",
       "player_id": 673548,
@@ -146,7 +154,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 19,
+      "rank": 20,
       "name": "Dominic Smith",
       "team": "",
       "player_id": 642086,
@@ -154,7 +162,7 @@
       "confidence": "💸 Long Shot"
     },
     {
-      "rank": 20,
+      "rank": 21,
       "name": "Tyler Soderstrom",
       "team": "",
       "player_id": 691016,
@@ -162,7 +170,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 21,
+      "rank": 22,
       "name": "Nick Kurtz",
       "team": "",
       "player_id": 701762,
@@ -170,7 +178,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 22,
+      "rank": 23,
       "name": "Ian Happ",
       "team": "",
       "player_id": 664023,
@@ -178,7 +186,7 @@
       "confidence": "🎯 Lean"
     },
     {
-      "rank": 23,
+      "rank": 24,
       "name": "Dominic Canzone",
       "team": "",
       "player_id": 686527,
@@ -186,7 +194,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 24,
+      "rank": 25,
       "name": "Will Benson",
       "team": "",
       "player_id": 666181,

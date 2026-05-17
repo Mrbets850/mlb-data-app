@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T15:29:17Z",
+  "last_updated": "2026-05-17T15:29:57Z",
   "picks": [
     {
       "rank": 1,
@@ -191,6 +191,14 @@
       "team": "",
       "player_id": 686527,
       "note": "5 days good barrel and iso",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 25,
+      "name": "Will Benson",
+      "team": "",
+      "player_id": 666181,
+      "note": "15 past due and great match up",
       "confidence": "💎 Strong"
     }
   ]

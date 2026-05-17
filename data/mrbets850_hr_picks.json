@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:01:33Z",
+  "last_updated": "2026-05-17T12:02:20Z",
   "picks": [
     {
       "rank": 1,
@@ -102,6 +102,14 @@
       "name": "Yordan Alvarez",
       "team": "",
       "player_id": 670541,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 14,
+      "name": "Braden Shewmake",
+      "team": "",
+      "player_id": 669699,
       "note": "",
       "confidence": "💎 Strong"
     }

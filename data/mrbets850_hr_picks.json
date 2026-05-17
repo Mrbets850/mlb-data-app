@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T11:56:29Z",
+  "last_updated": "2026-05-17T11:56:58Z",
   "picks": [
     {
       "rank": 1,
@@ -39,6 +39,14 @@
       "team": "",
       "player_id": 695600,
       "note": "25 days past due. Facing worst pitcher",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 6,
+      "name": "Wilyer Abreu",
+      "team": "",
+      "player_id": 677800,
+      "note": "",
       "confidence": "🔥 Lock"
     }
   ]

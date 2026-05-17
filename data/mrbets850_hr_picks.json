@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:03:37Z",
+  "last_updated": "2026-05-17T12:04:37Z",
   "picks": [
     {
       "rank": 1,
@@ -128,6 +128,14 @@
       "player_id": 621439,
       "note": "",
       "confidence": "💎 Strong"
+    },
+    {
+      "rank": 17,
+      "name": "Mike Trout",
+      "team": "",
+      "player_id": 545361,
+      "note": "12 days bro past due come on",
+      "confidence": "🎯 Lean"
     }
   ]
 }

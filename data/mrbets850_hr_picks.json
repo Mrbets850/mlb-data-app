@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T16:23:57Z",
+  "last_updated": "2026-05-17T16:24:39Z",
   "picks": [
     {
       "rank": 1,
@@ -191,6 +191,14 @@
       "team": "",
       "player_id": 666181,
       "note": "15 past due and great match up",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 25,
+      "name": "Kyle Manzardo",
+      "team": "",
+      "player_id": 700932,
+      "note": "Swap out for Rutschman",
       "confidence": "💎 Strong"
     }
   ]

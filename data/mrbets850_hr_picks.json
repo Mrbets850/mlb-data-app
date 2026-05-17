@@ -1,12 +1,12 @@
 {
-  "last_updated": "2026-05-17T12:09:54Z",
+  "last_updated": "2026-05-17T12:10:47Z",
   "picks": [
     {
       "rank": 1,
       "name": "Colson Montgomery",
       "team": "",
       "player_id": 695657,
-      "note": "",
+      "note": "7 days past due",
       "confidence": "🔥 Lock"
     },
     {
@@ -63,7 +63,7 @@
       "team": "",
       "player_id": 669127,
       "note": "",
-      "confidence": "🔥 Lock"
+      "confidence": "💎 Strong"
     },
     {
       "rank": 9,
@@ -78,7 +78,7 @@
       "name": "Dillon Dingler",
       "team": "",
       "player_id": 693307,
-      "note": "",
+      "note": "18 days past due high ops",
       "confidence": "💎 Strong"
     },
     {
@@ -86,7 +86,7 @@
       "name": "Riley Greene",
       "team": "",
       "player_id": 682985,
-      "note": "18 days past due high ops",
+      "note": "",
       "confidence": "💎 Strong"
     },
     {

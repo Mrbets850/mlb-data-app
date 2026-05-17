@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:06:26Z",
+  "last_updated": "2026-05-17T12:07:16Z",
   "picks": [
     {
       "rank": 1,
@@ -160,6 +160,14 @@
       "player_id": 681807,
       "note": "13 days past due great stats vs pitcher",
       "confidence": "💸 Long Shot"
+    },
+    {
+      "rank": 21,
+      "name": "Tyler Soderstrom",
+      "team": "",
+      "player_id": 691016,
+      "note": "",
+      "confidence": "🎯 Lean"
     }
   ]
 }

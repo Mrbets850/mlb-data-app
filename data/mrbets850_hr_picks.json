@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T16:51:08Z",
+  "last_updated": "2026-05-17T16:52:10Z",
   "picks": [
     {
       "rank": 1,
@@ -192,6 +192,14 @@
       "player_id": 672960,
       "note": "",
       "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 25,
+      "name": "Kyle Schwarber",
+      "team": "",
+      "player_id": 656941,
+      "note": "Long. Shot today due to pitching but hottest batter in league have to ride with it",
+      "confidence": "💎 Strong"
     }
   ]
 }

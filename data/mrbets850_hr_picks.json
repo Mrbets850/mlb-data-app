@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:02:44Z",
+  "last_updated": "2026-05-17T12:03:37Z",
   "picks": [
     {
       "rank": 1,
@@ -59,6 +59,14 @@
     },
     {
       "rank": 8,
+      "name": "Shea Langeliers",
+      "team": "",
+      "player_id": 669127,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 9,
       "name": "Adley Rutschman",
       "team": "",
       "player_id": 668939,
@@ -66,7 +74,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 9,
+      "rank": 10,
       "name": "Dillon Dingler",
       "team": "",
       "player_id": 693307,
@@ -74,7 +82,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 10,
+      "rank": 11,
       "name": "Riley Greene",
       "team": "",
       "player_id": 682985,
@@ -82,7 +90,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 11,
+      "rank": 12,
       "name": "Brandon Lowe",
       "team": "",
       "player_id": 664040,
@@ -90,7 +98,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 12,
+      "rank": 13,
       "name": "Juan Soto",
       "team": "",
       "player_id": 665742,
@@ -98,7 +106,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 13,
+      "rank": 14,
       "name": "Yordan Alvarez",
       "team": "",
       "player_id": 670541,
@@ -106,7 +114,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 14,
+      "rank": 15,
       "name": "Braden Shewmake",
       "team": "",
       "player_id": 669699,
@@ -114,7 +122,7 @@
       "confidence": "💎 Strong"
     },
     {
-      "rank": 15,
+      "rank": 16,
       "name": "Byron Buxton",
       "team": "",
       "player_id": 621439,

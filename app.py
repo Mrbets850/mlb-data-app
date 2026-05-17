@@ -998,6 +998,25 @@ def standardize_columns(df):
     if "Team" not in df.columns: df["Team"] = ""
     df["name_key"] = df["Name"].apply(clean_name)
     df["team_key"] = df["Team"].apply(norm_team)
+
+    # OPS is a first-class batter metric across the app. Source CSVs use a
+    # variety of column names (on_base_plus_slg, ops, OPS) — those are
+    # already remapped above. When the source omits a precomputed OPS but
+    # OBP and SLG are present, derive it so every downstream view (matchup
+    # heat maps, player cards, scoring rationale) can rely on a single
+    # canonical "OPS" column. Missing OBP or SLG → leave OPS NaN; callers
+    # fall back to league average rather than fabricating a value.
+    if "OPS" not in df.columns and {"OBP", "SLG"}.issubset(df.columns):
+        _obp = pd.to_numeric(df["OBP"], errors="coerce")
+        _slg = pd.to_numeric(df["SLG"], errors="coerce")
+        df["OPS"] = _obp + _slg
+    elif "OPS" in df.columns and {"OBP", "SLG"}.issubset(df.columns):
+        # Fill *missing* OPS cells from OBP+SLG without overwriting existing
+        # source values (some feeds publish OPS only for qualified hitters).
+        _ops = pd.to_numeric(df["OPS"], errors="coerce")
+        _obp = pd.to_numeric(df["OBP"], errors="coerce")
+        _slg = pd.to_numeric(df["SLG"], errors="coerce")
+        df["OPS"] = _ops.fillna(_obp + _slg)
     return df
 
 @st.cache_data(ttl=1800)
@@ -3487,6 +3506,10 @@ HEATMAP_THRESHOLDS = {
     "LA":           (None,    None,   False, "{:.1f}°"),  # optimal-range, custom
     "xwOBA":        (0.290,   0.380,  False, "{:.3f}"),
     "SweetSpot%":   (28.0,    40.0,   False, "{:.1f}%"),
+    # OPS is the universal "is this a good batter right now?" signal. The
+    # 0.650 → 0.900 band maps roughly to replacement-level → MVP-tier so the
+    # heat ramp colors fall in line with the rest of the rate stats.
+    "OPS":          (0.650,   0.900,  False, "{:.3f}"),
 }
 
 # Friendly display headers for the Matchup heat-map board. Internal column
@@ -3505,6 +3528,7 @@ MATCHUP_HEATMAP_DISPLAY_LABELS = {
     "LA":          "LAUNCH ANGLE",
     "xwOBA":       "Xwoba %",
     "SweetSpot%":  "Sweet Spot%",
+    "OPS":         "OPS",
     "Likely":      "Likely",
 }
 
@@ -3524,6 +3548,7 @@ MATCHUP_HEATMAP_MOBILE_LABELS = {
     "LA":          "LA",
     "xwOBA":       "xwOBA",
     "SweetSpot%":  "SWT%",
+    "OPS":         "OPS",
     "Likely":      "LIKELY",
 }
 
@@ -3583,7 +3608,7 @@ _LIKELY_FALLBACK_REASONS = {
     "Long Shot HR 💥": "Power profile, tougher matchup",
     "Strikeout ❌":    "High combined K%",
     "HRR 💎":          "Contact + run production profile",
-    "BASES 🧭":        "SLG/ISO points to bases",
+    "BASES 🧭":        "OPS/SLG/ISO points to bases",
     "—":               "",
 }
 
@@ -3642,6 +3667,11 @@ def _likely_with_reason(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_f
     b_xwoba   = _bf(b_row, "xwOBA",       0.318)
     b_xslg    = _bf(b_row, "xSLG",        0.410)
     b_slg     = _bf(b_row, "SLG",         b_xslg)
+    b_obp     = _bf(b_row, "OBP",         0.320)
+    # Canonical OPS read; fall back to OBP+SLG when the source row only
+    # carries the components. Both BASES and HRR buckets use this as a
+    # primary on-base + slug signal so the chip reflects the OPS column.
+    b_ops     = _bf(b_row, "OPS",         b_obp + b_slg)
     b_pullair = (_bf(b_row, "Pull%", 40.0) * _bf(b_row, "FB%", 34.0)) / 100.0
 
     # Pitcher pieces — vulnerability + K rate
@@ -3690,6 +3720,11 @@ def _likely_with_reason(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_f
     )
     if hr_call:
         parts = []
+        # OPS leads the HR reason when the bat is clearly raking — an MVP-tier
+        # OPS in front of barrel/ISO communicates the "complete hitter" signal
+        # better than any single rate stat.
+        if b_ops >= 0.900:
+            parts.append(f"OPS {b_ops:.3f}")
         if b_barrel >= 10.0:
             parts.append(f"{b_barrel:.0f}% barrel")
         elif b_barrel >= 8.0:
@@ -3714,14 +3749,20 @@ def _likely_with_reason(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_f
     #    strength and lower K risk; not pure power but threat across H/R/RBI.
     #    Checked BEFORE Long Shot HR so a high-xwOBA / low-K contact bat doesn't
     #    get tagged as a HR long shot when power isn't the dominant signal.
+    # HRR also fires when OPS alone is well above the league bar — an .820+
+    # OPS with reasonable K risk reliably produces hits/runs/RBIs even when
+    # the xwOBA sample is still warming up.
     hrr_call = (
-        b_xwoba >= 0.330
+        (b_xwoba >= 0.330 or b_ops >= 0.820)
         and combined_k <= 24
-        and (b_barrel >= 7.0 or b_hardhit >= 38.0)
+        and (b_barrel >= 7.0 or b_hardhit >= 38.0 or b_ops >= 0.820)
         and b_iso < 0.200
     )
     if hrr_call:
-        parts = [f"xwOBA {b_xwoba:.3f}"]
+        parts = []
+        if b_ops >= 0.820:
+            parts.append(f"OPS {b_ops:.3f}")
+        parts.append(f"xwOBA {b_xwoba:.3f}")
         if b_hardhit >= 40.0:
             parts.append(f"HH% {b_hardhit:.0f}")
         if combined_k <= 20.0:
@@ -3748,13 +3789,17 @@ def _likely_with_reason(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_f
 
     # 5) BASES — default positive bucket: at least 1+ total bases likely
     #    (decent SLG/ISO/xwOBA, not flagged as a K).
+    # OPS >= 0.700 is the league-average "decent bat" threshold — any of OPS,
+    # SLG, ISO, or xwOBA above its respective bar is enough to expect bases.
     bases_call = (
-        (b_slg >= 0.380 or b_iso >= 0.140 or b_xwoba >= 0.310)
+        (b_ops >= 0.700 or b_slg >= 0.380 or b_iso >= 0.140 or b_xwoba >= 0.310)
         and combined_k < 28
     )
     if bases_call:
         parts = []
-        if b_slg >= 0.420:
+        if b_ops >= 0.800:
+            parts.append(f"OPS {b_ops:.3f}")
+        elif b_slg >= 0.420:
             parts.append(f"SLG {b_slg:.3f}")
         elif b_iso >= 0.140:
             parts.append(f"ISO {b_iso:.3f}")
@@ -3795,9 +3840,9 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
          step keeps every starting hitter from rendering as a long row of
          empty dashes when Savant simply hasn't published a value yet.
     """
-    cols = ["Spot", "Hitter", "Team", "Crushes", "Matchup", "ISO", "Brl/BIP%",
-            "FB%", "GB%", "EV", "HH%", "HR/FB%", "PullAir%", "LA", "xwOBA",
-            "SweetSpot%", "Likely"]
+    cols = ["Spot", "Hitter", "Team", "Crushes", "Matchup", "OPS", "ISO",
+            "Brl/BIP%", "FB%", "GB%", "EV", "HH%", "HR/FB%", "PullAir%", "LA",
+            "xwOBA", "SweetSpot%", "Likely"]
     if lineup_df.empty:
         return pd.DataFrame(columns=cols)
 
@@ -3829,6 +3874,9 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         "HardHit%":   _league_avg("HardHit%",   38.0),
         "EV":         _league_avg("EV",          89.0),
         "LA":         _league_avg("LA",          12.0),
+        # OPS = OBP + SLG. League-median fallback (~.730) keeps the heat-map
+        # cell shaded near neutral for rookies/low-PA hitters with no value.
+        "OPS":        _league_avg("OPS",         0.730),
     }
     # ID-first pitcher match keeps this row tied to the *selected slate game's*
     # probable pitcher rather than any pitcher with the same display name.
@@ -3905,6 +3953,17 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
 
         iso     = _g("ISO", _LG["ISO"])
         xwoba   = _g("xwOBA", _LG["xwOBA"])
+        # OPS is sourced from the canonical column populated by
+        # standardize_columns. When the source row only has OBP+SLG we still
+        # derive OPS on the fly so heat-map cells never collapse to "—".
+        ops_val = _g("OPS")
+        if ops_val is None:
+            _obp = _g("OBP")
+            _slg = _g("SLG")
+            if _obp is not None and _slg is not None:
+                ops_val = _obp + _slg
+        if ops_val is None:
+            ops_val = _LG["OPS"]
 
         barrel  = _g("Barrel%", _LG["Barrel%"])
         pull    = _g("Pull%", _LG["Pull%"])
@@ -3957,6 +4016,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "_LastHRDate": hr_ctx.get("last_hr_date") if hr_ctx else None,
             "_HRLast10N": hr_ctx.get("hr_last_10") if hr_ctx else None,
             "Matchup": m,
+            "OPS": round(ops_val, 3) if ops_val is not None else None,
             "ISO": round(iso, 3) if iso is not None else None,
             "Brl/BIP%": round(brl_bip, 1) if brl_bip is not None else None,
             "FB%": round(fb, 1) if fb is not None else None,
@@ -6060,6 +6120,15 @@ def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb",
                 k_pct   = safe_float(b.get("K%"),       np.nan)
                 ld      = safe_float(b.get("LD%"),      np.nan)
                 pa      = safe_float(b.get("pa"), 0) or safe_float(b.get("PA"), 0)
+                # OPS is the canonical bat-quality scalar surfaced on cards,
+                # heat maps, and the target-prop table. Falls back to OBP+SLG
+                # when the source row only has the components.
+                ops     = safe_float(b.get("OPS"),      np.nan)
+                if pd.isna(ops):
+                    _obp_v = safe_float(b.get("OBP"), np.nan)
+                    _slg_v = safe_float(b.get("SLG"), np.nan)
+                    if not pd.isna(_obp_v) and not pd.isna(_slg_v):
+                        ops = _obp_v + _slg_v
 
                 # Normalize to 0-100
                 n_avg    = _norm(avg,   0.200, 0.320)
@@ -6073,13 +6142,21 @@ def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb",
                 n_ld     = _norm(ld,    18.0, 28.0)
                 n_match  = _norm(m_score, 80.0, 140.0)
                 n_ceil   = _norm(c_score, 80.0, 140.0)
+                # 0-100 OPS index anchored on .620 (replacement) → .950 (MVP).
+                # Used as a small but universal nudge across every prop mode
+                # so a strong bat consistently gets surfaced.
+                n_ops    = _norm(ops, 0.620, 0.950)
 
+                # Universal OPS bonus: a 5% weight on the normalized OPS so
+                # any batter view (TB, 2+ RBI, HRR) reflects overall bat
+                # quality without overpowering the mode-specific weights.
+                ops_bonus = 0.05 * n_ops
                 if mode == "tb":
                     contact_part = 0.12*n_xba + 0.10*n_avg + 0.08*n_kinv + 0.05*n_ld
                     power_part   = 0.12*n_xslg + 0.10*n_iso + 0.08*n_barrel
                     spot_part    = 0.15 * _spot_pa_weight(r.get("lineup_spot", 9))
                     matchup_part = 0.12*n_match + 0.08*n_ceil
-                    score = contact_part + power_part + spot_part + matchup_part
+                    score = contact_part + power_part + spot_part + matchup_part + ops_bonus
                 elif mode == "rbi2":
                     # 2+ RBI: heart-of-order power bats vs vulnerable SP.
                     # Power 40% (xSLG, ISO, Barrel%, HardHit%) ·
@@ -6090,13 +6167,13 @@ def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb",
                     spot_part    = 0.30 * _spot_rbi_weight(r.get("lineup_spot", 9))
                     matchup_part = 0.12*n_match + 0.08*n_ceil
                     contact_part = 0.10*n_xba
-                    score = power_part + spot_part + matchup_part + contact_part
+                    score = power_part + spot_part + matchup_part + contact_part + ops_bonus
                 else:  # hrr
                     onbase_part  = 0.12*n_xba + 0.13*n_xobp + 0.10*n_avg
                     power_part   = 0.10*n_xslg + 0.06*n_iso + 0.04*n_barrel
                     spot_part    = 0.25 * _spot_hrr_weight(r.get("lineup_spot", 9))
                     matchup_part = 0.12*n_match + 0.08*n_ceil
-                    score = onbase_part + power_part + spot_part + matchup_part
+                    score = onbase_part + power_part + spot_part + matchup_part + ops_bonus
 
                 # Lineup status: "Confirmed" once MLB posts the official
                 # batting order, "Projected" when we infer from recent games,
@@ -6124,6 +6201,7 @@ def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb",
                     "xBA":      xba if not pd.isna(xba) else None,
                     "xOBP":     xobp if not pd.isna(xobp) else None,
                     "xSLG":     xslg if not pd.isna(xslg) else None,
+                    "OPS":      ops if not pd.isna(ops) else None,
                     "ISO":      iso if not pd.isna(iso) else None,
                     "Barrel%":  barrel if not pd.isna(barrel) else None,
                     "HardHit%": hh if not pd.isna(hh) else None,
@@ -6205,15 +6283,18 @@ def render_targets_html(df, mode="tb"):
     # Pick column layout per mode — keep clean (8 metric cols max).
     # Every layout now includes a Context column (park · weather) so users
     # see the environmental edge alongside the prop metrics.
+    # OPS is included on every prop layout because it is a universal bat-
+    # quality signal — relevant whether the prop is total bases, RBIs, or
+    # hits+runs+RBIs.
     if mode == "tb":
-        # TB: AVG, xBA, xSLG, ISO, Barrel%, K%, LD%, Matchup
-        headers = ["#", "Hitter", "Game", "Context", "TB Score", "AVG", "xBA", "xSLG", "ISO", "Barrel%", "K%", "Match"]
+        # TB: OPS, AVG, xBA, xSLG, ISO, Barrel%, K%, Matchup
+        headers = ["#", "Hitter", "Game", "Context", "TB Score", "OPS", "AVG", "xBA", "xSLG", "ISO", "Barrel%", "K%", "Match"]
     elif mode == "rbi2":
-        # 2+ RBI: AVG, xSLG, ISO, Barrel%, HardHit%, K%, Matchup
-        headers = ["#", "Hitter", "Game", "Context", "RBI Score", "AVG", "xSLG", "ISO", "Barrel%", "HardHit%", "K%", "Match"]
+        # 2+ RBI: OPS, AVG, xSLG, ISO, Barrel%, HardHit%, K%, Matchup
+        headers = ["#", "Hitter", "Game", "Context", "RBI Score", "OPS", "AVG", "xSLG", "ISO", "Barrel%", "HardHit%", "K%", "Match"]
     else:
-        # HRR: AVG, xBA, xOBP, xSLG, ISO, Barrel%, K%, Matchup
-        headers = ["#", "Hitter", "Game", "Context", "HRR Score", "AVG", "xBA", "xOBP", "xSLG", "ISO", "K%", "Match"]
+        # HRR: OPS, AVG, xBA, xOBP, xSLG, ISO, K%, Matchup
+        headers = ["#", "Hitter", "Game", "Context", "HRR Score", "OPS", "AVG", "xBA", "xOBP", "xSLG", "ISO", "K%", "Match"]
 
     def _lineup_pill(status: str) -> str:
         s = (status or "Not Posted").strip()
@@ -6265,8 +6346,10 @@ def render_targets_html(df, mode="tb"):
             f'<td><span class="tg-score">{r.get("Score",0):.1f}</span> '
             f'<span class="tg-pill {tier_cls}" style="margin-left:6px;">{tier_label}</span></td>'
         )
+        ops_cell = f'<td class="tg-num">{_fmt_num(r.get("OPS"), 3)}</td>'
         if mode == "tb":
             metrics_html = (
+                ops_cell +
                 f'<td class="tg-num">{_fmt_num(r.get("AVG"), 3)}</td>'
                 f'<td class="tg-num">{_fmt_num(r.get("xBA"), 3)}</td>'
                 f'<td class="tg-num">{_fmt_num(r.get("xSLG"), 3)}</td>'
@@ -6277,6 +6360,7 @@ def render_targets_html(df, mode="tb"):
             )
         elif mode == "rbi2":
             metrics_html = (
+                ops_cell +
                 f'<td class="tg-num">{_fmt_num(r.get("AVG"), 3)}</td>'
                 f'<td class="tg-num">{_fmt_num(r.get("xSLG"), 3)}</td>'
                 f'<td class="tg-num">{_fmt_num(r.get("ISO"), 3)}</td>'
@@ -6287,6 +6371,7 @@ def render_targets_html(df, mode="tb"):
             )
         else:
             metrics_html = (
+                ops_cell +
                 f'<td class="tg-num">{_fmt_num(r.get("AVG"), 3)}</td>'
                 f'<td class="tg-num">{_fmt_num(r.get("xBA"), 3)}</td>'
                 f'<td class="tg-num">{_fmt_num(r.get("xOBP"), 3)}</td>'
@@ -6312,6 +6397,8 @@ def render_targets_html(df, mode="tb"):
             chips = [
                 _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
                          _mc_chip_tone(r.get("Matchup"), 80, 140)),
+                _mc_chip("OPS", _mc_fmt(r.get("OPS"), "{:.3f}"),
+                         _mc_chip_tone(r.get("OPS"), 0.650, 0.900)),
                 _mc_chip("xBA", _mc_fmt(r.get("xBA"), "{:.3f}"),
                          _mc_chip_tone(r.get("xBA"), 0.230, 0.310)),
                 _mc_chip("xSLG", _mc_fmt(r.get("xSLG"), "{:.3f}"),
@@ -6327,6 +6414,8 @@ def render_targets_html(df, mode="tb"):
             chips = [
                 _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
                          _mc_chip_tone(r.get("Matchup"), 80, 140)),
+                _mc_chip("OPS", _mc_fmt(r.get("OPS"), "{:.3f}"),
+                         _mc_chip_tone(r.get("OPS"), 0.650, 0.900)),
                 _mc_chip("xSLG", _mc_fmt(r.get("xSLG"), "{:.3f}"),
                          _mc_chip_tone(r.get("xSLG"), 0.380, 0.520)),
                 _mc_chip("ISO", _mc_fmt(r.get("ISO"), "{:.3f}"),
@@ -8630,6 +8719,7 @@ if _view == "🤖 AI HR Parlay":
         hh     = _f(row.get("HardHit%"))
         iso    = _f(row.get("ISO"))
         xslg   = _f(row.get("xSLG"))
+        ops    = _f(row.get("OPS"))
         fb     = _f(row.get("FB%"))
         pull   = _f(row.get("Pull%"))
         match  = _f(row.get("Matchup"))
@@ -8658,8 +8748,17 @@ if _view == "🤖 AI HR Parlay":
         elif crush_codes and crush_codes[0]:
             reasons.append(f"🎯 Punishes <b>{_pitch_label(crush_codes[0])}</b> profile")
 
-        # 3. Power — Barrel%, HardHit%, ISO, xSLG
+        # 3. Power — Barrel%, HardHit%, ISO, xSLG, OPS
+        # OPS sits near the top of the candidate list because it captures both
+        # on-base ability and slugging in one number; an .850+ OPS is a strong
+        # standalone "this bat is producing" signal independent of barrel/ISO.
         cands = []
+        if ops is not None and ops >= 0.900:
+            cands.append((ops * 100, f"🔥 OPS <b>{ops:.3f}</b> — MVP-tier bat"))
+        elif ops is not None and ops >= 0.800:
+            cands.append((ops * 95, f"🔥 OPS <b>{ops:.3f}</b> — premium bat"))
+        elif ops is not None and ops >= 0.730:
+            cands.append((ops * 80, f"🔥 OPS <b>{ops:.3f}</b>"))
         if barrel is not None and barrel >= 9.0:
             cands.append((barrel, f"💥 Barrel% <b>{barrel:.1f}</b> — elite contact"))
         elif barrel is not None and barrel >= 7.0:
@@ -9436,6 +9535,7 @@ if _view == "👑 HR Round Robin":
         hh     = _f(row.get("HardHit%"))
         iso    = _f(row.get("ISO"))
         xslg   = _f(row.get("xSLG"))
+        ops    = _f(row.get("OPS"))
         xwoba  = _f(row.get("xwOBA"))
         fb     = _f(row.get("FB%"))
         pull   = _f(row.get("Pull%"))
@@ -9445,6 +9545,13 @@ if _view == "👑 HR Round Robin":
         match  = _f(row.get("Matchup"))
         if ceil is not None and ceil >= 70:
             why.append(f"🏟️ Ceiling <b>{ceil:.0f}</b> — park/weather/SP combo lights up")
+        # OPS is a top-line bat-quality factor (on-base + slugging in one).
+        # Surfaced near the top of the "why" list because a strong OPS is
+        # the single most informative scalar for "is this hitter producing?"
+        if ops is not None and ops >= 0.850:
+            why.append(f"🔥 OPS <b>{ops:.3f}</b> — premium bat")
+        elif ops is not None and ops >= 0.750:
+            why.append(f"🔥 OPS <b>{ops:.3f}</b>")
         if barrel is not None and barrel >= 8.0:
             why.append(f"💥 Barrel% <b>{barrel:.1f}</b>")
         if hh is not None and hh >= 40.0:
@@ -9501,6 +9608,7 @@ if _view == "👑 HR Round Robin":
                 return None
         bits = []
         c = _fd(row.get("Ceiling"), "{:.0f}");        bits += [f"Ceiling <b>{c}</b>"] if c else []
+        op = _fd(row.get("OPS"), "{:.3f}");            bits += [f"OPS <b>{op}</b>"] if op else []
         b = _fd(row.get("Barrel%"), "{:.1f}%");        bits += [f"Barrel <b>{b}</b>"] if b else []
         h = _fd(row.get("HardHit%"), "{:.1f}%");       bits += [f"HH <b>{h}</b>"] if h else []
         iv = _fd(row.get("ISO"), "{:.3f}");            bits += [f"ISO <b>{iv}</b>"] if iv else []
@@ -11088,6 +11196,15 @@ if _view == "🥎 AI 1+ Hits Parlay":
         bs     = _opt_float(b_row.get("BatSpeed") if b_row is not None else None)
         xwoba  = _opt_float(b_row.get("xwOBA")   if b_row is not None else None)
         xslg   = _opt_float(b_row.get("xSLG")    if b_row is not None else None)
+        # OPS surfaces the same on-base-plus-slugging bat quality used in
+        # heat maps / target tables. Robust to source omissions: fall back to
+        # OBP+SLG when the precomputed OPS is missing.
+        ops    = _opt_float(b_row.get("OPS")     if b_row is not None else None)
+        if ops is None and b_row is not None:
+            _obp_v = _opt_float(b_row.get("OBP"))
+            _slg_v = _opt_float(b_row.get("SLG"))
+            if _obp_v is not None and _slg_v is not None:
+                ops = _obp_v + _slg_v
 
         n_xba   = _norm_h(xba,    0.220, 0.310)
         n_avg   = _norm_h(avg,    0.210, 0.320)
@@ -11142,7 +11259,7 @@ if _view == "🥎 AI 1+ Hits Parlay":
         signals = {
             "xBA": xba, "AVG": avg, "K%": k_pct, "LD%": ld,
             "SweetSpot%": ss_pct, "Whiff%": whiff, "BB%": bb_pct,
-            "BatSpeed": bs, "xwOBA": xwoba, "xSLG": xslg,
+            "BatSpeed": bs, "xwOBA": xwoba, "xSLG": xslg, "OPS": ops,
             "p_AVG_against": p_avg, "p_xBA_against": p_xba,
             "p_K%": p_k, "p_HardHit%": p_hh,
             "platoon": plat / 100.0,
@@ -11209,6 +11326,7 @@ if _view == "🥎 AI 1+ Hits Parlay":
                         "BatSpeed": sig.get("BatSpeed"),
                         "xwOBA":    sig.get("xwOBA"),
                         "xSLG":     sig.get("xSLG"),
+                        "OPS":      sig.get("OPS"),
                         "p_AVG_against": sig.get("p_AVG_against"),
                         "p_xBA_against": sig.get("p_xBA_against"),
                         "p_K%":     sig.get("p_K%"),
@@ -11394,6 +11512,7 @@ if _view == "🥎 AI 1+ Hits Parlay":
         whiff = _f(row.get("Whiff%"))
         bs    = _f(row.get("BatSpeed"))
         xwoba = _f(row.get("xwOBA"))
+        ops   = _f(row.get("OPS"))
         p_avg = _f(row.get("p_AVG_against"))
         p_xba = _f(row.get("p_xBA_against"))
         p_k   = _f(row.get("p_K%"))
@@ -11405,9 +11524,15 @@ if _view == "🥎 AI 1+ Hits Parlay":
         opp_h = (row.get("OppHand") or "").upper()[:1]
 
         # 1. Contact quality (priority — this prop is hits)
-        if xba is not None and xba >= 0.290:
+        # OPS leads when MVP-tier; it's the most universal "bat is producing"
+        # signal so it deserves top billing even on a hits-prop card.
+        if ops is not None and ops >= 0.900:
+            reasons.append(f"🔥 OPS <b>{ops:.3f}</b> — elite bat")
+        elif ops is not None and ops >= 0.800:
+            reasons.append(f"🔥 OPS <b>{ops:.3f}</b>")
+        if xba is not None and xba >= 0.290 and len(reasons) < 5:
             reasons.append(f"🎯 xBA <b>{xba:.3f}</b> — elite contact profile")
-        elif xba is not None and xba >= 0.270:
+        elif xba is not None and xba >= 0.270 and len(reasons) < 5:
             reasons.append(f"🎯 xBA <b>{xba:.3f}</b>")
         if avg is not None and avg >= 0.300 and len(reasons) < 5:
             reasons.append(f"📈 Hitting <b>{avg:.3f}</b> on the year")

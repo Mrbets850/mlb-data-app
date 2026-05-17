@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T11:56:58Z",
+  "last_updated": "2026-05-17T11:57:44Z",
   "picks": [
     {
       "rank": 1,
@@ -47,6 +47,14 @@
       "team": "",
       "player_id": 677800,
       "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 7,
+      "name": "Aaron Judge",
+      "team": "",
+      "player_id": 592450,
+      "note": "Possibly to hit 2",
       "confidence": "🔥 Lock"
     }
   ]

@@ -4,6 +4,10 @@ import pandas as pd
 import numpy as np
 import requests
 from rbi_model import render_rbi_model_page
+from services.lineup_service import (
+    get_service as get_lineup_service,
+    format_freshness as _format_lineup_freshness,
+)
 import re
 import unicodedata
 import urllib.parse
@@ -1838,7 +1842,7 @@ def get_hr_player_odds_map() -> dict:
                       detail=detail, max_age_min=30)
     return out
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=120)
 def get_boxscore(game_pk):
     url = f"https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore"
     try:
@@ -7020,16 +7024,42 @@ def render_game_header(game_row, ctx, weather):
     </div>
     """, unsafe_allow_html=True)
 
-def render_lineup_banner(team_id, team_abbr, opp_pitcher, status):
+@st.cache_data(ttl=60, show_spinner=False)
+def get_lineup_freshness(game_pk):
+    """Return ('<provider> · <status> · <age>', provider, status) for a game.
+
+    Backed by services.lineup_service, which chains premium feeds
+    (Sportradar / SportsDataIO) when keys are configured and falls back to
+    the official MLB StatsAPI live feed. Never raises — empty tuple on
+    failure so the banner still renders."""
+    try:
+        gl = get_lineup_service().get_game(int(game_pk))
+        if gl is None:
+            return ("", "", "")
+        return (_format_lineup_freshness(gl), gl.provider, gl.lineup_status)
+    except Exception:
+        return ("", "", "")
+
+
+def render_lineup_banner(team_id, team_abbr, opp_pitcher, status, *,
+                          freshness_text: str = ""):
     if status == "Confirmed": pill_cls = "tier-strong"
     elif status == "Projected": pill_cls = "tier-ok"
     else: pill_cls = "tier-avoid"
     logo = logo_url(team_id) if team_id else ""
+    fresh_html = ""
+    if freshness_text:
+        fresh_html = (
+            f'<span style="margin-left:10px;font-size:.72rem;color:#475569;'
+            f'font-weight:700;letter-spacing:.02em;" title="Data source · '
+            f'lineup status · last refresh">{freshness_text}</span>'
+        )
     st.markdown(f"""
     <div class="lineup-banner">
         <img src="{logo}" alt="{team_abbr}" />
         <div class="lineup-title">{team_abbr} Lineup</div>
         <div class="vs-pitcher">vs {opp_pitcher}</div>
+        {fresh_html}
         <div class="badge"><span class="tier {pill_cls}">{status}</span></div>
     </div>
     """, unsafe_allow_html=True)
@@ -12440,7 +12470,8 @@ if _render_matchup:
     # Per-board widget keys so each game's away/home sort controls stay isolated
     # in Streamlit's session_state when the user switches between games.
     _board_key_base = str(game_row.get("game_pk", selected_idx))
-    render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"])
+    _freshness_text, _, _ = get_lineup_freshness(game_row["game_pk"])
+    render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"], freshness_text=_freshness_text)
     if away_board.empty:
         st.info(f"{game_row['away_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:
@@ -12450,7 +12481,7 @@ if _render_matchup:
             label=f"{game_row['away_abbr']} lineup",
         )
     # home lineup
-    render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"])
+    render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"], freshness_text=_freshness_text)
     if home_board.empty:
         st.info(f"{game_row['home_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:

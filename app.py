@@ -4076,6 +4076,11 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "Hitter": r["player_name"],
             "Team": norm_team(r["team"]),
             "Crushes": crushes,
+            "_PlayerId": int(pid) if pid is not None and not (isinstance(pid, float) and pd.isna(pid)) else None,
+            "_BatSide": r.get("bat_side", ""),
+            "_OppPitcherId": int(opp_pitcher_id) if opp_pitcher_id else None,
+            "_OppPitcherName": opp_pitcher_name or "",
+            "_SlateDate": slate_iso,
             "_Form": form_line,
             "_FormL5_AVG": l5.get("avg"),
             "_FormL10_AVG": l10.get("avg"),
@@ -4117,7 +4122,8 @@ def render_matchup_heatmap_html(df):
     # Spot collapses into row label; _HR Trend is carried alongside HR Form
     # for arrow rendering; _Form / _Form*_AVG are rendered in the Hitter cell.
     _hidden = ("Spot", "_HR Trend", "_Form", "_FormL5_AVG", "_FormL10_AVG", "_FormL30_AVG",
-               "_LastHR", "_HRLast10", "_LastHRDate", "_HRLast10N", "_LikelyReason")
+               "_LastHR", "_HRLast10", "_LastHRDate", "_HRLast10N", "_LikelyReason",
+               "_PlayerId", "_BatSide", "_OppPitcherId", "_OppPitcherName", "_SlateDate")
     display_cols = [c for c in df.columns if c not in _hidden]
 
     css = """
@@ -4402,11 +4408,552 @@ def sort_matchup_board(df, sort_col, descending):
         sort_col, ascending=not descending, na_position="last", key=lambda s: s.astype(str)
     ).reset_index(drop=True)
 
-def render_matchup_board_with_sort(board_df, key_prefix, label):
+# ===========================================================================
+# Player detail dialog — premium dark-themed modal opened by tapping a tile
+# ===========================================================================
+from services.player_detail import (
+    fetch_batter_game_log as _pd_fetch_batter_game_log,
+    build_split_windows as _pd_build_split_windows,
+    compute_pitcher_rating as _pd_compute_pitcher_rating,
+    build_bvp_rows as _pd_build_bvp_rows,
+    format_game_log_rows as _pd_format_game_log_rows,
+)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _player_detail_game_log_cached(player_id: int, season: int) -> list:
+    """Cached per-player game-log fetch — keyed (player_id, season) so a
+    typical slate triggers ~18 calls once and reuses them across every dialog
+    open."""
+    return _pd_fetch_batter_game_log(player_id, season)
+
+
+def _fmt_pct(v, places=1):
+    if v is None: return "—"
+    try:
+        return f"{float(v):.{places}f}%"
+    except Exception:
+        return "—"
+
+
+def _fmt_slg(v):
+    if v is None: return "—"
+    try:
+        s = f"{float(v):.3f}"
+        return s[1:] if s.startswith("0.") else s
+    except Exception:
+        return "—"
+
+
+def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
+    """Assemble everything the detail dialog needs for one batter.
+
+    Returns dict with keys: header, splits, bvp_rows, rating, game_log_rows,
+    recent_chart.
+    """
+    pid = player_row.get("_PlayerId")
+    name = player_row.get("Hitter", "")
+    team = player_row.get("Team", "")
+    spot = player_row.get("Spot", "")
+    bat_side = player_row.get("_BatSide", "")
+    opp_pid = player_row.get("_OppPitcherId")
+    opp_name = player_row.get("_OppPitcherName", "")
+    slate_iso = player_row.get("_SlateDate") or (
+        pd.to_datetime(slate_date).strftime("%Y-%m-%d") if slate_date else today_ct().strftime("%Y-%m-%d")
+    )
+    try:
+        season = int(slate_iso[:4])
+    except Exception:
+        season = today_ct().year
+
+    # Game log (cached). Falls back to prior season for early-spring slates.
+    game_log = _player_detail_game_log_cached(int(pid), season) if pid else []
+    if not game_log:
+        game_log = _player_detail_game_log_cached(int(pid), season - 1) if pid else []
+        log_season = season - 1
+    else:
+        log_season = season
+
+    try:
+        end_dt = date.fromisoformat(slate_iso[:10])
+    except Exception:
+        end_dt = today_ct()
+
+    splits = _pd_build_split_windows(game_log, log_season, end_dt)
+
+    # Opposing pitcher — pitcher_row_df is the slate's pitchers_df.
+    pitch_hand = ""
+    p_dict = None
+    if opp_pid and pitcher_row_df is not None and not pitcher_row_df.empty:
+        try:
+            p_row = find_pitcher_row(pitcher_row_df, opp_name, pitcher_id=int(opp_pid))
+            if p_row is not None and not (hasattr(p_row, "empty") and p_row.empty):
+                # Convert pandas Series to dict for the pure helper
+                if hasattr(p_row, "to_dict"):
+                    p_dict = p_row.to_dict()
+                else:
+                    p_dict = dict(p_row)
+        except Exception:
+            p_dict = None
+    if opp_pid:
+        try:
+            pitch_hand = _fetch_pitcher_throws(int(opp_pid)) or ""
+        except Exception:
+            pitch_hand = ""
+
+    rating = _pd_compute_pitcher_rating(p_dict)
+    bvp_rows = _pd_build_bvp_rows(
+        batter_row=None, pitcher_row=p_dict, season_splits=splits,
+        bat_side=bat_side, pitch_hand=pitch_hand,
+    )
+    log_rows = _pd_format_game_log_rows(game_log, limit=10)
+
+    # Recent chart inputs: last 10 hits-per-game (for green bar chart strip).
+    recent = [r.get("h", 0) for r in game_log[-10:]] if game_log else []
+    if recent:
+        avg_h = sum(recent) / len(recent)
+        sorted_r = sorted(recent)
+        mid = len(sorted_r) // 2
+        median_h = sorted_r[mid] if len(sorted_r) % 2 == 1 else (sorted_r[mid - 1] + sorted_r[mid]) / 2
+    else:
+        avg_h = median_h = None
+
+    return {
+        "header": {
+            "name": name, "team": team, "spot": spot,
+            "bat_side": bat_side, "pitch_hand": pitch_hand,
+            "opp_pitcher": opp_name,
+            "slate_date": slate_iso,
+        },
+        "splits": splits,
+        "bvp_rows": bvp_rows,
+        "rating": rating,
+        "game_log_rows": log_rows,
+        "recent": {"values": recent, "avg": avg_h, "median": median_h},
+        # Carry the batter's own heat-map metrics so the dialog can show a
+        # "what the tile said" recap (keeps numbers consistent w/ the board).
+        "tile": {
+            "Matchup": player_row.get("Matchup"),
+            "OPS": player_row.get("OPS"),
+            "ISO": player_row.get("ISO"),
+            "Brl/BIP%": player_row.get("Brl/BIP%"),
+            "HR/FB%": player_row.get("HR/FB%"),
+            "xwOBA": player_row.get("xwOBA"),
+            "Likely": player_row.get("Likely"),
+            "LikelyReason": player_row.get("_LikelyReason"),
+            "LastHR": player_row.get("_LastHR"),
+            "Form": player_row.get("_Form"),
+        },
+    }
+
+
+_PLAYER_DETAIL_CSS = """
+<style>
+.pdc-root { color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.pdc-root * { box-sizing: border-box; }
+.pdc-tabs { display:flex; gap:24px; justify-content:center; margin: 4px 0 12px 0; }
+.pdc-tab { font-size:.72rem; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.08em; }
+.pdc-tab.is-active { color:#f8fafc; border-bottom: 2px solid #38bdf8; padding-bottom: 4px; }
+.pdc-card { background: linear-gradient(180deg, #111827 0%, #0b1220 100%); border-radius: 18px;
+  padding: 14px 16px; margin: 10px 0; border: 1px solid #1e293b; box-shadow: 0 4px 18px rgba(0,0,0,.35); }
+.pdc-name { font-size: 1.25rem; font-weight: 900; color:#f8fafc; }
+.pdc-meta { font-size: .78rem; color:#94a3b8; font-weight: 700; margin-top: 2px; }
+.pdc-next { display:flex; align-items:center; justify-content:space-between; padding: 10px 12px;
+  background: rgba(56,189,248,.08); border:1px solid rgba(56,189,248,.25); border-radius: 12px;
+  margin-top: 10px; }
+.pdc-next-left  { font-size:.85rem; font-weight:800; color:#e2e8f0; }
+.pdc-next-right { font-size:.72rem; font-weight:700; color:#7dd3fc; }
+.pdc-section-title { font-size:.8rem; font-weight:900; color:#38bdf8; text-transform:uppercase;
+  letter-spacing:.08em; margin: 12px 0 6px 0; display:flex; align-items:center; gap:8px; }
+.pdc-section-title::before { content:""; width: 4px; height: 14px; background:#38bdf8; border-radius:3px; display:inline-block; }
+.pdc-rating { display:flex; gap: 14px; align-items:stretch; }
+.pdc-rating-score { flex: 0 0 92px; background:#0b1220; border:1px solid #1e293b; border-radius: 14px;
+  padding: 12px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.pdc-rating-score .num  { font-size: 1.8rem; font-weight:900; line-height:1; }
+.pdc-rating-score .tier { font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; margin-top:6px; color:#94a3b8; }
+.pdc-rating.tier-Juicy  .num { color:#22c55e; }
+.pdc-rating.tier-Risky  .num { color:#4ade80; }
+.pdc-rating.tier-Average .num { color:#facc15; }
+.pdc-rating.tier-Above-Avg .num { color:#fb923c; }
+.pdc-rating.tier-Elite  .num { color:#ef4444; }
+.pdc-rating-body { flex: 1 1 auto; }
+.pdc-rating-name { font-size:.95rem; font-weight:800; color:#e2e8f0; }
+.pdc-rating-bullets { margin: 6px 0 0 0; padding: 0; list-style: none; }
+.pdc-rating-bullets li { font-size:.72rem; color:#cbd5e1; font-weight:700; padding-left: 14px; position:relative; line-height:1.35; }
+.pdc-rating-bullets li::before { content:"•"; position:absolute; left:0; color:#38bdf8; }
+.pdc-table { width:100%; border-collapse: separate; border-spacing: 0; font-size:.74rem; }
+.pdc-table th { color:#94a3b8; font-weight:800; text-transform:uppercase; letter-spacing:.06em;
+  font-size:.62rem; padding: 6px 6px; text-align:right; border-bottom: 1px solid #1e293b; }
+.pdc-table th:first-child, .pdc-table td:first-child { text-align:left; }
+.pdc-table td { color:#e2e8f0; padding: 7px 6px; font-weight:700; text-align:right;
+  border-bottom: 1px solid rgba(30,41,59,.6); }
+.pdc-table tr:last-child td { border-bottom: none; }
+.pdc-table .row-label { color:#cbd5e1; font-weight:800; }
+.pdc-table .row-label .proxy { color:#64748b; font-size:.58rem; font-weight:700; margin-left:6px;
+  text-transform:uppercase; letter-spacing:.05em; }
+.pdc-chips { display:flex; gap:6px; overflow-x:auto; padding: 4px 0 8px 0; margin: 0 -2px;
+  -webkit-overflow-scrolling: touch; }
+.pdc-chip { flex: 0 0 auto; min-width: 64px; background:#0b1220; border:1px solid #1e293b;
+  border-radius: 12px; padding: 8px 10px; text-align:center; }
+.pdc-chip .lab { font-size:.58rem; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.06em; }
+.pdc-chip .val { font-size:.92rem; font-weight:900; color:#e2e8f0; margin-top: 2px; }
+.pdc-chip.is-active { background: rgba(56,189,248,.15); border-color: #38bdf8; }
+.pdc-chip.is-active .val { color:#7dd3fc; }
+.pdc-recent { display:flex; flex-direction:column; gap:8px; }
+.pdc-recent-pills { display:flex; gap:8px; }
+.pdc-pill { background:#0b1220; border:1px solid #1e293b; border-radius: 999px; padding: 4px 10px;
+  font-size:.7rem; font-weight:800; color:#cbd5e1; }
+.pdc-pill .num { color:#7dd3fc; margin-left:4px; }
+.pdc-bars { display:flex; gap:6px; align-items:flex-end; min-height: 64px; padding: 6px 0 0 0; }
+.pdc-bar { flex: 1 1 0; background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+  border-radius: 4px 4px 0 0; min-height: 4px; position:relative; }
+.pdc-bar.empty { background:#1e293b; }
+.pdc-bar .v { position:absolute; top:-14px; left:50%; transform: translateX(-50%);
+  font-size:.58rem; color:#94a3b8; font-weight:800; }
+.pdc-log-table { width:100%; border-collapse: separate; border-spacing: 0;
+  background:#0b1220; border-radius: 12px; overflow:hidden; border:1px solid #1e293b; }
+.pdc-log-table th { background:#0f172a; color:#94a3b8; font-size:.58rem; font-weight:900;
+  text-transform:uppercase; letter-spacing:.06em; padding: 8px 6px; text-align:right;
+  border-bottom: 1px solid #1e293b; }
+.pdc-log-table th:first-child, .pdc-log-table td:first-child { text-align:left; }
+.pdc-log-table td { color:#e2e8f0; font-size:.74rem; font-weight:700; padding: 7px 6px;
+  text-align:right; border-bottom: 1px solid rgba(30,41,59,.6); }
+.pdc-log-table tr:last-child td { border-bottom: none; }
+.pdc-log-opp { color:#94a3b8; font-size:.62rem; font-weight:700; }
+.pdc-empty { color:#64748b; font-size:.78rem; font-weight:700; font-style: italic; padding: 8px 4px; }
+.pdc-recap { display:grid; grid-template-columns: repeat(4, 1fr); gap:6px; }
+.pdc-recap-tile { background:#0b1220; border:1px solid #1e293b; border-radius: 10px;
+  padding: 6px 4px; text-align:center; }
+.pdc-recap-tile .lab { font-size:.55rem; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.06em; }
+.pdc-recap-tile .val { font-size:.82rem; font-weight:900; color:#e2e8f0; margin-top:2px; }
+.pdc-likely { padding: 4px 10px; border-radius: 999px; background: rgba(56,189,248,.15);
+  color:#7dd3fc; font-weight: 800; font-size:.72rem; display:inline-block; margin-top:6px; }
+.pdc-likely-reason { color:#94a3b8; font-size:.66rem; font-weight:700; margin-top:4px; line-height:1.3; }
+</style>
+"""
+
+
+def _render_player_detail_html(payload: dict, active_chip: str) -> str:
+    """Build the dark detail card HTML markup for one player payload.
+
+    Active split chip is passed in so the radio above the dialog can toggle
+    which window the BvP / splits panel emphasises.
+    """
+    h = payload["header"]
+    tile = payload["tile"]
+    rating = payload["rating"]
+    splits = payload["splits"]
+    bvp_rows = payload["bvp_rows"]
+    log_rows = payload["game_log_rows"]
+    recent = payload["recent"]
+
+    # Header card.
+    spot_str = f"#{h['spot']} • " if h.get("spot") else ""
+    meta_bits = []
+    if h.get("team"): meta_bits.append(h["team"])
+    if h.get("bat_side"): meta_bits.append(f"Bats {h['bat_side']}")
+    meta = " • ".join(meta_bits)
+    next_right = ""
+    if h.get("pitch_hand"):
+        next_right = f"{h['pitch_hand']}HP" if h["pitch_hand"] in ("L","R") else h["pitch_hand"]
+    next_pitcher_html = ""
+    if h.get("opp_pitcher"):
+        next_pitcher_html = (
+            f'<div class="pdc-next">'
+            f'<div class="pdc-next-left">Next: vs {h["opp_pitcher"]}</div>'
+            f'<div class="pdc-next-right">{next_right} • {h["slate_date"]}</div>'
+            f'</div>'
+        )
+
+    likely_html = ""
+    if tile.get("Likely") and str(tile["Likely"]) != "—":
+        reason = tile.get("LikelyReason") or ""
+        likely_html = (
+            f'<div class="pdc-likely">{tile["Likely"]}</div>'
+            f'<div class="pdc-likely-reason">{reason}</div>'
+        )
+
+    header_card = (
+        f'<div class="pdc-card">'
+        f'<div class="pdc-tabs">'
+        f'<div class="pdc-tab">Team</div>'
+        f'<div class="pdc-tab">Roster</div>'
+        f'<div class="pdc-tab is-active">Player</div>'
+        f'</div>'
+        f'<div class="pdc-name">{spot_str}{h["name"]}</div>'
+        f'<div class="pdc-meta">{meta}</div>'
+        f'{likely_html}'
+        f'{next_pitcher_html}'
+        f'</div>'
+    )
+
+    # Heat-map recap (tile snapshot — same numbers the tile showed).
+    def _r(label, val, fmt="{:.3f}"):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return f'<div class="pdc-recap-tile"><div class="lab">{label}</div><div class="val">—</div></div>'
+        try:
+            v_str = fmt.format(float(val))
+        except Exception:
+            v_str = str(val)
+        return f'<div class="pdc-recap-tile"><div class="lab">{label}</div><div class="val">{v_str}</div></div>'
+
+    recap_html = (
+        '<div class="pdc-section-title">Slate Snapshot</div>'
+        '<div class="pdc-card">'
+        '<div class="pdc-recap">'
+        + _r("MTCH", tile.get("Matchup"), "{:.1f}")
+        + _r("OPS", tile.get("OPS"))
+        + _r("ISO", tile.get("ISO"))
+        + _r("BRL%", tile.get("Brl/BIP%"), "{:.1f}%")
+        + _r("HR/FB", tile.get("HR/FB%"), "{:.1f}%")
+        + _r("xwOBA", tile.get("xwOBA"))
+        + '</div>'
+        + (f'<div class="pdc-meta" style="margin-top:8px;">📈 {tile.get("Form","")}</div>' if tile.get("Form") else "")
+        + (f'<div class="pdc-meta">💣 {tile.get("LastHR","")}</div>' if tile.get("LastHR") else "")
+        + '</div>'
+    )
+
+    # Pitcher rating.
+    if rating.get("available"):
+        bullets_html = "".join(f"<li>{b}</li>" for b in rating.get("bullets", []))
+        rating_html = (
+            '<div class="pdc-section-title">Opposing Pitcher Ratings</div>'
+            f'<div class="pdc-card pdc-rating tier-{rating.get("tier","Average").replace(" ","-")}">'
+            f'<div class="pdc-rating-score">'
+            f'<div class="num">{rating["score"]}</div>'
+            f'<div class="tier">{rating["tier"]}</div>'
+            f'</div>'
+            f'<div class="pdc-rating-body">'
+            f'<div class="pdc-rating-name">{h.get("opp_pitcher") or "Opposing pitcher"}</div>'
+            f'<ul class="pdc-rating-bullets">{bullets_html}</ul>'
+            f'</div>'
+            f'</div>'
+        )
+    else:
+        rating_html = (
+            '<div class="pdc-section-title">Opposing Pitcher Ratings</div>'
+            '<div class="pdc-card"><div class="pdc-empty">No opposing pitcher data available.</div></div>'
+        )
+
+    # BvP table.
+    def _bvp_cell(v, kind):
+        if v is None: return "—"
+        if kind == "pa":
+            try: return str(int(v))
+            except Exception: return "—"
+        if kind == "slg":
+            return _fmt_slg(v)
+        return _fmt_pct(v)
+    bvp_body = []
+    for row in bvp_rows:
+        proxy_tag = '<span class="proxy">proxy</span>' if not row.get("actual") else ""
+        bvp_body.append(
+            f'<tr>'
+            f'<td class="row-label">{row["label"]}{proxy_tag}</td>'
+            f'<td>{_bvp_cell(row.get("PA"),"pa")}</td>'
+            f'<td>{_bvp_cell(row.get("H%"),"pct")}</td>'
+            f'<td>{_bvp_cell(row.get("SLG"),"slg")}</td>'
+            f'<td>{_bvp_cell(row.get("HR%"),"pct")}</td>'
+            f'<td>{_bvp_cell(row.get("BB%"),"pct")}</td>'
+            f'</tr>'
+        )
+    bvp_html = (
+        '<div class="pdc-section-title">Batter vs Pitcher Matchup</div>'
+        '<div class="pdc-card">'
+        '<table class="pdc-table">'
+        '<thead><tr>'
+        '<th>Split</th><th>PA</th><th>H%</th><th>SLG</th><th>HR%</th><th>BB%</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(bvp_body)}</tbody>'
+        '</table>'
+        '</div>'
+    )
+
+    # Splits chips.
+    chip_specs = [
+        ("H2H",   splits.get("L5")),
+        ("L5",    splits.get("L5")),
+        ("L10",   splits.get("L10")),
+        ("L20",   splits.get("L20")),
+        ("2026",  splits.get("Season")),
+        ("’25-’26", splits.get("TwoYear")),
+    ]
+    chip_html = []
+    for label, agg in chip_specs:
+        is_active = "is-active" if label == active_chip else ""
+        val = "—"
+        if agg and agg.get("PA"):
+            if agg.get("AVG") is not None:
+                s = f"{agg['AVG']:.3f}"
+                val = s[1:] if s.startswith("0.") else s
+        chip_html.append(
+            f'<div class="pdc-chip {is_active}">'
+            f'<div class="lab">{label}</div>'
+            f'<div class="val">{val}</div>'
+            f'</div>'
+        )
+    chips_html = (
+        '<div class="pdc-section-title">Splits — AVG by window</div>'
+        '<div class="pdc-card">'
+        f'<div class="pdc-chips">{"".join(chip_html)}</div>'
+        '</div>'
+    )
+
+    # Recent bars (last 10 games hits).
+    vals = recent.get("values") or []
+    max_v = max(vals) if vals else 1
+    bar_html = []
+    for v in vals:
+        pct = (v / max_v * 100) if max_v else 0
+        cls = "empty" if v == 0 else ""
+        bar_html.append(
+            f'<div class="pdc-bar {cls}" style="height:{max(6, pct)}%"><span class="v">{v}</span></div>'
+        )
+    avg_str = f"{recent['avg']:.2f}" if recent.get("avg") is not None else "—"
+    med_str = f"{recent['median']:.1f}" if recent.get("median") is not None else "—"
+    if vals:
+        recent_html = (
+            '<div class="pdc-section-title">Recent — Hits (L10)</div>'
+            '<div class="pdc-card pdc-recent">'
+            '<div class="pdc-recent-pills">'
+            f'<div class="pdc-pill">Avg<span class="num">{avg_str}</span></div>'
+            f'<div class="pdc-pill">Median<span class="num">{med_str}</span></div>'
+            '</div>'
+            f'<div class="pdc-bars">{"".join(bar_html)}</div>'
+            '</div>'
+        )
+    else:
+        recent_html = ""
+
+    # Game log table.
+    log_body = []
+    for r in log_rows:
+        log_body.append(
+            f'<tr>'
+            f'<td><div>{r["date_short"]}</div><div class="pdc-log-opp">{r["opp_label"]} {r["score"]}</div></td>'
+            f'<td>{r["ab"]}</td>'
+            f'<td>{r["h"]}</td>'
+            f'<td>{r["hr"]}</td>'
+            f'<td>{r["tb"]}</td>'
+            f'<td>{r["rbi"]}</td>'
+            f'</tr>'
+        )
+    if log_body:
+        log_html = (
+            '<div class="pdc-section-title">Game Log</div>'
+            '<div class="pdc-card" style="padding: 0;">'
+            '<table class="pdc-log-table">'
+            '<thead><tr>'
+            '<th>Date</th><th>AB</th><th>H</th><th>HR</th><th>TB</th><th>RBI</th>'
+            '</tr></thead>'
+            f'<tbody>{"".join(log_body)}</tbody>'
+            '</table>'
+            '</div>'
+        )
+    else:
+        log_html = (
+            '<div class="pdc-section-title">Game Log</div>'
+            '<div class="pdc-card"><div class="pdc-empty">No recent games on file yet.</div></div>'
+        )
+
+    return (
+        _PLAYER_DETAIL_CSS
+        + '<div class="pdc-root">'
+        + header_card
+        + recap_html
+        + rating_html
+        + bvp_html
+        + chips_html
+        + recent_html
+        + log_html
+        + '</div>'
+    )
+
+
+@st.dialog("Player detail", width="large")
+def _open_player_detail_dialog(payload_key: str):
+    """Streamlit dialog that renders one player's detail card.
+
+    The actual payload is stashed on session_state under ``payload_key`` so
+    the dialog re-renders cheaply on chip toggles without re-fetching the
+    game log on every interaction.
+    """
+    payload = st.session_state.get(payload_key)
+    if not payload:
+        st.write("No player selected.")
+        return
+
+    chips = ["H2H", "L5", "L10", "L20", "2026", "’25-’26"]
+    active = st.radio(
+        "Window",
+        chips,
+        index=1,
+        horizontal=True,
+        label_visibility="collapsed",
+        key=f"{payload_key}__chip",
+    )
+    st.markdown(_render_player_detail_html(payload, active), unsafe_allow_html=True)
+
+
+def _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date):
+    """Emit one button per row in the sorted board so the user can open the
+    detail dialog by tapping a hitter. Buttons are spread across responsive
+    columns so they map 1:1 to the cards above.
+    """
+    if sorted_df is None or sorted_df.empty:
+        return
+
+    st.markdown(
+        '<div class="pdc-trigger-css">'
+        '<style>'
+        '.pdc-trigger-css + div div[data-testid="stButton"] button { '
+        '  width: 100%; background: #0f172a; color: #f8fafc; border: 1px solid #1e293b; '
+        '  border-radius: 999px; padding: 6px 10px; font-weight: 800; font-size: .72rem; '
+        '  text-transform: uppercase; letter-spacing: .04em; '
+        '} '
+        '.pdc-trigger-css + div div[data-testid="stButton"] button:hover { '
+        '  background:#1e293b; border-color:#38bdf8; color:#7dd3fc; }'
+        '</style></div>',
+        unsafe_allow_html=True,
+    )
+
+    n = len(sorted_df)
+    # Three buttons per row on mobile feels right (matches typical card width).
+    per_row = 3 if n <= 9 else 4
+    rows = (n + per_row - 1) // per_row
+    idx = 0
+    for _ in range(rows):
+        cols = st.columns(per_row)
+        for col in cols:
+            if idx >= n:
+                break
+            row = sorted_df.iloc[idx]
+            pid = row.get("_PlayerId")
+            name = row.get("Hitter", "")
+            spot = row.get("Spot", "")
+            label = f"#{int(spot)} {name}" if pd.notna(spot) and spot != 99 else name
+            btn_key = f"pdc_open_{key_prefix}_{idx}_{pid or name}"
+            if col.button(label, key=btn_key, use_container_width=True):
+                payload_key = f"_pdc_payload_{key_prefix}_{idx}"
+                st.session_state[payload_key] = _build_player_detail_payload(
+                    row.to_dict(), pitchers_df, slate_date,
+                )
+                st.session_state["_pdc_active_key"] = payload_key
+                _open_player_detail_dialog(payload_key)
+            idx += 1
+
+
+def render_matchup_board_with_sort(board_df, key_prefix, label, *,
+                                   pitchers_df=None, slate_date=None):
     """Render sort controls (column + direction) above a matchup heat-map
     board, then render the sorted board as colored HTML. `key_prefix` must be
     unique per board on the page so Streamlit widget state stays isolated
     (e.g. "away_NYY_BOS" vs "home_NYY_BOS").
+
+    When ``pitchers_df`` is supplied, per-player "open detail" buttons are
+    rendered below the board so each hitter can be tapped for a full detail
+    dialog (Batter vs Pitcher, Opposing Pitcher Ratings, splits chips, game
+    log).
     """
     if board_df is None or board_df.empty:
         st.markdown(render_matchup_heatmap_html(board_df), unsafe_allow_html=True)
@@ -4434,6 +4981,8 @@ def render_matchup_board_with_sort(board_df, key_prefix, label):
     descending = direction.startswith("High")
     sorted_df = sort_matchup_board(board_df, sort_col, descending)
     st.markdown(render_matchup_heatmap_html(sorted_df), unsafe_allow_html=True)
+    if pitchers_df is not None:
+        _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date)
 
 # ===========================================================================
 # Slate pitchers (Baseball Savant CSV joined by player_id +
@@ -12479,6 +13028,8 @@ if _render_matchup:
             away_board,
             key_prefix=f"away_{_board_key_base}",
             label=f"{game_row['away_abbr']} lineup",
+            pitchers_df=pitchers_df,
+            slate_date=selected_date,
         )
     # home lineup
     render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"], freshness_text=_freshness_text)
@@ -12489,6 +13040,8 @@ if _render_matchup:
             home_board,
             key_prefix=f"home_{_board_key_base}",
             label=f"{game_row['home_abbr']} lineup",
+            pitchers_df=pitchers_df,
+            slate_date=selected_date,
         )
     st.caption(
         "Use the **Sort** controls above each lineup to rank by any column "

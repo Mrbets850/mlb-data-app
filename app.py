@@ -369,9 +369,12 @@ html, body,
 section.main,
 .main,
 .stApp {
-    background: #f1f5f9 !important;
-    background-color: #f1f5f9 !important;
-    background-image: none !important;
+    /* Premium dark sports-betting/dashboard background. White content
+       cards/tables below pop against this midnight slate gradient just
+       like the player detail card from PR #47. */
+    background: radial-gradient(120% 80% at 10% 0%, #0f172a 0%, #060912 55%, #020409 100%) !important;
+    background-color: #060912 !important;
+    background-image: radial-gradient(120% 80% at 10% 0%, #0f172a 0%, #060912 55%, #020409 100%) !important;
 }
 /* Belt-and-suspenders: a body::before strip that paints any uncovered
    pixel behind the iframe content. Sits at z-index:-1 so it never
@@ -379,10 +382,14 @@ section.main,
 body::before {
     content: "";
     position: fixed; inset: 0;
-    background: #f1f5f9;
+    background: radial-gradient(120% 80% at 10% 0%, #0f172a 0%, #060912 55%, #020409 100%);
     z-index: -1;
     pointer-events: none;
 }
+/* Streamlit's auto-injected header bar (top) — make it transparent so it
+   melts into the dark background, and lighten its icons. */
+[data-testid="stHeader"] { background: transparent !important; }
+[data-testid="stToolbar"] *, [data-testid="stHeader"] * { color: #e2e8f0 !important; }
 @media (min-width: 1200px) {
     .block-container { padding-left: 2rem; padding-right: 2rem; }
 }
@@ -417,8 +424,31 @@ body::before {
 @media (max-width: 640px) { .mobile-hide-swipe { display: none !important; } }
 html, body, [class*="css"] {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Arial, sans-serif;
-    color: #0f172a;
+    color: #e2e8f0;
     font-size: 16px;
+}
+/* Text inside content cards (white / light surfaces) keeps the dark
+   slate ink the rest of the app was designed around. We scope by the
+   common card containers used in app.py so charts/tables/forms stay
+   readable on white. */
+.section-card:not(.dark), .section-card:not(.dark) *,
+.carousel-wrap, .carousel-wrap *,
+.mhm-wrap, .mhm-wrap *,
+.mhm-card, .mhm-card *,
+.lineup-banner, .lineup-banner *,
+[data-testid="stDataFrame"] *, [data-testid="stTable"] * {
+    color: inherit;
+}
+/* Streamlit form labels (radios, selectboxes, captions outside cards)
+   sit directly on the dark background — bump to light slate so the user
+   can read them. Per-widget components keep their own colors when
+   rendered inside a white card via [class*="css"] inheritance. */
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] *,
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] *,
+[data-testid="stMarkdownContainer"] > p,
+[data-testid="stMarkdownContainer"] > p > strong,
+[data-testid="stRadio"] label, [data-testid="stRadio"] label * {
+    color: #e2e8f0 !important;
 }
 /* ---- desktop readability: bump font sizes on wider screens ---- */
 @media (min-width: 1100px) {
@@ -4417,6 +4447,7 @@ from services.player_detail import (
     compute_pitcher_rating as _pd_compute_pitcher_rating,
     build_bvp_rows as _pd_build_bvp_rows,
     format_game_log_rows as _pd_format_game_log_rows,
+    headshot_url as _pd_headshot_url,
 )
 
 
@@ -4524,6 +4555,8 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
             "bat_side": bat_side, "pitch_hand": pitch_hand,
             "opp_pitcher": opp_name,
             "slate_date": slate_iso,
+            "player_id": int(pid) if pid else None,
+            "headshot": _pd_headshot_url(pid),
         },
         "splits": splits,
         "bvp_rows": bvp_rows,
@@ -4556,6 +4589,29 @@ _PLAYER_DETAIL_CSS = """
 .pdc-tab.is-active { color:#f8fafc; border-bottom: 2px solid #38bdf8; padding-bottom: 4px; }
 .pdc-card { background: linear-gradient(180deg, #111827 0%, #0b1220 100%); border-radius: 18px;
   padding: 14px 16px; margin: 10px 0; border: 1px solid #1e293b; box-shadow: 0 4px 18px rgba(0,0,0,.35); }
+.pdc-header-row { display:flex; align-items:center; gap: 14px; }
+.pdc-avatar-wrap { flex: 0 0 72px; position: relative; }
+.pdc-avatar {
+  width: 72px; height: 72px; border-radius: 50%;
+  background: linear-gradient(180deg, #1e293b 0%, #0b1220 100%);
+  border: 2px solid #38bdf8;
+  box-shadow: 0 4px 14px rgba(56,189,248,.35);
+  display:flex; align-items:center; justify-content:center;
+  overflow: hidden;
+  color: #38bdf8; font-weight: 900; font-size: 1.4rem; letter-spacing: .02em;
+}
+.pdc-avatar img { width: 100%; height: 100%; object-fit: cover; display:block; }
+.pdc-avatar-num {
+  position: absolute; bottom: -4px; right: -4px;
+  min-width: 26px; height: 26px; padding: 0 6px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #facc15 0%, #ca8a04 100%);
+  color: #0f172a; font-weight: 900; font-size: .78rem;
+  display:flex; align-items:center; justify-content:center;
+  border: 2px solid #0b1220;
+  box-shadow: 0 2px 6px rgba(0,0,0,.45);
+}
+.pdc-header-body { flex: 1 1 auto; min-width: 0; }
 .pdc-name { font-size: 1.25rem; font-weight: 900; color:#f8fafc; }
 .pdc-meta { font-size: .78rem; color:#94a3b8; font-weight: 700; margin-top: 2px; }
 .pdc-next { display:flex; align-items:center; justify-content:space-between; padding: 10px 12px;
@@ -4648,7 +4704,6 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     recent = payload["recent"]
 
     # Header card.
-    spot_str = f"#{h['spot']} • " if h.get("spot") else ""
     meta_bits = []
     if h.get("team"): meta_bits.append(h["team"])
     if h.get("bat_side"): meta_bits.append(f"Bats {h['bat_side']}")
@@ -4673,6 +4728,39 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
             f'<div class="pdc-likely-reason">{reason}</div>'
         )
 
+    # Avatar block — MLB headshot if we have a player_id, otherwise the
+    # batter's initials as a CSS-only fallback so we never show a broken
+    # image or block initial render on a network request.
+    headshot = h.get("headshot")
+    initials = "".join(
+        part[0] for part in str(h.get("name", "") or "").split() if part
+    )[:2].upper() or "?"
+    if headshot:
+        # onerror swap to initials if the CDN 404s for a given player.
+        avatar_inner = (
+            f'<img src="{headshot}" alt="{h["name"]} headshot" loading="lazy" '
+            f'referrerpolicy="no-referrer" '
+            f'onerror="this.style.display=\'none\';this.parentElement.innerText=\'{initials}\';">'
+        )
+    else:
+        avatar_inner = initials
+
+    # Player number — we only show a chip if the lineup spot is real.
+    # No fake jersey numbers.
+    spot_val = h.get("spot")
+    has_spot = False
+    try:
+        if spot_val is not None and not (isinstance(spot_val, float) and pd.isna(spot_val)):
+            spot_int = int(spot_val)
+            if 1 <= spot_int <= 9:
+                has_spot = True
+    except Exception:
+        has_spot = False
+    num_chip = (
+        f'<div class="pdc-avatar-num" title="Lineup spot">#{spot_int}</div>'
+        if has_spot else ""
+    )
+
     header_card = (
         f'<div class="pdc-card">'
         f'<div class="pdc-tabs">'
@@ -4680,9 +4768,17 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         f'<div class="pdc-tab">Roster</div>'
         f'<div class="pdc-tab is-active">Player</div>'
         f'</div>'
-        f'<div class="pdc-name">{spot_str}{h["name"]}</div>'
-        f'<div class="pdc-meta">{meta}</div>'
-        f'{likely_html}'
+        f'<div class="pdc-header-row">'
+        f'  <div class="pdc-avatar-wrap">'
+        f'    <div class="pdc-avatar">{avatar_inner}</div>'
+        f'    {num_chip}'
+        f'  </div>'
+        f'  <div class="pdc-header-body">'
+        f'    <div class="pdc-name">{h["name"]}</div>'
+        f'    <div class="pdc-meta">{meta}</div>'
+        f'    {likely_html}'
+        f'  </div>'
+        f'</div>'
         f'{next_pitcher_html}'
         f'</div>'
     )
@@ -4903,23 +4999,48 @@ def _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date
     if sorted_df is None or sorted_df.empty:
         return
 
+    # Prominent, mobile-first "View {Player} Card" tap targets.
+    # Sky-blue gradient + 48px min-height = clearly clickable on phones.
     st.markdown(
         '<div class="pdc-trigger-css">'
         '<style>'
         '.pdc-trigger-css + div div[data-testid="stButton"] button { '
-        '  width: 100%; background: #0f172a; color: #f8fafc; border: 1px solid #1e293b; '
-        '  border-radius: 999px; padding: 6px 10px; font-weight: 800; font-size: .72rem; '
-        '  text-transform: uppercase; letter-spacing: .04em; '
+        '  width: 100%; min-height: 52px; '
+        '  background: linear-gradient(180deg, #0ea5e9 0%, #0369a1 100%); '
+        '  color: #f8fafc; border: 1px solid #38bdf8; '
+        '  border-radius: 14px; padding: 10px 12px; '
+        '  font-weight: 900; font-size: .82rem; line-height: 1.15; '
+        '  letter-spacing: .02em; text-align: center; '
+        '  box-shadow: 0 4px 14px rgba(14,165,233,.35), inset 0 1px 0 rgba(255,255,255,.18); '
+        '  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease; '
         '} '
         '.pdc-trigger-css + div div[data-testid="stButton"] button:hover { '
-        '  background:#1e293b; border-color:#38bdf8; color:#7dd3fc; }'
+        '  filter: brightness(1.08); '
+        '  box-shadow: 0 6px 18px rgba(14,165,233,.55), inset 0 1px 0 rgba(255,255,255,.25); '
+        '  transform: translateY(-1px); border-color: #7dd3fc; } '
+        '.pdc-trigger-css + div div[data-testid="stButton"] button:active { '
+        '  transform: translateY(0); filter: brightness(.95); }'
+        '.pdc-trigger-css + div div[data-testid="stButton"] button p { '
+        '  margin: 0 !important; color: inherit !important; font-weight: 900 !important; }'
+        '@media (max-width: 640px) { '
+        '  .pdc-trigger-css + div div[data-testid="stButton"] button { '
+        '    min-height: 56px; font-size: .88rem; padding: 12px 10px; } }'
         '</style></div>',
         unsafe_allow_html=True,
     )
 
+    st.markdown(
+        '<div style="font-size:.72rem; font-weight:800; color:#7dd3fc; '
+        'text-transform:uppercase; letter-spacing:.08em; margin: 6px 0 4px 2px;">'
+        '👆 Tap a player to open their full detail card</div>',
+        unsafe_allow_html=True,
+    )
+
     n = len(sorted_df)
-    # Three buttons per row on mobile feels right (matches typical card width).
-    per_row = 3 if n <= 9 else 4
+    # Two buttons per row on phones gives a much wider, more obvious tap
+    # target than three. Three per row only when the slate has many hitters
+    # (avoids a tall ribbon of buttons on desktop).
+    per_row = 2 if n <= 12 else 3
     rows = (n + per_row - 1) // per_row
     idx = 0
     for _ in range(rows):
@@ -4931,7 +5052,9 @@ def _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date
             pid = row.get("_PlayerId")
             name = row.get("Hitter", "")
             spot = row.get("Spot", "")
-            label = f"#{int(spot)} {name}" if pd.notna(spot) and spot != 99 else name
+            spot_prefix = f"#{int(spot)} " if pd.notna(spot) and spot != 99 else ""
+            # Two-line CTA so the player's name is unmistakable.
+            label = f"{spot_prefix}{name}\n👉 View Player Card"
             btn_key = f"pdc_open_{key_prefix}_{idx}_{pid or name}"
             if col.button(label, key=btn_key, use_container_width=True):
                 payload_key = f"_pdc_payload_{key_prefix}_{idx}"

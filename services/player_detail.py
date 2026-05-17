@@ -12,6 +12,7 @@ Public surface
 - ``compute_pitcher_rating(pitcher_row)`` -> ``dict``
 - ``build_bvp_rows(...)`` -> ``list[dict]``
 - ``format_game_log_rows(game_log, opponent_map=None, limit=10)`` -> ``list[dict]``
+- ``headshot_url(player_id)`` -> ``str | None``
 
 All helpers degrade gracefully — missing inputs return empty/None values
 rather than raising so the dialog can show "—" cells where data is absent.
@@ -26,6 +27,33 @@ import requests
 
 _BASE = "https://statsapi.mlb.com/api/v1"
 _HEADERS = {"User-Agent": "mlb-edge-app/1.0 (player_detail)"}
+
+# Public MLB headshot CDN. No auth required, no per-request rate concerns
+# for typical slate volumes — the browser fetches images directly, the app
+# only emits URLs. Width is fixed at 120 so we don't pull oversized images
+# on mobile.
+_HEADSHOT_TMPL = (
+    "https://img.mlbstatic.com/mlb-photos/image/upload/"
+    "w_120,q_auto:best/v1/people/{pid}/headshot/67/current"
+)
+
+
+def headshot_url(player_id: int | None) -> str | None:
+    """Return the public MLB headshot URL for a player MLBAM id, or None.
+
+    Pure URL builder — does no network I/O. Caller renders an <img> tag
+    and the browser handles fetching/caching; on 404 the caller's fallback
+    avatar takes over via CSS.
+    """
+    if not player_id:
+        return None
+    try:
+        pid = int(player_id)
+    except Exception:
+        return None
+    if pid <= 0:
+        return None
+    return _HEADSHOT_TMPL.format(pid=pid)
 
 
 # --- Game log fetch ---------------------------------------------------------

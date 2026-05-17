@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:02:20Z",
+  "last_updated": "2026-05-17T12:02:44Z",
   "picks": [
     {
       "rank": 1,
@@ -110,6 +110,14 @@
       "name": "Braden Shewmake",
       "team": "",
       "player_id": 669699,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 15,
+      "name": "Byron Buxton",
+      "team": "",
+      "player_id": 621439,
       "note": "",
       "confidence": "💎 Strong"
     }

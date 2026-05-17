@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:08:03Z",
+  "last_updated": "2026-05-17T12:08:52Z",
   "picks": [
     {
       "rank": 1,
@@ -184,6 +184,14 @@
       "player_id": 664023,
       "note": "",
       "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 24,
+      "name": "Dominic Canzone",
+      "team": "",
+      "player_id": 686527,
+      "note": "5 days good barrel and iso",
+      "confidence": "💎 Strong"
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T12:05:50Z",
+  "last_updated": "2026-05-17T12:06:26Z",
   "picks": [
     {
       "rank": 1,
@@ -151,6 +151,14 @@
       "team": "",
       "player_id": 642086,
       "note": "30 days past due great matchup",
+      "confidence": "💸 Long Shot"
+    },
+    {
+      "rank": 20,
+      "name": "David Fry",
+      "team": "",
+      "player_id": 681807,
+      "note": "13 days past due great stats vs pitcher",
       "confidence": "💸 Long Shot"
     }
   ]

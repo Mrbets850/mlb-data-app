@@ -4485,6 +4485,7 @@ def _fetch_pitcher_season_stats(player_id: int, season: int) -> dict:
             "BB%":  _pct(s.get("walksPer9Inn")) and None,
             "K/9":  _f(s.get("strikeoutsPer9Inn")),
             "BB/9": _f(s.get("walksPer9Inn")),
+            "HR/9": _f(s.get("homeRunsPer9")),
             "IP":   ip,
             "ERA":  _f(s.get("era")),
             "WHIP": _f(s.get("whip")),
@@ -4502,6 +4503,9 @@ def _fetch_pitcher_season_stats(player_id: int, season: int) -> dict:
             if bf and bf > 0:
                 out["K%"]  = round(100.0 * so / bf, 1)
                 out["BB%"] = round(100.0 * bb / bf, 1)
+            # HR/9 fallback when StatsAPI doesn't ship the rate directly.
+            if out.get("HR/9") is None and ip and float(ip) > 0:
+                out["HR/9"] = round(9.0 * hr / float(ip), 2)
             # BABIP fallback if StatsAPI omitted it. AB ≈ BF − BB.
             if out.get("BABIP") is None and bf:
                 ab_est = bf - bb
@@ -4597,7 +4601,13 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
     bf    = api_stats.get("BF")
     k9    = api_stats.get("K/9")
     bb9   = api_stats.get("BB/9")
+    hr9   = api_stats.get("HR/9")
     babip = api_stats.get("BABIP")
+
+    # xSLG / wOBA from Savant (decimal form, e.g. 0.412). Used by the HR-target
+    # classifier alongside Barrel%/HardHit%/FB%/HR/9 — all of these are the
+    # canonical HR-allowed signals already flowing into the app.
+    xslg  = _g("xSLG")
 
     # K-BB% (small-sample skill signal): publish whenever both rates are known.
     kbb_pct = (k_pct - bb_pct) if (k_pct is not None and bb_pct is not None) else None
@@ -4717,6 +4727,8 @@ def build_slate_pitcher_row(game_row, side, pitcher_stats_df):
         "K-BB%": _r(kbb_pct, 1),
         "K/9": _r(k9, 2),
         "BB/9": _r(bb9, 2),
+        "HR/9": _r(hr9, 2),
+        "xSLG": _r(xslg, 3),
         "BABIP": _r(babip, 3),
         "Whiff%": _r(whiff, 1),
         "SwStr%": _r(sw_str, 1),
@@ -4988,9 +5000,84 @@ def _sp_pct_bar(value, lo, hi, reverse=False):
         t = 1.0 - t
     return round(t * 100.0, 1)
 
+def _sp_is_hr_target(row: dict):
+    """Classify whether a starting pitcher is an HR-target (i.e. opposing hitters
+    are likely to slug / hit HRs off them tonight). Returns (level, reason) where
+    level ∈ {None, "soft", "hard"}.
+
+    Uses whatever live HR-allowed signals are present on the row:
+      • HR/9        — direct rate of HRs surrendered (StatsAPI live season totals)
+      • Barrel%     — opponent barrel rate vs this pitcher (Savant)
+      • HH%         — opponent hard-hit rate vs this pitcher (Savant)
+      • FB%         — opponent fly-ball rate vs this pitcher (Savant); HRs are
+                       almost all fly balls, so FB-prone arms are at risk.
+      • xSLG        — opponent expected SLG vs this pitcher (Savant)
+      • ERA / WHIP  — overall run-prevention context (StatsAPI)
+
+    Lower-is-better for ALL of these — they're "allowed" metrics on a pitcher.
+    Missing signals are simply skipped (graceful degradation). Need at least
+    one HR-allowed signal to fire."""
+
+    def _f(v):
+        try:
+            if v is None: return None
+            x = float(v)
+            if x != x:  # NaN
+                return None
+            return x
+        except Exception:
+            return None
+
+    hr9    = _f(row.get("HR/9"))
+    barrel = _f(row.get("Barrel%"))
+    hh     = _f(row.get("HH%"))
+    fb     = _f(row.get("FB%"))
+    xslg   = _f(row.get("xSLG"))
+    era    = _f(row.get("ERA"))
+    whip   = _f(row.get("WHIP"))
+
+    # Per-signal HR-vulnerability flags. Thresholds are pitcher-allowed values.
+    flags = []
+    severity = 0  # how many "hard" (clearly bad) signals fire
+    if hr9 is not None:
+        if hr9 >= 1.50:    flags.append(f"HR/9 {hr9:.2f}"); severity += 1
+        elif hr9 >= 1.20:  flags.append(f"HR/9 {hr9:.2f}")
+    if barrel is not None:
+        if barrel >= 10.0:   flags.append(f"{barrel:.0f}% barrel"); severity += 1
+        elif barrel >= 8.0:  flags.append(f"{barrel:.0f}% barrel")
+    if hh is not None:
+        if hh >= 42.0:   flags.append(f"{hh:.0f}% HH"); severity += 1
+        elif hh >= 38.0: flags.append(f"{hh:.0f}% HH")
+    if fb is not None and fb >= 40.0:
+        # FB% over 40 is a noticeable fly-ball lean; HRs ride on fly balls.
+        flags.append(f"{fb:.0f}% FB")
+        if fb >= 45.0:
+            severity += 1
+    if xslg is not None:
+        # Decimal form (e.g. 0.430). Anything ≥ .430 is in HR-prone territory.
+        if xslg >= 0.450:   flags.append(f"xSLG {xslg:.3f}"); severity += 1
+        elif xslg >= 0.420: flags.append(f"xSLG {xslg:.3f}")
+    if era is not None and era >= 5.00:
+        flags.append(f"ERA {era:.2f}")
+    if whip is not None and whip >= 1.40:
+        flags.append(f"WHIP {whip:.2f}")
+
+    if not flags:
+        return None, ""
+    # Require at least one HR-specific signal (HR/9, Barrel%, xSLG) to tag.
+    has_direct_hr_signal = any(
+        flag for flag in flags
+        if flag.startswith("HR/9") or "barrel" in flag or flag.startswith("xSLG")
+    )
+    if not has_direct_hr_signal:
+        return None, ""
+    level = "hard" if severity >= 2 else "soft"
+    return level, " · ".join(flags[:3])
+
+
 def _sp_compute_tiers(row: dict) -> list:
     """Return a list of (label, tone) tier callouts for one pitcher row.
-    tone ∈ {good, warn, info}. Empty list when nothing qualifies."""
+    tone ∈ {good, warn, info, bad}. Empty list when nothing qualifies."""
     tiers = []
     k_pct  = row.get("K%")
     bb_pct = row.get("BB%")
@@ -5006,6 +5093,14 @@ def _sp_compute_tiers(row: dict) -> list:
     def _le(v, t):
         try: return v is not None and float(v) <= t
         except Exception: return False
+
+    # HR Target — opposing hitters profile as having HR upside vs this arm.
+    # Surfaced first because it's the headline call most prop bettors want.
+    hr_level, hr_reason = _sp_is_hr_target(row)
+    if hr_level == "hard":
+        tiers.append((f"💣 HR Target · {hr_reason}", "bad"))
+    elif hr_level == "soft":
+        tiers.append((f"💥 HR Target · {hr_reason}", "warn"))
 
     # K Dominator — bat-missing engine.
     if _ge(k_pct, 27.0) or _ge(k9, 10.0) or _ge(whiff, 30.0):
@@ -5031,14 +5126,23 @@ def _sp_compute_tiers(row: dict) -> list:
 
 # Mobile-first metric panel: which metrics get a chip on the card, and the
 # (lo, hi, reverse) goodness scale for the colored progress bar behind them.
+#
+# Directionality note: a pitcher's `K%`, `K/9`, `K-BB%`, `Whiff%` are "strength"
+# metrics — higher is better, so reverse=False maps high→green. Every other
+# metric here is an "allowed/risk" metric (BB%, WHIP, BABIP, HR/9, Barrel%,
+# HH%, ERA) — lower is better for the pitcher, so reverse=True flips the
+# gradient so low values still read green.
 SP_CARD_METRICS = [
     # (key, label, fmt, lo, hi, reverse)
-    ("K%",      "K%",     "{:.1f}",  18.0, 32.0, False),
-    ("K/9",     "K/9",    "{:.2f}",  6.0,  12.0, False),
-    ("BB%",     "BB%",    "{:.1f}",  5.0,  11.0, True),
-    ("K-BB%",   "K-BB%",  "{:+.1f}", 5.0,  25.0, False),
-    ("WHIP",    "WHIP",   "{:.2f}",  1.00, 1.50, True),
-    ("BABIP",   "BABIP",  "{:.3f}",  0.260, 0.330, True),  # context only
+    ("K%",      "K%",      "{:.1f}",  18.0, 32.0,   False),
+    ("K/9",     "K/9",     "{:.2f}",  6.0,  12.0,   False),
+    ("BB%",     "BB%",     "{:.1f}",  5.0,  11.0,   True),
+    ("K-BB%",   "K-BB%",   "{:+.1f}", 5.0,  25.0,   False),
+    ("WHIP",    "WHIP",    "{:.2f}",  1.00, 1.50,   True),
+    ("HR/9",    "HR/9",    "{:.2f}",  0.80, 1.60,   True),   # HR-allowed rate
+    ("Barrel%", "Barrel%", "{:.1f}",  4.0,  12.0,   True),   # opponent barrel rate
+    ("HH%",     "HH%",     "{:.1f}",  32.0, 45.0,   True),   # opponent hard-hit
+    ("BABIP",   "BABIP",   "{:.3f}",  0.260, 0.330, True),   # context only
 ]
 
 def render_slate_pitcher_dashboard(df, schedule_df=None):
@@ -5088,6 +5192,8 @@ def render_slate_pitcher_dashboard(df, schedule_df=None):
         "  border-color: rgba(253,164,175,.35); }"
         ".spd-tier.info { background: rgba(96,165,250,.12); color:#93c5fd; "
         "  border-color: rgba(147,197,253,.35); }"
+        ".spd-tier.bad { background: rgba(239,68,68,.18); color:#fca5a5; "
+        "  border-color: rgba(248,113,113,.45); }"
         ".spd-src { font-size:.62rem; font-weight:800; letter-spacing:.06em; "
         "  text-transform:uppercase; padding:2px 7px; border-radius:999px; "
         "  border:1px solid #334155; color:#cbd5e1; background:#0f172a; }"
@@ -5098,16 +5204,24 @@ def render_slate_pitcher_dashboard(df, schedule_df=None):
         ".spd-chip-fill { position:absolute; left:0; top:0; bottom:0; width:0%; "
         "  background: linear-gradient(90deg, rgba(16,185,129,.22), rgba(16,185,129,.06)); "
         "  z-index:0; }"
+        ".spd-chip.bad { border-color: rgba(248,113,113,.45); }"
         ".spd-chip.bad .spd-chip-fill { background: linear-gradient(90deg, "
         "  rgba(248,113,113,.22), rgba(248,113,113,.06)); }"
+        ".spd-chip.mid { border-color: rgba(250,204,21,.45); }"
         ".spd-chip.mid .spd-chip-fill { background: linear-gradient(90deg, "
         "  rgba(250,204,21,.22), rgba(250,204,21,.06)); }"
+        ".spd-chip.good { border-color: rgba(110,231,183,.40); }"
         ".spd-chip-label { position:relative; z-index:1; font-size:.7rem; "
         "  color:#94a3b8; font-weight:700; letter-spacing:.04em; "
         "  text-transform:uppercase; }"
         ".spd-chip-val { position:relative; z-index:1; font-size:1.05rem; "
         "  font-weight:800; color:#f8fafc; font-variant-numeric: tabular-nums; "
         "  margin-top:2px; }"
+        # Tone the metric value text green/yellow/red so the chip directly
+        # signals 'good/ok/bad' for that pitcher metric at a glance.
+        ".spd-chip.good .spd-chip-val { color:#6ee7b7; }"
+        ".spd-chip.mid  .spd-chip-val { color:#fde68a; }"
+        ".spd-chip.bad  .spd-chip-val { color:#fca5a5; }"
         ".spd-chip-na .spd-chip-val { color:#64748b; }"
         ".spd-foot { font-size:.72rem; color:#94a3b8; display:flex; "
         "  justify-content:space-between; gap:8px; flex-wrap:wrap; }"
@@ -6893,18 +7007,148 @@ def render_pitch_mix_block(mix_df: pd.DataFrame, surface_bg: str = "#ffffff") ->
         '</div>'
     )
 
+def _pp_tone(v, lo, hi, reverse=False):
+    """Map a pitcher metric value to a 'good'/'mid'/'bad' tone class for the
+    main-matchup pitcher panel. `reverse=True` flips directionality for
+    pitcher-allowed metrics (xwOBA, Barrel%, HardHit%, WHIP, HR/9, ERA,
+    xSLG, FB%) where lower is better. Returns "" when the value can't be
+    parsed so the cell renders neutral instead of fake-green."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if x != x:  # NaN
+        return ""
+    if hi == lo:
+        return "mid"
+    t = (x - lo) / (hi - lo)
+    t = max(0.0, min(1.0, t))
+    if reverse:
+        t = 1.0 - t
+    if t < 0.33:
+        return "bad"
+    if t < 0.66:
+        return "mid"
+    return "good"
+
+
 def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=None):
     score, key, verdict = pitcher_vulnerability(p_row)
-    if p_row is None:
-        k = bb = era_w = barrel = hardhit = "—"
-    else:
-        k = f"{safe_float(p_row.get('K%')):.1f}%"
-        bb = f"{safe_float(p_row.get('BB%')):.1f}%"
-        era_w = f"{safe_float(p_row.get('xwOBA')):.3f}"
-        barrel = f"{safe_float(p_row.get('Barrel%')):.1f}%"
-        hardhit = f"{safe_float(p_row.get('HardHit%')):.1f}%"
+    # Live StatsAPI season totals (WHIP, ERA, HR/9) — same data path the
+    # Slate Pitchers builder uses, so the numbers stay consistent across the
+    # two surfaces. Safe-defaults to "—" when no player_id or no live row.
+    live = {}
+    if p_row is not None:
+        try:
+            pid = p_row.get("player_id") if hasattr(p_row, "get") else None
+            if pid is None and hasattr(p_row, "__getitem__"):
+                try: pid = p_row["player_id"]
+                except Exception: pid = None
+            if pid is not None:
+                live = _fetch_pitcher_season_stats(int(pid), 2026) or {}
+        except Exception:
+            live = {}
+
+    def _g(key_):
+        if p_row is None:
+            return None
+        try:
+            v = p_row.get(key_) if hasattr(p_row, "get") else None
+        except Exception:
+            v = None
+        if v is None:
+            return None
+        try:
+            x = float(v)
+            return None if x != x else x
+        except Exception:
+            return None
+
+    k_v       = _g("K%")
+    bb_v      = _g("BB%")
+    xwoba_v   = _g("xwOBA")
+    barrel_v  = _g("Barrel%")
+    hardhit_v = _g("HardHit%")
+    whip_v    = live.get("WHIP")
+    era_v     = live.get("ERA")
+    hr9_v     = live.get("HR/9")
+    fb_v      = _g("FB%")
+    xslg_v    = _g("xSLG")
+
+    # Compose the row dict the HR-target classifier expects. It only reads keys
+    # via .get(), so a plain dict is enough.
+    hr_input = {
+        "HR/9":    hr9_v,
+        "Barrel%": barrel_v,
+        "HH%":     hardhit_v,
+        "FB%":     fb_v,
+        "xSLG":    xslg_v,
+        "ERA":     era_v,
+        "WHIP":    whip_v,
+    }
+    hr_level, hr_reason = _sp_is_hr_target(hr_input)
+
+    def _fmt(v, n, suffix=""):
+        if v is None: return "—"
+        try: return f"{float(v):.{n}f}{suffix}"
+        except Exception: return "—"
+
+    k       = _fmt(k_v, 1, "%")
+    bb      = _fmt(bb_v, 1, "%")
+    era_w   = _fmt(xwoba_v, 3)
+    barrel  = _fmt(barrel_v, 1, "%")
+    hardhit = _fmt(hardhit_v, 1, "%")
+    whip    = _fmt(whip_v, 2)
+    era     = _fmt(era_v, 2)
+    hr9     = _fmt(hr9_v, 2)
+
+    # Tone classes — same thresholds the Slate Pitchers heatmap uses, so a
+    # pitcher reads identically in either view. K% is a strength metric (higher
+    # = greener); everything else here is allowed/risk (lower = greener).
+    k_tone       = _pp_tone(k_v,       18.0, 32.0)
+    bb_tone      = _pp_tone(bb_v,      5.0,  11.0,   reverse=True)
+    xwoba_tone   = _pp_tone(xwoba_v,   0.260, 0.340, reverse=True)
+    barrel_tone  = _pp_tone(barrel_v,  4.0,  12.0,   reverse=True)
+    hardhit_tone = _pp_tone(hardhit_v, 32.0, 45.0,   reverse=True)
+    whip_tone    = _pp_tone(whip_v,    1.00, 1.50,   reverse=True)
+    era_tone     = _pp_tone(era_v,     2.50, 5.50,   reverse=True)
+    hr9_tone     = _pp_tone(hr9_v,     0.80, 1.60,   reverse=True)
+
     color_bg = {"elite": "#fef2f2", "strong": "#fffbeb", "ok": "#f8fafc", "avoid": "#f0fdf4"}[key]
     border = {"elite": "#ef4444", "strong": "#f59e0b", "ok": "#94a3b8", "avoid": "#16a34a"}[key]
+
+    # HR-target badge — bad (hard) / warn (soft). Same iconography as the
+    # Slate Pitchers compact card so the signal is recognizable across tabs.
+    hr_badge_html = ""
+    if hr_level == "hard":
+        hr_badge_html = (
+            f'<span title="HR-target pitcher: {hr_reason}" '
+            f'style="display:inline-block; padding:3px 9px; border-radius:999px; '
+            f'background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; '
+            f'font-size:.72rem; font-weight:800; letter-spacing:.02em; '
+            f'margin-left:8px;">💣 HR Target</span>'
+        )
+    elif hr_level == "soft":
+        hr_badge_html = (
+            f'<span title="HR-target pitcher: {hr_reason}" '
+            f'style="display:inline-block; padding:3px 9px; border-radius:999px; '
+            f'background:#ffedd5; color:#9a3412; border:1px solid #fed7aa; '
+            f'font-size:.72rem; font-weight:800; letter-spacing:.02em; '
+            f'margin-left:8px;">💥 HR Target</span>'
+        )
+
+    # Tone -> text color for the metric value. Background is left alone so the
+    # panel keeps its existing tier-driven look; the metric numbers themselves
+    # carry the green/yellow/red signal.
+    tone_color = {"good": "#15803d", "mid": "#92400e", "bad": "#b91c1c", "": "#0f172a"}
+    def _stat_block(lbl, val, tone):
+        c = tone_color.get(tone, "#0f172a")
+        return (
+            f'<div><div style="font-size:0.66rem; color:#64748b; '
+            f'text-transform:uppercase; font-weight:700;">{lbl}</div>'
+            f'<div style="font-weight:800; color:{c};">{val}</div></div>'
+        )
+
     mix_html = render_pitch_mix_block(pitch_mix_df, surface_bg="#ffffff") if pitch_mix_df is not None else ""
     st.markdown(f"""
     <div style="background:{color_bg}; border:1px solid #e2e8f0; border-left:6px solid {border};
@@ -6913,19 +7157,23 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
             <div>
                 <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">{label}</div>
                 <div style="font-size:1.05rem; font-weight:900; color:#0f172a;">{pitcher_name or 'TBD'}
-                    <span style="color:#64748b; font-weight:700; font-size:0.85rem;">({pitch_hand or '?'})</span></div>
+                    <span style="color:#64748b; font-weight:700; font-size:0.85rem;">({pitch_hand or '?'})</span>
+                    {hr_badge_html}</div>
             </div>
             <div style="text-align:right;">
                 <div style="font-size:1.5rem; font-weight:900; color:#0f172a; line-height:1;">{score}</div>
                 <span class="tier tier-{('elite' if key=='elite' else 'strong' if key=='strong' else 'ok' if key=='ok' else 'avoid')}">{verdict}</span>
             </div>
         </div>
-        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap: 6px 10px; margin-top:10px;">
-          <div><div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; font-weight:700;">K%</div><div style="font-weight:800;">{k}</div></div>
-          <div><div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; font-weight:700;">BB%</div><div style="font-weight:800;">{bb}</div></div>
-          <div><div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; font-weight:700;">xwOBA</div><div style="font-weight:800;">{era_w}</div></div>
-          <div><div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; font-weight:700;">Barrel%</div><div style="font-weight:800;">{barrel}</div></div>
-          <div><div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; font-weight:700;">HardHit%</div><div style="font-weight:800;">{hardhit}</div></div>
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px; margin-top:10px;">
+          {_stat_block("WHIP",    whip,    whip_tone)}
+          {_stat_block("HR/9",    hr9,     hr9_tone)}
+          {_stat_block("ERA",     era,     era_tone)}
+          {_stat_block("xwOBA",   era_w,   xwoba_tone)}
+          {_stat_block("K%",      k,       k_tone)}
+          {_stat_block("BB%",     bb,      bb_tone)}
+          {_stat_block("Barrel%", barrel,  barrel_tone)}
+          {_stat_block("HardHit%",hardhit, hardhit_tone)}
         </div>
         {mix_html}
     </div>

@@ -27,6 +27,7 @@ from services.lineup_service import (
     LINEUP_STATUS_NOT_POSTED,
     LineupService,
     MLBStatsAPIProvider,
+    RotowireProvider,
     SportsDataIOProvider,
     SportradarProvider,
 )
@@ -348,8 +349,167 @@ class LineupServiceTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("SPORTRADAR_MLB_API_KEY", None)
             os.environ.pop("SPORTSDATAIO_MLB_API_KEY", None)
+            os.environ.pop("ROTOWIRE_MLB_API_KEY", None)
             self.assertFalse(SportradarProvider().is_configured)
             self.assertFalse(SportsDataIOProvider().is_configured)
+            self.assertFalse(RotowireProvider().is_configured)
+
+
+# --- Rotowire fixtures ------------------------------------------------------
+
+ROTOWIRE_EXPECTED_LINEUPS = {
+    "Games": [
+        {
+            "Visitor": "HOU", "Home": "NYY",
+            "Stadium": "Yankee Stadium",
+            "GameTime": "2026-05-17T23:05:00Z",
+            "gamePk": 700001,
+            "Visitor_SP_Name": "Framber Valdez",
+            "Visitor_SP_ID": 666201,
+            "Visitor_SP_Hand": "L",
+            "Home_SP_Name": "Gerrit Cole",
+            "Home_SP_ID": 519242,
+            "Home_SP_Hand": "R",
+            # Flat-column visitor lineup, every starter Confirmed=1.
+            **{f"Visitor_LU{i}_Name": n for i, n in enumerate(
+                ["Jose Altuve", "Jeremy Pena", "Yordan Alvarez",
+                 "Kyle Tucker", "Alex Bregman", "Jose Abreu",
+                 "Chas McCormick", "Yainer Diaz", "Mauricio Dubon"], start=1)},
+            **{f"Visitor_LU{i}_Pos": p for i, p in enumerate(
+                ["2B", "SS", "DH", "RF", "3B", "1B", "CF", "C", "LF"], start=1)},
+            **{f"Visitor_LU{i}_Bats": b for i, b in enumerate(
+                ["R", "R", "L", "L", "R", "R", "R", "R", "R"], start=1)},
+            **{f"Visitor_LU{i}_ID": pid for i, pid in enumerate(
+                [1, 2, 3, 4, 5, 6, 7, 8, 9], start=1)},
+            **{f"Visitor_LU{i}_Confirmed": 1 for i in range(1, 10)},
+            # Nested-array home lineup (the other shape Rotowire emits).
+            "HomeLineup": [
+                {"order": 1, "name": "Anthony Volpe", "pos": "SS",
+                 "bats": "R", "id": 10},
+                {"order": 2, "name": "Juan Soto", "pos": "RF",
+                 "bats": "L", "id": 11},
+                {"order": 3, "name": "Aaron Judge", "pos": "CF",
+                 "bats": "R", "id": 12},
+                {"order": 4, "name": "Giancarlo Stanton", "pos": "DH",
+                 "bats": "R", "id": 13},
+                {"order": 5, "name": "Anthony Rizzo", "pos": "1B",
+                 "bats": "L", "id": 14},
+                {"order": 6, "name": "Gleyber Torres", "pos": "2B",
+                 "bats": "R", "id": 15},
+                {"order": 7, "name": "Alex Verdugo", "pos": "LF",
+                 "bats": "L", "id": 16},
+                {"order": 8, "name": "Oswaldo Cabrera", "pos": "3B",
+                 "bats": "S", "id": 17},
+                {"order": 9, "name": "Jose Trevino", "pos": "C",
+                 "bats": "R", "id": 18},
+            ],
+        },
+        # A second game with only 4 hitters posted — should land as ``expected``.
+        {
+            "Visitor": "BOS", "Home": "TOR",
+            "Stadium": "Rogers Centre",
+            "GameTime": "2026-05-17T23:07:00Z",
+            "Visitor_LU1_Name": "Jarren Duran", "Visitor_LU1_Pos": "CF",
+            "Visitor_LU2_Name": "Rafael Devers", "Visitor_LU2_Pos": "3B",
+            "Visitor_LU3_Name": "Tyler O'Neill", "Visitor_LU3_Pos": "LF",
+            "Visitor_LU4_Name": "Triston Casas", "Visitor_LU4_Pos": "1B",
+        },
+    ]
+}
+
+ROTOWIRE_PROJECTED_STARTERS = {
+    "Games": [
+        {"Visitor": "BOS", "Home": "TOR",
+         "Visitor_SP_Name": "Brayan Bello", "Visitor_SP_ID": 671075,
+         "Visitor_SP_Hand": "R",
+         "Home_SP_Name": "Jose Berrios", "Home_SP_ID": 621244,
+         "Home_SP_Hand": "R"},
+    ]
+}
+
+
+class RotowireProviderTests(unittest.TestCase):
+
+    def test_missing_key_disables_provider(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROTOWIRE_MLB_API_KEY", None)
+            prov = RotowireProvider()
+            self.assertFalse(prov.is_configured)
+            # fetch_daily must short-circuit to None without hitting the
+            # network when no key is configured.
+            self.assertIsNone(prov.fetch_daily("2026-05-17"))
+
+    def test_parses_flat_and_nested_lineup_shapes(self):
+        prov = RotowireProvider(api_key="fake", fetcher=make_fetcher({
+            "ExpectedLineups.php": ROTOWIRE_EXPECTED_LINEUPS,
+            "ProjectedStarters.php": ROTOWIRE_PROJECTED_STARTERS,
+        }))
+        slate = prov.fetch_daily("2026-05-17")
+        self.assertIsNotNone(slate)
+        self.assertEqual(len(slate), 2)
+
+        g1 = next(g for g in slate if g.away.team_abbr == "HOU")
+        self.assertEqual(g1.game_pk, 700001)
+        self.assertEqual(g1.venue, "Yankee Stadium")
+        self.assertEqual(len(g1.away.starters), 9)
+        self.assertEqual(len(g1.home.starters), 9)
+        self.assertEqual(g1.away.starters[0].name, "Jose Altuve")
+        self.assertEqual(g1.home.starters[2].name, "Aaron Judge")
+        self.assertEqual(g1.away.probable_pitcher_name, "Framber Valdez")
+        self.assertEqual(g1.home.probable_pitcher_hand, "R")
+        # Visitor side had Confirmed=1 on every slot → confirmed status.
+        self.assertEqual(g1.away.status, LINEUP_STATUS_CONFIRMED)
+        # Home side (nested array, no Confirmed flag) → expected.
+        self.assertEqual(g1.home.status, LINEUP_STATUS_EXPECTED)
+        self.assertEqual(g1.provider, "rotowire")
+
+    def test_partial_lineup_marked_not_posted_and_borrows_starters(self):
+        prov = RotowireProvider(api_key="fake", fetcher=make_fetcher({
+            "ExpectedLineups.php": ROTOWIRE_EXPECTED_LINEUPS,
+            "ProjectedStarters.php": ROTOWIRE_PROJECTED_STARTERS,
+        }))
+        slate = prov.fetch_daily("2026-05-17")
+        g2 = next(g for g in slate if g.away.team_abbr == "BOS")
+        # Only 4 hitters were supplied → not-posted.
+        self.assertEqual(g2.away.status, LINEUP_STATUS_NOT_POSTED)
+        # ExpectedLineups payload had no probable pitcher for BOS; the parser
+        # should have pulled one in from the ProjectedStarters payload.
+        self.assertEqual(g2.away.probable_pitcher_name, "Brayan Bello")
+        self.assertEqual(g2.home.probable_pitcher_name, "Jose Berrios")
+
+    def test_falls_back_to_statsapi_when_rotowire_errors(self):
+        def boom(url, params, headers):
+            raise RuntimeError("rotowire 502")
+
+        rw = RotowireProvider(api_key="fake", fetcher=boom)
+        statsapi = MLBStatsAPIProvider(fetcher=make_fetcher({
+            "/schedule": SCHEDULE_PREGAME,
+            "/game/700001/feed/live": LIVE_FEED_CONFIRMED,
+            "/feed/live": {},
+            "/boxscore": {},
+        }))
+        svc = LineupService(providers=[rw, statsapi])
+        slate = svc.get_daily("2026-05-17")
+        self.assertGreaterEqual(len(slate), 1)
+        # The HOU/NYY game came from StatsAPI because Rotowire raised.
+        hou = next(g for g in slate if g.game_pk == 700001)
+        self.assertEqual(hou.provider, "mlb-statsapi")
+
+    def test_custom_base_url_is_honored(self):
+        captured: dict[str, str] = {}
+
+        def fetcher(url, params, headers):
+            captured["url"] = url
+            captured["key"] = (params or {}).get("key", "")
+            return {"Games": []}
+
+        prov = RotowireProvider(api_key="abc",
+                                base_url="https://api.rotowire.us/mlb/production/v7",
+                                fetcher=fetcher)
+        prov.fetch_daily("2026-05-17")
+        self.assertTrue(captured["url"].startswith(
+            "https://api.rotowire.us/mlb/production/v7/"))
+        self.assertEqual(captured["key"], "abc")
 
 
 if __name__ == "__main__":

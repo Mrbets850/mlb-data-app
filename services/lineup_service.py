@@ -556,6 +556,340 @@ class SportradarProvider(LineupProvider):
         )
 
 
+class RotowireProvider(LineupProvider):
+    """Rotowire MLB expected/projected lineups.
+
+    Activated when ``ROTOWIRE_MLB_API_KEY`` is set. The base path defaults
+    to the documented production host but can be overridden via
+    ``ROTOWIRE_MLB_BASE_URL`` for staging or proxy environments. Auth is
+    a ``key`` query parameter, matching the gfay63/rotowire-api-client
+    reference. Endpoints used:
+
+    - ``ExpectedLineups.php`` — projected/confirmed batting orders by date
+    - ``ProjectedStarters.php`` — probable pitchers by date
+
+    Rotowire does not expose MLB ``gamePk`` identifiers, so per-game lookup
+    walks the daily slate and filters by ``gamePk`` (or team abbreviations
+    when the daily payload omits the integer key).
+    """
+
+    name = "rotowire"
+    DEFAULT_BASE = "https://api.rotowire.com/Baseball/MLB"
+
+    def __init__(self, api_key: str | None = None,
+                 base_url: str | None = None,
+                 fetcher: Fetcher | None = None) -> None:
+        self._api_key = api_key or os.environ.get("ROTOWIRE_MLB_API_KEY", "")
+        self._base = (base_url
+                      or os.environ.get("ROTOWIRE_MLB_BASE_URL", "")
+                      or self.DEFAULT_BASE).rstrip("/")
+        self._fetch = fetcher or _default_http_fetcher
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self._api_key)
+
+    def _params(self, date_iso: str | None = None) -> dict[str, str]:
+        params = {"format": "json", "key": self._api_key}
+        if date_iso:
+            params["date"] = date_iso
+        return params
+
+    def fetch_daily(self, date_iso: str) -> list[GameLineups] | None:
+        if not self.is_configured:
+            return None
+        try:
+            lineups_payload = self._fetch(
+                f"{self._base}/ExpectedLineups.php",
+                self._params(date_iso), None,
+            )
+        except Exception as exc:
+            log.warning("Rotowire ExpectedLineups failed: %s", exc)
+            return None
+        try:
+            starters_payload = self._fetch(
+                f"{self._base}/ProjectedStarters.php",
+                self._params(date_iso), None,
+            )
+        except Exception as exc:
+            log.debug("Rotowire ProjectedStarters failed: %s", exc)
+            starters_payload = None
+        return self._parse_expected_lineups(lineups_payload, starters_payload,
+                                            date_iso) or None
+
+    def fetch_game(self, game_pk: int) -> GameLineups | None:
+        # Rotowire identifies games by date + teams, not MLB gamePk. Caller
+        # should use fetch_daily and filter — we leave this unimplemented so
+        # the orchestrator falls through to the next provider for game lookups.
+        return None
+
+    # ---- Parser ----
+
+    def _parse_expected_lineups(self, payload: Any,
+                                starters_payload: Any,
+                                date_iso: str) -> list[GameLineups]:
+        # Rotowire JSON returns either a list of game dicts at the top level
+        # or wraps them under a top-level key (commonly ``Games`` or
+        # ``lineups``). Be defensive: accept either.
+        games = _coerce_games_list(payload)
+        starters_idx = _index_projected_starters(starters_payload)
+
+        out: list[GameLineups] = []
+        for g in games:
+            try:
+                parsed = self._parse_game_entry(g, starters_idx, date_iso)
+            except Exception as exc:
+                log.debug("Rotowire parse skipped one entry: %s", exc)
+                continue
+            if parsed is not None:
+                out.append(parsed)
+        return out
+
+    def _parse_game_entry(self, g: dict[str, Any],
+                          starters_idx: dict[tuple[str, str], dict[str, Any]],
+                          date_iso: str) -> GameLineups | None:
+        # Team abbreviations can live under several names depending on feed
+        # version. Try the common ones; bail if we can't identify both sides.
+        away_abbr = _pick(g, ("Visitor", "Away", "VisTeam", "AwayTeam",
+                              "visitor", "away_team"))
+        home_abbr = _pick(g, ("Home", "HomeTeam", "home_team"))
+        if not (away_abbr and home_abbr):
+            return None
+        away_abbr = str(away_abbr).upper()
+        home_abbr = str(home_abbr).upper()
+
+        try:
+            gpk = int(_pick(g, ("gamePk", "GamePk", "MLB_ID", "MLBID",
+                                "mlbam_id", "game_id")) or 0)
+        except (TypeError, ValueError):
+            gpk = 0
+
+        game_time = (_pick(g, ("GameTime", "Time", "DateTime", "date_time",
+                               "Scheduled", "scheduled")) or "")
+        venue = _pick(g, ("Stadium", "Venue", "venue")) or ""
+
+        away_starters = _extract_rotowire_starters(g, side="visitor")
+        home_starters = _extract_rotowire_starters(g, side="home")
+
+        away_pp = _extract_rotowire_pitcher(g, side="visitor")
+        home_pp = _extract_rotowire_pitcher(g, side="home")
+        # ProjectedStarters often carries the probable pitcher even when the
+        # ExpectedLineups payload omits it. Merge it in if missing.
+        ps_entry = starters_idx.get((away_abbr, home_abbr))
+        if ps_entry:
+            if not away_pp.get("name"):
+                away_pp = _ps_pitcher(ps_entry, side="visitor")
+            if not home_pp.get("name"):
+                home_pp = _ps_pitcher(ps_entry, side="home")
+            if gpk == 0:
+                try:
+                    gpk = int(ps_entry.get("gamePk") or ps_entry.get("MLB_ID") or 0)
+                except (TypeError, ValueError):
+                    gpk = 0
+
+        def _team(abbr: str, starters: list[LineupPlayer],
+                  pp: dict[str, Any]) -> TeamLineup:
+            tl = TeamLineup(
+                team_id=None,
+                team_abbr=abbr,
+                team_name=abbr,
+                starters=starters,
+                probable_pitcher_id=pp.get("id"),
+                probable_pitcher_name=pp.get("name", "") or "",
+                probable_pitcher_hand=pp.get("hand", "") or "",
+            )
+            if len(starters) >= 9:
+                # Rotowire surfaces a "Confirmed" flag on individual rows when
+                # MLB has actually posted the order. Treat that flag, if
+                # present and truthy on any starter, as confirmation.
+                confirmed = any(
+                    bool(s and getattr(s, "is_starter", False) and
+                         _starter_confirmed_flag(s))
+                    for s in starters
+                )
+                tl.status = (LINEUP_STATUS_CONFIRMED if confirmed
+                             else LINEUP_STATUS_EXPECTED)
+            else:
+                tl.status = LINEUP_STATUS_NOT_POSTED
+            return tl
+
+        return GameLineups(
+            game_pk=gpk,
+            game_date=date_iso,
+            game_time_utc=str(game_time) if game_time else "",
+            status="",  # Rotowire doesn't carry MLB detailedState
+            abstract_status="preview",
+            venue=str(venue) if venue else "",
+            away=_team(away_abbr, away_starters, away_pp),
+            home=_team(home_abbr, home_starters, home_pp),
+            provider=self.name,
+        )
+
+
+def _coerce_games_list(payload: Any) -> list[dict[str, Any]]:
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        return [g for g in payload if isinstance(g, dict)]
+    if isinstance(payload, dict):
+        for key in ("Games", "games", "lineups", "Lineups", "data"):
+            v = payload.get(key)
+            if isinstance(v, list):
+                return [g for g in v if isinstance(g, dict)]
+        # Single-game payload at top level.
+        return [payload]
+    return []
+
+
+def _pick(d: dict[str, Any], keys: Iterable[str]) -> Any:
+    for k in keys:
+        if k in d and d[k] not in (None, ""):
+            return d[k]
+    return None
+
+
+def _extract_rotowire_starters(g: dict[str, Any], *, side: str) -> list[LineupPlayer]:
+    # Two payload shapes observed in the wild:
+    # 1. Flat columns: ``Visitor_LU1_Name``, ``Visitor_LU1_Pos``, ...,
+    #    ``Visitor_LU1_Bats`` and ``Visitor_LU1_ID``.
+    # 2. Nested lineup array: ``visitor_lineup``: [{order, name, pos, bats, id}].
+    prefix_map = {"visitor": ("Visitor", "Away", "Visitor_LU", "Away_LU"),
+                  "home":    ("Home", "Home_LU")}
+    array_keys = {"visitor": ("VisitorLineup", "visitor_lineup",
+                              "AwayLineup", "away_lineup"),
+                  "home":    ("HomeLineup", "home_lineup")}
+
+    # Try array shape first.
+    for k in array_keys[side]:
+        arr = g.get(k)
+        if isinstance(arr, list) and arr:
+            return _starters_from_array(arr)
+
+    # Fall back to flat-column shape.
+    starters: list[LineupPlayer] = []
+    flat_prefixes = ("Visitor_LU", "Away_LU") if side == "visitor" else ("Home_LU",)
+    for slot in range(1, 10):
+        for fp in flat_prefixes:
+            name = g.get(f"{fp}{slot}_Name") or g.get(f"{fp}{slot}_FullName")
+            if name:
+                try:
+                    pid_raw = g.get(f"{fp}{slot}_ID") or g.get(f"{fp}{slot}_MLBID")
+                    pid = int(pid_raw) if pid_raw not in (None, "", 0, "0") else None
+                except (TypeError, ValueError):
+                    pid = None
+                lp = LineupPlayer(
+                    player_id=pid,
+                    name=str(name),
+                    position=str(g.get(f"{fp}{slot}_Pos") or
+                                 g.get(f"{fp}{slot}_Position") or ""),
+                    bat_side=str(g.get(f"{fp}{slot}_Bats") or
+                                 g.get(f"{fp}{slot}_BatHand") or ""),
+                    batting_order=slot,
+                    is_starter=True,
+                )
+                # Carry the confirmed flag through an opaque attribute so the
+                # team-status check above can read it without expanding the
+                # public LineupPlayer schema.
+                confirmed = g.get(f"{fp}{slot}_Confirmed") or g.get(f"{fp}_Confirmed")
+                setattr(lp, "_rotowire_confirmed", bool(_truthy(confirmed)))
+                starters.append(lp)
+                break
+    return starters
+
+
+def _starters_from_array(arr: list[Any]) -> list[LineupPlayer]:
+    out: list[LineupPlayer] = []
+    for entry in arr:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name") or entry.get("Name") or entry.get("FullName") or ""
+        if not name:
+            continue
+        try:
+            order = int(entry.get("order") or entry.get("Order") or
+                        entry.get("BattingOrder") or 0) or None
+        except (TypeError, ValueError):
+            order = None
+        try:
+            pid_raw = (entry.get("id") or entry.get("MLBID") or
+                       entry.get("mlb_id") or entry.get("PlayerID"))
+            pid = int(pid_raw) if pid_raw not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            pid = None
+        lp = LineupPlayer(
+            player_id=pid,
+            name=str(name),
+            position=str(entry.get("pos") or entry.get("Pos") or
+                         entry.get("Position") or ""),
+            bat_side=str(entry.get("bats") or entry.get("Bats") or
+                         entry.get("BatHand") or ""),
+            batting_order=order,
+            is_starter=True,
+        )
+        setattr(lp, "_rotowire_confirmed",
+                bool(_truthy(entry.get("Confirmed") or entry.get("confirmed"))))
+        out.append(lp)
+    out.sort(key=lambda p: (p.batting_order or 99, p.name))
+    return out
+
+
+def _extract_rotowire_pitcher(g: dict[str, Any], *, side: str) -> dict[str, Any]:
+    prefix = "Visitor" if side == "visitor" else "Home"
+    name = g.get(f"{prefix}_SP_Name") or g.get(f"{prefix}SP")
+    if not name:
+        nested = g.get(f"{prefix.lower()}_sp") or g.get(f"{prefix}SP_Info")
+        if isinstance(nested, dict):
+            name = nested.get("name") or nested.get("Name")
+            return {"id": _safe_int(nested.get("id") or nested.get("MLBID")),
+                    "name": str(name or ""),
+                    "hand": str(nested.get("hand") or nested.get("Hand") or "")}
+    return {"id": _safe_int(g.get(f"{prefix}_SP_ID") or g.get(f"{prefix}_SP_MLBID")),
+            "name": str(name or ""),
+            "hand": str(g.get(f"{prefix}_SP_Hand") or g.get(f"{prefix}SP_Hand") or "")}
+
+
+def _index_projected_starters(payload: Any) -> dict[tuple[str, str], dict[str, Any]]:
+    games = _coerce_games_list(payload)
+    idx: dict[tuple[str, str], dict[str, Any]] = {}
+    for g in games:
+        away = _pick(g, ("Visitor", "Away", "VisTeam", "AwayTeam", "away_team"))
+        home = _pick(g, ("Home", "HomeTeam", "home_team"))
+        if away and home:
+            idx[(str(away).upper(), str(home).upper())] = g
+    return idx
+
+
+def _ps_pitcher(entry: dict[str, Any], *, side: str) -> dict[str, Any]:
+    prefix = "Visitor" if side == "visitor" else "Home"
+    return {"id": _safe_int(entry.get(f"{prefix}_SP_ID")),
+            "name": str(entry.get(f"{prefix}_SP_Name") or
+                        entry.get(f"{prefix}SP") or ""),
+            "hand": str(entry.get(f"{prefix}_SP_Hand") or "")}
+
+
+def _safe_int(v: Any) -> int | None:
+    try:
+        if v in (None, "", 0, "0"):
+            return None
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _truthy(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "y", "confirmed")
+    return False
+
+
+def _starter_confirmed_flag(lp: LineupPlayer) -> bool:
+    return bool(getattr(lp, "_rotowire_confirmed", False))
+
+
 class SportsDataIOProvider(LineupProvider):
     """SportsDataIO MLB starting-lineups endpoint.
 
@@ -747,6 +1081,9 @@ def default_providers() -> list[LineupProvider]:
     sportsdataio = SportsDataIOProvider()
     if sportsdataio.is_configured:
         providers.append(sportsdataio)
+    rotowire = RotowireProvider()
+    if rotowire.is_configured:
+        providers.append(rotowire)
     providers.append(MLBStatsAPIProvider())
     return providers
 

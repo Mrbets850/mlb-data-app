@@ -1019,6 +1019,53 @@ def standardize_columns(df):
         df["OPS"] = _ops.fillna(_obp + _slg)
     return df
 
+
+# OPS appears on every batter-facing card / table / generator in the app. These
+# helpers centralize the read-with-OBP+SLG-fallback and the 3-decimal display
+# format so each view doesn't reimplement the same coalescing logic.
+def get_ops_value(row):
+    """Return float OPS for a row (Series or dict-like), falling back to
+    OBP + SLG when the precomputed OPS is missing. Returns None when neither
+    source is available, so callers can render an em-dash instead of crashing.
+    """
+    if row is None:
+        return None
+    try:
+        v = row.get("OPS") if hasattr(row, "get") else row["OPS"] if "OPS" in row else None
+    except Exception:
+        v = None
+    try:
+        if v is not None and not (isinstance(v, float) and pd.isna(v)):
+            return float(v)
+    except Exception:
+        pass
+    try:
+        obp = row.get("OBP") if hasattr(row, "get") else None
+        slg = row.get("SLG") if hasattr(row, "get") else None
+        if obp is None or slg is None:
+            return None
+        obp_f = float(obp); slg_f = float(slg)
+        if pd.isna(obp_f) or pd.isna(slg_f):
+            return None
+        return obp_f + slg_f
+    except Exception:
+        return None
+
+
+def fmt_ops(v, dash="—"):
+    """Format an OPS value to 3 decimals; returns the dash placeholder when
+    the value is missing or non-numeric."""
+    try:
+        if v is None:
+            return dash
+        f = float(v)
+        if pd.isna(f):
+            return dash
+        return f"{f:.3f}"
+    except Exception:
+        return dash
+
+
 @st.cache_data(ttl=1800)
 def get_schedule(selected_date):
     url = "https://statsapi.mlb.com/api/v1/schedule"
@@ -3151,6 +3198,11 @@ def _crushes_cell(arsenal_b, player_id, opp_pitches: set, top_n: int = 2, min_pa
 # kHR categories. Keys match the short internal column names used by the
 # heat-map board; MATCHUP_HEATMAP_DISPLAY_LABELS owns the friendly headers.
 HR_METRIC_KEYS = [
+    # OPS is included so build_matchup_table-derived views (Top 3 Hitters card,
+    # Hot/Cold leaderboards, HR Milestones table) automatically carry the
+    # canonical OPS column without each call-site reaching back into the raw
+    # batter row.
+    "OPS",
     "ISO", "Brl/BIP%", "FB%", "GB%", "EV", "HH%",
     "HR/FB%", "PullAir%", "LA", "xwOBA", "SweetSpot%",
 ]
@@ -3179,6 +3231,9 @@ def _hr_league_table(batters_df):
         "HardHit%":   _league_avg_from(batters_df, "HardHit%",   38.0),
         "EV":         _league_avg_from(batters_df, "EV",          89.0),
         "LA":         _league_avg_from(batters_df, "LA",          12.0),
+        # OPS league median (~.730) — used as the fallback when a batter row
+        # has no OPS/OBP/SLG available so cards never collapse to "—".
+        "OPS":        _league_avg_from(batters_df, "OPS",          0.730),
     }
 
 def compute_hr_metrics(b_row, lg):
@@ -3209,6 +3264,15 @@ def compute_hr_metrics(b_row, lg):
     hh      = _g("HardHit%", lg["HardHit%"])
     ev      = _g("EV", lg["EV"])
     la      = _g("LA", lg["LA"])
+    # Canonical OPS read with OBP+SLG fallback, then league-median fallback.
+    ops     = _g("OPS")
+    if ops is None:
+        obp_v = _g("OBP")
+        slg_v = _g("SLG")
+        if obp_v is not None and slg_v is not None:
+            ops = obp_v + slg_v
+    if ops is None:
+        ops = lg.get("OPS", 0.730)
 
     # BIP estimate for HR/FB% denominator: SwingsComp-derived if available,
     # else PA × (1 - K%/100 - BB%/100), else a low-PA placeholder.
@@ -3249,6 +3313,7 @@ def compute_hr_metrics(b_row, lg):
         "LA":         round(la, 1) if la is not None else None,
         "xwOBA":      round(xwoba, 3) if xwoba is not None else None,
         "SweetSpot%": round(sweet, 1) if sweet is not None else None,
+        "OPS":        round(ops, 3) if ops is not None else None,
     }
 
 
@@ -5677,6 +5742,11 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df,
                 pull     = safe_float(b.get("Pull%"),    np.nan)
                 ev       = safe_float(b.get("EV"),       np.nan)
                 xiso     = safe_float(b.get("xISO"),     np.nan)
+                # OPS is included on every sleeper row so downstream views
+                # (HR Sleepers card, AI HR Parlay reasons, Round Robin stats
+                # line) can read it directly. get_ops_value falls back to
+                # OBP+SLG when the precomputed OPS is missing.
+                ops      = get_ops_value(b)
                 # Pull the canonical HR-focused metric set so the Sleepers
                 # display, the slate leaderboards, and the Matchup heat-map
                 # all show identical values for the same hitter.
@@ -5691,13 +5761,22 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df,
                 n_match  = _norm(m_score, 80.0, 140.0)
                 n_ceil   = _norm(c_score, 80.0, 140.0)
                 n_khr    = _norm(khr,     0.4,  1.6)
+                # 0-100 OPS index anchored on .620 (replacement) → .950 (MVP),
+                # mirroring the band used by build_targets_table so OPS reads
+                # the same across HR Sleepers, TB, RBI2, and HRR scoring.
+                n_ops    = _norm(ops if ops is not None else np.nan, 0.620, 0.950)
                 bonus    = _sleeper_bonus(hr_total, r.get("lineup_spot", 9))
 
+                # 5% OPS bonus: small enough to keep raw HR-power signals
+                # (Barrel%, ISO, FB%) in the driver's seat, but large enough
+                # that an .850+ OPS reliably nudges qualified sleepers up the
+                # board over identical-power bats with weaker plate skills.
                 power_part   = (0.22 * n_barrel + 0.14 * n_hh + 0.10 * n_iso
                                 + 0.07 * n_fb + 0.07 * n_pull)
                 matchup_part = 0.10 * n_match + 0.08 * n_ceil + 0.07 * n_khr
                 bonus_part   = 0.15 * bonus
-                sleeper      = round(power_part + matchup_part + bonus_part, 1)
+                ops_part     = 0.05 * n_ops
+                sleeper      = round(power_part + matchup_part + bonus_part + ops_part, 1)
 
                 rows.append({
                     "_player_id": r.get("player_id"),
@@ -5716,6 +5795,7 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df,
                     "FB%":      fb     if not pd.isna(fb)     else None,
                     "Pull%":    pull   if not pd.isna(pull)   else None,
                     "EV":       ev     if not pd.isna(ev)     else None,
+                    "OPS":      ops    if ops is not None     else None,
                     "Matchup":  m_score,
                     "Ceiling":  c_score,
                     "kHR":      khr,
@@ -6013,6 +6093,7 @@ def render_hr_sleepers_html(df):
             f'<td><span class="hrs-score">{r.get("Sleeper Score",0):.1f}</span> '
             f'<span class="hrs-pill {tier_cls}" style="margin-left:6px;">{tier_label}</span></td>'
             f'<td class="hrs-num">{_fmt_num(r.get("Matchup"), 1)}</td>'
+            f'<td class="hrs-num">{fmt_ops(r.get("OPS"))}</td>'
             f'<td class="hrs-num">{_fmt_num(r.get("ISO"), 3)}</td>'
             f'<td class="hrs-num">{_fmt_pct(r.get("Brl/BIP%"))}</td>'
             f'<td class="hrs-num">{_fmt_pct(r.get("FB%"))}</td>'
@@ -6034,6 +6115,11 @@ def render_hr_sleepers_html(df):
         chip_parts = [
             _mc_chip("Matchup", _mc_fmt(r.get("Matchup"), "{:.1f}"),
                      _mc_chip_tone(r.get("Matchup"), 80, 140)),
+            # OPS leads the chip stack on mobile so the universal bat-quality
+            # signal is immediately visible (same band as the heat-map /
+            # target-table chips: .650 → .900).
+            _mc_chip("OPS", _mc_fmt(r.get("OPS"), "{:.3f}"),
+                     _mc_chip_tone(r.get("OPS"), 0.650, 0.900)),
             _mc_chip("ISO", _mc_fmt(r.get("ISO"), "{:.3f}"),
                      _mc_chip_tone(r.get("ISO"), 0.130, 0.260)),
             _mc_chip("Barrel%", _mc_fmt(r.get("Brl/BIP%"), "{:.1f}%"),
@@ -6078,7 +6164,7 @@ def render_hr_sleepers_html(df):
         '<div class="hrs-wrap"><table class="hrs-table">'
         '<thead><tr>'
         '<th>#</th><th>Hitter</th><th>Game</th><th>Sleeper</th>'
-        '<th>Matchup</th><th>ISO</th><th>Barrel%</th><th>Flyball%</th>'
+        '<th>Matchup</th><th>OPS</th><th>ISO</th><th>Barrel%</th><th>Flyball%</th>'
         '<th>GB%</th><th>Exit Velo</th><th>Hard Hit%</th><th>HR/FB%</th>'
         '<th>Pull Air%</th><th>Launch Angle</th><th>xwOBA</th><th>Sweet Spot%</th>'
         '</tr></thead><tbody>'
@@ -6545,6 +6631,8 @@ def render_targets_html(df, mode="tb"):
             chips = [
                 _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
                          _mc_chip_tone(r.get("Matchup"), 80, 140)),
+                _mc_chip("OPS", _mc_fmt(r.get("OPS"), "{:.3f}"),
+                         _mc_chip_tone(r.get("OPS"), 0.650, 0.900)),
                 _mc_chip("xBA", _mc_fmt(r.get("xBA"), "{:.3f}"),
                          _mc_chip_tone(r.get("xBA"), 0.230, 0.310)),
                 _mc_chip("xOBP", _mc_fmt(r.get("xOBP"), "{:.3f}"),
@@ -9088,7 +9176,12 @@ if _view == "🤖 AI HR Parlay":
             return "—"
 
     def _compact_stats_line(leg) -> str:
-        """One-line compact stats: Ceiling · Barrel · HH · ISO · Zone fit · Spot."""
+        """One-line compact stats: Ceiling · OPS · Barrel · HH · ISO · Zone fit · Spot.
+
+        OPS sits between Ceiling and the contact metrics so the leg card
+        reads as: environment first, overall bat quality next, then the
+        HR-specific signals that pushed the leg up the board.
+        """
         parts = []
         ceil = leg.get("Ceiling")
         try:
@@ -9097,6 +9190,9 @@ if _view == "🤖 AI HR Parlay":
                 parts.append(f"Ceiling <b>{cf:.0f}</b>")
         except Exception:
             pass
+        op = fmt_ops(get_ops_value(leg))
+        if op != "—":
+            parts.append(f"OPS <b>{op}</b>")
         b = _fmt_or_dash(leg.get("Barrel%"),  "{:.1f}%")
         if b != "—": parts.append(f"Barrel <b>{b}</b>")
         h = _fmt_or_dash(leg.get("HardHit%"), "{:.1f}%")
@@ -9596,6 +9692,11 @@ if _view == "👑 HR Round Robin":
         n_bs     = _norm(row.get("BatSpeed"),  68.0,  76.0)
         n_khr    = _norm(row.get("kHR"),        0.85,  1.30)
         n_match  = _norm(match,                85.0, 125.0)
+        # OPS = OBP + SLG. Universal "is the bat producing?" scalar. Read via
+        # get_ops_value so rows missing the precomputed OPS still get a value
+        # from the OBP / SLG components. Falls back to the .500 default when
+        # nothing is available so a blank line doesn't punish the hitter.
+        n_ops    = _norm(get_ops_value(row), 0.620, 0.950)
         # Lineup spot — heart of order best, late spots discounted
         try:
             sp = int(row.get("Spot") or 9)
@@ -9608,10 +9709,14 @@ if _view == "👑 HR Round Robin":
         except Exception:
             hr_szn = 0.0
         n_hr_szn = max(0.0, min(100.0, (hr_szn / 25.0) * 100.0))
-        # Composite — broad coverage, no single metric dominates
+        # Composite — broad coverage, no single metric dominates. OPS is a
+        # 4% weight: meaningful enough to help break ties between hitters
+        # with similar power profiles but very different overall production,
+        # small enough that it never overrides the dominant HR-specific
+        # signals (Barrel%, ISO, FB%, Ceiling).
         composite = (
-            0.22 * sleeper      # base HR Sleeper Score (already broad)
-          + 0.16 * ceiling      # park × weather × SP
+            0.21 * sleeper      # base HR Sleeper Score (already broad)
+          + 0.15 * ceiling      # park × weather × SP
           + 0.08 * n_barrel
           + 0.06 * n_hh
           + 0.05 * n_iso
@@ -9623,6 +9728,7 @@ if _view == "👑 HR Round Robin":
           + 0.03 * n_la
           + 0.05 * n_bs
           + 0.03 * n_khr
+          + 0.04 * n_ops
           + 0.05 * n_match
           + 0.05 * spot_bonus
           + 0.03 * n_hr_szn
@@ -11459,7 +11565,15 @@ if _view == "🥎 AI 1+ Hits Parlay":
         n_kinv  = 100.0 - _norm_h(k_pct, 12.0, 32.0)  # lower K% better
         n_ld    = _norm_h(ld,     17.0, 28.0)
         n_ss    = _norm_h(ss_pct, 28.0, 40.0)
-        contact = 0.12*n_xba + 0.09*n_avg + 0.07*n_kinv + 0.04*n_ld + 0.03*n_ss
+        # OPS index — universal bat-quality scalar. Anchored .620 → .950 so
+        # the band matches the heat-map / target-table scoring.
+        n_ops   = _norm_h(ops,    0.620, 0.950)
+        # Contact part keeps its 35% total but reallocates 3 pts to OPS so a
+        # strong overall bat doesn't get punished when xBA / AVG haven't yet
+        # caught up to the underlying production. xBA → 12 (unchanged),
+        # AVG 9 → 8, K%-inv 7 → 6, LD% 4 → 3, SS% 3 (unchanged), OPS 3.
+        contact = (0.12*n_xba + 0.08*n_avg + 0.06*n_kinv + 0.03*n_ld
+                   + 0.03*n_ss + 0.03*n_ops)
 
         # --- Plate skill (15) ---
         n_whiffinv = 100.0 - _norm_h(whiff, 16.0, 34.0)
@@ -11855,6 +11969,12 @@ if _view == "🥎 AI 1+ Hits Parlay":
 
     def _h_compact_stats_line(leg) -> str:
         parts = []
+        # OPS first — universal bat-quality signal carried for every leg via
+        # the signals dict. Read via get_ops_value so OBP+SLG-only rows still
+        # surface a value rather than collapse to an em-dash.
+        op = fmt_ops(get_ops_value(leg))
+        if op != "—":
+            parts.append(f"OPS <b>{op}</b>")
         x = leg.get("xBA")
         if _h_fmt_or_dash(x, "{:.3f}") != "—":
             parts.append(f"xBA <b>{_h_fmt_or_dash(x, '{:.3f}')}</b>")
@@ -12405,6 +12525,9 @@ if _render_matchup:
             ev_v  = r.get("EV")
             hh_v  = r.get("HH%")
             iso_v = r.get("ISO")
+            # OPS surfaced as a top-tile metric so the per-game Top 3 card
+            # communicates overall bat quality, not only HR-specific signals.
+            ops_v = r.get("OPS")
             def _fmt_card_num(v, fmt):
                 if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
                 try: return fmt.format(float(v))
@@ -12465,6 +12588,7 @@ if _render_matchup:
                 f'</div>'
                 f'</div>'
                 f'<div class="top3-stats" style="margin-top:12px;">'
+                f'<div class="top3-stat"><span class="lab">OPS</span><span class="val">{_fmt_card_num(ops_v, "{:.3f}")}</span></div>'
                 f'<div class="top3-stat"><span class="lab">Barrel%</span><span class="val">{_fmt_card_num(brl_v, "{:.1f}%")}</span></div>'
                 f'<div class="top3-stat"><span class="lab">FB%</span><span class="val">{_fmt_card_num(fb_v, "{:.1f}%")}</span></div>'
                 f'<div class="top3-stat"><span class="lab">EV</span><span class="val">{_fmt_card_num(ev_v, "{:.1f}")}</span></div>'
@@ -12666,7 +12790,7 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
     ranked = df.sort_values(sort_col, ascending=not top).head(n).reset_index(drop=True)
     ranked.insert(0, "#", range(1, len(ranked) + 1))
     show_cols = [c for c in ["#", "Hitter", "Team", "Game", "Spot", "OppPitcher", "Crushes",
-                              "Matchup", "ISO", "Brl/BIP%", "FB%", "GB%", "EV", "HH%",
+                              "Matchup", "OPS", "ISO", "Brl/BIP%", "FB%", "GB%", "EV", "HH%",
                               "HR/FB%", "PullAir%", "LA", "xwOBA", "SweetSpot%",
                               "Last HR Date", "HR (L10G)", "Likely"]
                  if c in ranked.columns]
@@ -12707,6 +12831,10 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
         chips = [
             _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
                      _mc_chip_tone(r.get("Matchup"), 80, 140)),
+            # OPS sits right after Matchup — universal bat-quality signal,
+            # same .650 → .900 band the heat-map / target chips use.
+            _mc_chip("OPS", _mc_fmt(r.get("OPS"), "{:.3f}"),
+                     _mc_chip_tone(r.get("OPS"), 0.650, 0.900)),
             _mc_chip("ISO", _mc_fmt(r.get("ISO"), "{:.3f}"),
                      _mc_chip_tone(r.get("ISO"), 0.130, 0.260)),
             _mc_chip("Barrel%", _mc_fmt(r.get("Brl/BIP%"), "{:.1f}%"),
@@ -12793,7 +12921,8 @@ if _render_hr_milestones:
         st.info("No lineups posted yet across the slate. Check back closer to first pitch.")
     else:
         wanted_cols = [c for c in ["Hitter", "Team", "Game", "Spot", "Bat", "OppPitcher",
-                                    "Season HR", "Last HR Date", "HR (L10G)", "Matchup", "Likely"]
+                                    "Season HR", "Last HR Date", "HR (L10G)",
+                                    "OPS", "Matchup", "Likely"]
                        if c in _slate_df.columns]
         slate_hr = _slate_df[wanted_cols].copy()
 
@@ -12884,6 +13013,11 @@ if _render_hr_milestones:
                          _mc_chip_tone(r.get("Season HR"), 5, 30)),
                 _mc_chip("HR L10G", _mc_fmt(r.get("HR (L10G)"), "{:.0f}"),
                          _mc_chip_tone(r.get("HR (L10G)"), 0, 4)),
+                # OPS chip: pure bat-quality signal alongside the HR-count
+                # signals, so the milestones card doesn't read as "HR totals
+                # only" — a 25-HR threat with a .680 OPS gets visibly flagged.
+                _mc_chip("OPS", _mc_fmt(r.get("OPS"), "{:.3f}"),
+                         _mc_chip_tone(r.get("OPS"), 0.650, 0.900)),
                 _mc_chip("Match", _mc_fmt(r.get("Matchup"), "{:.1f}"),
                          _mc_chip_tone(r.get("Matchup"), 80, 140)),
                 _mc_chip("Last HR", (str(r.get("Last HR Date")) if r.get("Last HR Date") not in (None, "") else None), "mid"),

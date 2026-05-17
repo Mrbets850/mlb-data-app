@@ -366,8 +366,26 @@ def _row_from_app_batter(name: str, team: str, lineup_spot: int, b_row: Any,
         hard = _f(b_row.get("HardHit%"), 38.0)
         kpct = _f(b_row.get("K%"), 22.0)
         iso = _f(b_row.get("ISO"), 0.150)
+        # OPS — surfaced on the RBI Edge cards alongside xwOBA / xSLG. Try the
+        # canonical column first; fall back to OBP + SLG when the feed only
+        # ships the components so display never collapses to "—".
+        ops_raw = b_row.get("OPS")
+        try:
+            if ops_raw is None or pd.isna(float(ops_raw)):
+                obp_v = b_row.get("OBP"); slg_v = b_row.get("SLG")
+                if obp_v is not None and slg_v is not None and not (
+                    pd.isna(float(obp_v)) or pd.isna(float(slg_v))
+                ):
+                    ops = float(obp_v) + float(slg_v)
+                else:
+                    ops = 0.720
+            else:
+                ops = float(ops_raw)
+        except (TypeError, ValueError):
+            ops = 0.720
     else:
         xwoba, xslg, slg, barrel, hard, kpct, iso = 0.320, 0.400, 0.400, 8.0, 38.0, 22.0, 0.150
+        ops = 0.720
 
     sp_whip = _f(p_row.get("WHIP") if p_row is not None else None, 1.30)
     sp_era = _f(p_row.get("ERA") if p_row is not None else None, 4.00)
@@ -402,6 +420,7 @@ def _row_from_app_batter(name: str, team: str, lineup_spot: int, b_row: Any,
         "xwoba_l15": xwoba,
         "xslg": xslg,
         "slg": slg,
+        "ops": ops,
         "barrel_pct": barrel,
         "hard_hit_pct": hard,
         "k_pct": kpct,
@@ -1131,16 +1150,23 @@ def _render_leaderboard(scored: pd.DataFrame) -> None:
         )
         f = fallback.sort_values("score", ascending=False).head(15)
 
-    cols = ["player", "team", "lineup_slot", "matchup", "lineup_status", "score", "label", "prob", "flags"]
+    cols = ["player", "team", "lineup_slot", "matchup", "lineup_status",
+            "score", "label", "prob", "ops", "flags"]
     cols = [c for c in cols if c in f.columns]
     show = f[cols].copy()
     rename_map = {
         "player": "Player", "team": "Team", "lineup_slot": "Slot", "matchup": "Matchup",
         "lineup_status": "Lineup", "score": "RBI Edge", "label": "Tier",
-        "prob": "Est. Prob", "flags": "Key Flags",
+        "prob": "Est. Prob", "ops": "OPS", "flags": "Key Flags",
     }
     show.columns = [rename_map.get(c, c) for c in show.columns]
     show["RBI Edge"] = show["RBI Edge"].astype(float).round(2)
+    if "OPS" in show.columns:
+        # Format OPS with the canonical 3-decimal layout the rest of the app
+        # uses; blank cells stay blank rather than rendering 0.000.
+        show["OPS"] = show["OPS"].apply(
+            lambda v: f"{float(v):.3f}" if v is not None and not pd.isna(v) else ""
+        )
 
     def _row_style(row: pd.Series) -> List[str]:
         tier = str(row.get("Tier", ""))
@@ -1193,6 +1219,9 @@ def _render_leaderboard(scored: pd.DataFrame) -> None:
         chips: List[Tuple[str, Any]] = [
             ("Slot", _fmt(row.get("lineup_slot"), "int")),
             ("Est. Prob", row.get("prob") or "—"),
+            # OPS sits between Est. Prob and the Statcast metrics so the
+            # universal bat-quality signal is visible on every RBI Edge card.
+            ("OPS", _fmt(row.get("ops"), "rate3")),
             ("xwOBA L15", _fmt(row.get("xwoba_l15"), "rate3")),
             ("xSLG", _fmt(row.get("xslg"), "rate3")),
             ("Barrel%", _fmt(row.get("barrel_pct"), "pct")),

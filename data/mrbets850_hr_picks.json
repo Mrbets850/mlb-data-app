@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-17T16:59:25Z",
+  "last_updated": "2026-05-17T17:00:14Z",
   "picks": [
     {
       "rank": 1,
@@ -191,6 +191,14 @@
       "team": "",
       "player_id": 656941,
       "note": "Long. Shot today due to pitching but hottest batter in league have to ride with it",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 25,
+      "name": "Bryce Harper",
+      "team": "",
+      "player_id": 547180,
+      "note": "Hot batter ride or die",
       "confidence": "💎 Strong"
     }
   ]

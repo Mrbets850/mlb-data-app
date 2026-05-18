@@ -14,6 +14,7 @@ Public surface
 - ``format_game_log_rows(game_log, opponent_map=None, limit=10)`` -> ``list[dict]``
 - ``headshot_url(player_id)`` -> ``str | None``
 - ``team_logo_url(team_abbr)`` -> ``str | None``
+- ``short_opp_abbr(team_abbr, max_len=3)`` -> ``str``
 - ``filter_log_for_split(game_log, split, season, end_date, opp_team=None)`` -> ``list[dict]``
 
 All helpers degrade gracefully — missing inputs return empty/None values
@@ -74,6 +75,25 @@ def team_logo_url(team_abbr: str | None) -> str | None:
     if not tid:
         return None
     return _TEAM_LOGO_TMPL.format(tid=tid)
+
+
+def short_opp_abbr(team_abbr: str | None, max_len: int = 3) -> str:
+    """Return a compact uppercased team abbreviation for chip display.
+
+    Mobile bar chips have very little horizontal room (one logo wide). When
+    we have to fall back to text (unknown team or broken image), the chip
+    must still fit cleanly — so trim to at most ``max_len`` chars and
+    normalize known long aliases (e.g. ``WSN`` -> ``WSH``).
+    """
+    if not team_abbr:
+        return ""
+    s = str(team_abbr).strip().upper()
+    if not s:
+        return ""
+    aliases = {"WSN": "WSH", "CHW": "CWS", "KCR": "KC", "SDP": "SD",
+               "SFG": "SF", "TBR": "TB", "ATH": "OAK"}
+    s = aliases.get(s, s)
+    return s[: max(1, int(max_len))]
 
 
 def headshot_url(player_id: int | None) -> str | None:

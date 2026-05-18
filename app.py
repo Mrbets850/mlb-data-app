@@ -4546,6 +4546,7 @@ from services.player_detail import (
     heatmap_style_for as _pd_heatmap_style_for,
     classify_pitcher_tier as _pd_classify_pitcher_tier,
     team_logo_url as _pd_team_logo_url,
+    short_opp_abbr as _pd_short_opp_abbr,
     filter_log_for_split as _pd_filter_log_for_split,
     split_label_to_key as _pd_split_label_to_key,
 )
@@ -4991,22 +4992,51 @@ div[role="dialog"]         [data-testid="stVerticalBlock"] {
 }
 .pdc-log-opp-abbr { vertical-align: middle; }
 
-/* Bar chart columns now carry an opponent logo strip below each
-   bar so the user can see WHO the batter faced at a glance. */
+/* Bar chart columns carry a polished, mobile-first opponent chip
+   below each bar. The chip is logo-only by default; if the image
+   fails to load (rare) JS swaps in a clean abbreviation chip via
+   the .pdc-bar-opp--text class. The @ / vs context lives in the
+   `title` tooltip so the strip never wraps on phones. */
 .pdc-bar-col {
-  flex: 1 1 0; min-width: 0; display:flex; flex-direction:column; align-items:stretch;
+  flex: 1 1 0; min-width: 0; display:flex; flex-direction:column;
+  align-items:stretch;
 }
 .pdc-bar-track {
   flex: 1 1 auto; min-height: 56px; display:flex; align-items:flex-end;
 }
 .pdc-bar-track .pdc-bar { width: 100%; }
 .pdc-bar-opp {
-  height: 22px; margin-top: 4px;
+  height: 26px; margin-top: 6px;
   display:flex; align-items:center; justify-content:center;
+  background:#0b1220; border:1px solid #1e293b; border-radius: 6px;
+  padding: 2px; overflow:hidden;
 }
-.pdc-bar-opp img { width: 18px; height: 18px; object-fit: contain; }
-.pdc-bar-opp--text {
-  font-size: .55rem; font-weight: 900; color: #bae6fd;
+.pdc-bar-opp img {
+  width: 100%; height: 100%; max-width: 22px; max-height: 22px;
+  object-fit: contain; display:block;
+}
+.pdc-bar-opp-fallback {
+  display:none;
+  font-size: .56rem; font-weight: 900; color:#bae6fd;
+  letter-spacing: .02em; line-height: 1;
+}
+/* JS adds .pdc-bar-opp--text when an image fails so we can swap
+   the chip into a clean text pill rather than re-flowing layout. */
+.pdc-bar-opp--text { background:#0f172a; border-color:#1e3a5f; }
+.pdc-bar-opp--text img { display:none; }
+.pdc-bar-opp--text .pdc-bar-opp-fallback { display:inline-block; }
+/* Subtle home/away indicator — a 2px accent on the bottom border of
+   the chip. Avoids text clutter while still encoding venue context. */
+.pdc-bar-opp.is-home  { border-bottom-color: #22c55e; }
+.pdc-bar-opp.is-away  { border-bottom-color: #38bdf8; }
+
+/* Narrow phones (≤380px): shrink the gap so 10 bars fit cleanly
+   without overflow, and let the chip ride a touch smaller. */
+@media (max-width: 380px) {
+  .pdc-bars { gap: 4px; }
+  .pdc-bar-opp { height: 22px; margin-top: 4px; padding: 1px; }
+  .pdc-bar-opp img { max-width: 18px; max-height: 18px; }
+  .pdc-bar-opp-fallback { font-size: .5rem; }
 }
 </style>
 """
@@ -5312,11 +5342,12 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     )
 
     # Recent bars — show the *selected* window's hits-per-game with the
-    # opponent's team logo under each bar. For very wide scopes (Season /
-    # TwoYear) we cap to the most recent 20 bars so the chart stays
-    # readable on phone screens.
+    # opponent's team logo under each bar. Cap at 10 bars so each column
+    # has enough room on narrow phones (~360px) to render a readable logo
+    # without crowding. The chip below each bar is logo-only; the
+    # @/vs prefix lives in the `title` tooltip to keep the strip clean.
     if active_rows:
-        chart_rows = active_rows[-20:]
+        chart_rows = active_rows[-10:]
         vals = [int(r.get("h") or 0) for r in chart_rows]
         chart_opps = [
             {"abbr": (r.get("opponent") or ""),
@@ -5333,8 +5364,8 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         else:
             chart_avg = chart_median = None
     else:
-        vals = recent.get("values") or []
-        chart_opps = recent.get("opponents") or []
+        vals = (recent.get("values") or [])[-10:]
+        chart_opps = (recent.get("opponents") or [])[-10:]
         chart_avg = recent.get("avg")
         chart_median = recent.get("median")
     max_v = max(vals) if vals else 1
@@ -5343,23 +5374,36 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         pct = (v / max_v * 100) if max_v else 0
         cls = "empty" if v == 0 else ""
         opp = chart_opps[i] if i < len(chart_opps) else {}
-        abbr = (opp.get("abbr") or "").strip()
+        abbr_short = _pd_short_opp_abbr(opp.get("abbr"))
         logo = opp.get("logo")
-        loc = "@" if not opp.get("is_home") else "vs"
+        is_home = bool(opp.get("is_home"))
+        loc = "vs" if is_home else "@"
+        ha_cls = "is-home" if is_home else "is-away"
+        # Tooltip is the only place we keep "@LAD 2 H" context — the chip
+        # itself stays icon-only so the strip never wraps on mobile.
+        tip = (f"{loc} {abbr_short} · {v} H" if abbr_short
+               else f"{v} H")
         if logo:
             opp_chip = (
-                f'<div class="pdc-bar-opp" title="{loc} {abbr}">'
-                f'<img src="{logo}" alt="{abbr}" loading="lazy" '
+                f'<div class="pdc-bar-opp {ha_cls}" title="{tip}" aria-label="{tip}">'
+                f'<img src="{logo}" alt="{abbr_short}" loading="lazy" '
                 f'referrerpolicy="no-referrer" '
-                f'onerror="this.style.display=\'none\';this.parentElement.innerText=\'{abbr}\';"/>'
+                f'onerror="this.onerror=null;this.style.display=\'none\';'
+                f'this.parentElement.classList.add(\'pdc-bar-opp--text\');"/>'
+                f'<span class="pdc-bar-opp-fallback">{abbr_short}</span>'
                 f'</div>'
             )
-        elif abbr:
-            opp_chip = f'<div class="pdc-bar-opp pdc-bar-opp--text">{abbr}</div>'
+        elif abbr_short:
+            opp_chip = (
+                f'<div class="pdc-bar-opp pdc-bar-opp--text {ha_cls}" '
+                f'title="{tip}" aria-label="{tip}">'
+                f'<span class="pdc-bar-opp-fallback">{abbr_short}</span>'
+                f'</div>'
+            )
         else:
-            opp_chip = '<div class="pdc-bar-opp"></div>'
+            opp_chip = '<div class="pdc-bar-opp" aria-hidden="true"></div>'
         bar_html.append(
-            f'<div class="pdc-bar-col">'
+            f'<div class="pdc-bar-col" title="{tip}">'
             f'<div class="pdc-bar-track">'
             f'<div class="pdc-bar {cls}" style="height:{max(6, pct)}%"><span class="v">{v}</span></div>'
             f'</div>'

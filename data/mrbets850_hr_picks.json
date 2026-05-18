@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:37:38Z",
+  "last_updated": "2026-05-18T10:38:28Z",
   "picks": [
     {
       "rank": 1,
@@ -118,6 +118,14 @@
       "name": "Drake Baldwin",
       "team": "",
       "player_id": 686948,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 16,
+      "name": "Junior Caminero",
+      "team": "",
+      "player_id": 691406,
       "note": "",
       "confidence": "💎 Strong"
     }

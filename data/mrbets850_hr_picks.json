@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:37:10Z",
+  "last_updated": "2026-05-18T10:37:38Z",
   "picks": [
     {
       "rank": 1,
@@ -110,6 +110,14 @@
       "name": "Nathaniel Lowe",
       "team": "",
       "player_id": 663993,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 15,
+      "name": "Drake Baldwin",
+      "team": "",
+      "player_id": 686948,
       "note": "",
       "confidence": "💎 Strong"
     }

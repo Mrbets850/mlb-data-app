@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:35:55Z",
+  "last_updated": "2026-05-18T10:36:24Z",
   "picks": [
     {
       "rank": 1,
@@ -88,6 +88,14 @@
       "player_id": 646240,
       "note": "",
       "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 12,
+      "name": "Michael Massey",
+      "team": "",
+      "player_id": 686681,
+      "note": "",
+      "confidence": "💸 Long Shot"
     }
   ]
 }

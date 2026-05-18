@@ -740,25 +740,71 @@ class TestComputeHrDueIndicator(unittest.TestCase):
         crit = next(c for c in out["criteria"] if c["key"] == "la_window")
         self.assertEqual(crit["state"], "missing")
 
-    def test_pitcher_hr9_hit_above_league(self):
-        out = compute_hr_due_indicator(opp_pitcher_row={"HR/9": 1.69})
-        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_hr9")
+    def test_pitcher_barrel_hit_above_league(self):
+        out = compute_hr_due_indicator(opp_pitcher_row={"Barrel%": 9.8})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
         self.assertEqual(crit["state"], "hit")
-        self.assertIn("1.69", crit["detail"])
-        self.assertIn("MLB avg 1.30", crit["detail"])
+        self.assertEqual(crit["title"], "Barrel-Friendly Pitcher")
+        self.assertIn("9.8", crit["detail"])
+        self.assertIn("MLB avg 7.0%", crit["detail"])
 
-    def test_pitcher_hr9_miss_below_league(self):
-        out = compute_hr_due_indicator(opp_pitcher_row={"HR/9": 0.80})
-        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_hr9")
+    def test_pitcher_barrel_miss_below_league(self):
+        out = compute_hr_due_indicator(opp_pitcher_row={"Barrel%": 5.4})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "miss")
+        self.assertIn("5.4", crit["detail"])
+
+    def test_pitcher_barrel_alt_column_brl_bip(self):
+        # Repo's slate sometimes carries Brl/BIP% instead of Barrel%.
+        out = compute_hr_due_indicator(opp_pitcher_row={"Brl/BIP%": 8.5})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("8.5", crit["detail"])
+
+    def test_pitcher_barrel_raw_savant_column(self):
+        # Raw upstream Savant feed name.
+        out = compute_hr_due_indicator(
+            opp_pitcher_row={"barrel_batted_rate": 12.0},
+        )
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "hit")
+
+    def test_pitcher_barrel_at_league_avg_is_miss(self):
+        # Strict ">" rule: exactly average should not count as HR-friendly.
+        out = compute_hr_due_indicator(opp_pitcher_row={"Barrel%": 7.0})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
         self.assertEqual(crit["state"], "miss")
 
-    def test_pitcher_hr9_derived_from_hr_and_ip(self):
-        # HR/9 not present but HR + IP are — helper must derive it.
+    def test_pitcher_fallback_hr9_when_no_barrel(self):
+        # No barrel column present — must fall back to HR/9 and label it.
+        out = compute_hr_due_indicator(opp_pitcher_row={"HR/9": 1.69})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("Fallback", crit["detail"])
+        self.assertIn("1.69", crit["detail"])
+
+    def test_pitcher_fallback_hr9_derived_from_hr_and_ip(self):
         out = compute_hr_due_indicator(
             opp_pitcher_row={"HR": 20, "IP": 100.0},  # 1.80 HR/9
         )
-        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_hr9")
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
         self.assertEqual(crit["state"], "hit")
+        self.assertIn("Fallback", crit["detail"])
+
+    def test_pitcher_missing_when_no_data_at_all(self):
+        out = compute_hr_due_indicator(opp_pitcher_row={})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "missing")
+
+    def test_pitcher_barrel_preferred_over_hr9_when_both_present(self):
+        # If both columns are present, primary metric wins and detail is barrel.
+        out = compute_hr_due_indicator(
+            opp_pitcher_row={"Barrel%": 9.8, "HR/9": 0.50},
+        )
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("Barrel%", crit["detail"])
+        self.assertNotIn("Fallback", crit["detail"])
 
     def test_park_factor_hit_above_neutral(self):
         out = compute_hr_due_indicator(park_factor=131)
@@ -791,7 +837,7 @@ class TestComputeHrDueIndicator(unittest.TestCase):
             game_log=log,
             season_barrel_pct=14.8,
             season_la=20.9,
-            opp_pitcher_row={"HR/9": 1.69},
+            opp_pitcher_row={"Barrel%": 9.8},
             park_factor=131,
         )
         self.assertGreaterEqual(out["score"], 5)

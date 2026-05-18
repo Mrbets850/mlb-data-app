@@ -4545,11 +4545,30 @@ from services.player_detail import (
     headshot_url as _pd_headshot_url,
     heatmap_style_for as _pd_heatmap_style_for,
     classify_pitcher_tier as _pd_classify_pitcher_tier,
-    team_logo_url as _pd_team_logo_url,
-    short_opp_abbr as _pd_short_opp_abbr,
     filter_log_for_split as _pd_filter_log_for_split,
     split_label_to_key as _pd_split_label_to_key,
 )
+
+# Defensive imports for the two helpers added most recently (PR #54).
+# If a deployment ever runs against a stale services/player_detail.py
+# (e.g. before Streamlit Cloud finishes picking up the redeploy), these
+# names would otherwise raise ImportError at module import and crash the
+# whole app. Local fallbacks preserve UI behavior: team_logo_url -> None
+# drops the chip to its existing text-only path, and short_opp_abbr
+# returns a trimmed uppercase string matching the published contract.
+try:
+    from services.player_detail import team_logo_url as _pd_team_logo_url
+except ImportError:
+    def _pd_team_logo_url(_abbr):
+        return None
+try:
+    from services.player_detail import short_opp_abbr as _pd_short_opp_abbr
+except ImportError:
+    def _pd_short_opp_abbr(team_abbr, max_len=3):
+        if not team_abbr:
+            return ""
+        s = str(team_abbr).strip().upper()
+        return s[: max(1, int(max_len))] if s else ""
 
 
 def _pd_hm_cell(metric: str, value, formatted: str) -> str:

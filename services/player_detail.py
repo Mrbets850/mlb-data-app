@@ -823,6 +823,10 @@ _HR_DUE_LA_HIGH              = 25.0     # Upper edge of HR-friendly LA window
 # correlate with HR outcomes more directly than ERA or HR/9 (HR/9 is a
 # small-sample rate that lags behind quality-of-contact).
 _HR_DUE_LEAGUE_PITCHER_BARREL_AVG = 7.0
+# MLB-wide hits allowed per 9 IP. Modest elevation here (~9.0+) means a
+# pitcher is putting more bodies on base than the league norm, which is a
+# decent secondary HR-friendliness signal when barrel rate is missing.
+_HR_DUE_LEAGUE_PITCHER_H9_AVG = 8.4
 
 
 # Column names a pitcher row might carry for barrel rate. The slate builder
@@ -833,6 +837,14 @@ _PITCHER_BARREL_KEYS: tuple[str, ...] = (
     "Barrel%", "Brl/BIP%", "Brl%", "Brl/BBE%",
     "barrel_pct", "barrel_rate",
     "barrel_batted_rate", "barrels_per_bbe_percent",
+)
+
+# Column names a pitcher row might carry for hits-allowed per 9 IP. Covers
+# the common pitching-stat variants we might see across upstream feeds.
+_PITCHER_H9_KEYS: tuple[str, ...] = (
+    "H/9", "H9", "H_per_9", "h_per_9",
+    "hits_per_9", "Hits/9", "hits9", "H/9.0",
+    "hitsPer9Inn", "hitsPer9",
 )
 
 
@@ -851,6 +863,28 @@ def _pitcher_barrel_rate(p: dict | None) -> float | None:
             v = _f_or_none(p.get(key))
             if v is not None:
                 return v
+    return None
+
+
+def _pitcher_h9(p: dict | None) -> float | None:
+    """Return the opposing pitcher's hits-per-9 (H/9), or None.
+
+    Tries the common column names first; if none are present but the row
+    carries raw hits + innings pitched, derives ``9 * H / IP``. Returns
+    None only when neither path can produce a number.
+    """
+    if not p:
+        return None
+    for key in _PITCHER_H9_KEYS:
+        if key in p:
+            v = _f_or_none(p.get(key))
+            if v is not None:
+                return v
+    # Derive from H + IP when we have raw counts but no precomputed rate.
+    h_val = _f_or_none(p.get("H") or p.get("hit") or p.get("hits"))
+    ip = _f_or_none(p.get("IP") or p.get("ip"))
+    if h_val is not None and ip and ip > 0:
+        return 9.0 * h_val / ip
     return None
 
 
@@ -1000,6 +1034,7 @@ def compute_hr_due_indicator(*,
                              recent_la: Any = None,
                              opp_pitcher_row: dict | None = None,
                              league_hr9: Any = None,
+                             league_h9: Any = None,
                              park_factor: Any = None,
                              ) -> dict:
     """Return the 6-criterion "HR Due" composite for one batter.
@@ -1103,12 +1138,16 @@ def compute_hr_due_indicator(*,
                       "detail": detail,
                       "state": state})
 
-    # 5) Barrel-Friendly pitcher.
-    # Primary signal: opposing pitcher's barrel rate (% of BBE that are
-    # barrels). Barrels are the strongest single quality-of-contact predictor
-    # of HR outcomes — better than HR/9, which is itself a small-sample
-    # downstream rate. We fall back to HR/9 only when no barrel column is
-    # present, and label the row clearly so the user knows the difference.
+    # 5) HR-friendly pitcher (three-tier signal).
+    # Primary  : Barrel% — strongest quality-of-contact proxy for HRs.
+    # Secondary: H/9 — pitchers who give up more hits than league are easier
+    #            to square up, and this field is more widely available than
+    #            barrel data in some upstream feeds.
+    # Tertiary : HR/9 — direct HR rate, used only when neither of the above
+    #            is present (and itself derivable from HR + IP).
+    # The row's title changes per tier so the user can see which signal we
+    # used, and "Data unavailable" is reserved for the case where *none* of
+    # the three is present.
     p = opp_pitcher_row or None
     pitcher_brl = _pitcher_barrel_rate(p)
     lg_brl = _f_or_none(league_barrel_median)
@@ -1123,31 +1162,45 @@ def compute_hr_due_indicator(*,
                       "detail": detail,
                       "state": state})
     else:
-        # Fallback: HR/9 (derive from HR + IP if HR/9 isn't precomputed).
-        hr9 = None
-        if p is not None:
-            hr9 = _f_or_none(p.get("HR/9") or p.get("hr9")
-                             or p.get("homeRunsPer9"))
-            if hr9 is None:
-                hr_val = _f_or_none(p.get("HR") or p.get("home_run"))
-                ip = _f_or_none(p.get("IP") or p.get("ip"))
-                if hr_val is not None and ip and ip > 0:
-                    hr9 = 9.0 * hr_val / ip
-        lg_hr9 = _f_or_none(league_hr9)
-        if lg_hr9 is None:
-            lg_hr9 = _HR_DUE_LEAGUE_HR9_AVG
-        if hr9 is None:
+        h9 = _pitcher_h9(p)
+        if h9 is not None:
+            lg_h9 = _f_or_none(league_h9)
+            if lg_h9 is None:
+                lg_h9 = _HR_DUE_LEAGUE_PITCHER_H9_AVG
+            detail = (f"Opposing pitcher H/9: {h9:.1f} "
+                      f"(MLB avg {lg_h9:.1f})")
+            state = "hit" if h9 > lg_h9 else "miss"
             crits.append({"key": "pitcher_barrel",
-                          "title": "Barrel-Friendly Pitcher",
-                          "detail": "Data unavailable",
-                          "state": "missing"})
-        else:
-            detail = (f"Fallback HR/9: {hr9:.2f} (MLB avg {lg_hr9:.2f})")
-            state = "hit" if hr9 >= lg_hr9 else "miss"
-            crits.append({"key": "pitcher_barrel",
-                          "title": "Barrel-Friendly Pitcher",
+                          "title": "Hit-Friendly Pitcher",
                           "detail": detail,
                           "state": state})
+        else:
+            # Tertiary fallback: HR/9 (derive from HR + IP if needed).
+            hr9 = None
+            if p is not None:
+                hr9 = _f_or_none(p.get("HR/9") or p.get("hr9")
+                                 or p.get("homeRunsPer9"))
+                if hr9 is None:
+                    hr_val = _f_or_none(p.get("HR") or p.get("home_run"))
+                    ip = _f_or_none(p.get("IP") or p.get("ip"))
+                    if hr_val is not None and ip and ip > 0:
+                        hr9 = 9.0 * hr_val / ip
+            lg_hr9 = _f_or_none(league_hr9)
+            if lg_hr9 is None:
+                lg_hr9 = _HR_DUE_LEAGUE_HR9_AVG
+            if hr9 is None:
+                crits.append({"key": "pitcher_barrel",
+                              "title": "Barrel-Friendly Pitcher",
+                              "detail": "Data unavailable",
+                              "state": "missing"})
+            else:
+                detail = (f"Opposing pitcher HR/9: {hr9:.2f} "
+                          f"(MLB avg {lg_hr9:.2f})")
+                state = "hit" if hr9 >= lg_hr9 else "miss"
+                crits.append({"key": "pitcher_barrel",
+                              "title": "HR-Friendly Pitcher",
+                              "detail": detail,
+                              "state": state})
 
     # 6) Park HR factor.
     pf = _f_or_none(park_factor)

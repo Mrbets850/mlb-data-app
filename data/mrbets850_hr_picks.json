@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:40:00Z",
+  "last_updated": "2026-05-18T10:40:15Z",
   "picks": [
     {
       "rank": 1,
@@ -158,6 +158,14 @@
       "name": "Miguel Vargas",
       "team": "",
       "player_id": 678246,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 21,
+      "name": "Colson Montgomery",
+      "team": "",
+      "player_id": 695657,
       "note": "",
       "confidence": "💎 Strong"
     }

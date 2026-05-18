@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:34:12Z",
+  "last_updated": "2026-05-18T10:34:28Z",
   "picks": [
     {
       "rank": 1,
@@ -62,6 +62,14 @@
       "name": "Willson Contreras",
       "team": "",
       "player_id": 575929,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 9,
+      "name": "Ben Rice",
+      "team": "",
+      "player_id": 700250,
       "note": "",
       "confidence": "🔥 Lock"
     }

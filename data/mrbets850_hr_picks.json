@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:32:22Z",
+  "last_updated": "2026-05-18T10:32:41Z",
   "picks": [
     {
       "rank": 1,
@@ -19,6 +19,14 @@
     },
     {
       "rank": 3,
+      "name": "Casey Schmitt",
+      "team": "",
+      "player_id": 669477,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 4,
       "name": "Bobby Witt Jr.",
       "team": "",
       "player_id": 677951,

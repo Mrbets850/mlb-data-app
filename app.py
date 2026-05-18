@@ -5283,6 +5283,11 @@ div[role="dialog"] {
   max-height: 92vh !important;
   overflow-y: auto !important;
   -webkit-overflow-scrolling: touch;
+  /* Respect iOS notches / browser chrome at the top and bottom of the
+     scroll area so the sticky close bar and the last game-log row
+     don't sit under the status bar or home-indicator. */
+  padding-top: env(safe-area-inset-top, 0px) !important;
+  padding-bottom: env(safe-area-inset-bottom, 0px) !important;
 }
 div[data-testid="stDialog"] [data-testid="stVerticalBlock"],
 div[role="dialog"]         [data-testid="stVerticalBlock"] {
@@ -5291,6 +5296,75 @@ div[role="dialog"]         [data-testid="stVerticalBlock"] {
 .pdc-root { padding-bottom: 96px; }
 .pdc-root, .pdc-card { overflow-x: hidden; }
 .pdc-modal-tail { height: 64px; }
+
+/* ---------------------------------------------------------------
+   Sticky "Back to Matchup" close bar. iOS Safari's native dialog
+   X button drifts above the viewport once the user scrolls deep
+   into the game log, leaving no way to dismiss the modal without
+   hitting the device back gesture. We render our own button at
+   the top of the dialog content (Streamlit st.button immediately
+   after a .pdc-close-bar marker) and pin its element-container to
+   the top of the dialog scroll container so it stays in reach.
+
+   The selectors mirror the same pattern used by the matchup CTA:
+   target the stElementContainer that immediately follows the one
+   carrying our marker class. This survives Streamlit wrapper
+   changes between versions. */
+.pdc-close-bar { display:block; height:0; margin:0 !important; padding:0 !important; }
+div[data-testid="stElementContainer"]:has(.pdc-close-bar) + div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]),
+div[data-testid="element-container"]:has(.pdc-close-bar)  + div[data-testid="element-container"]:has(div[data-testid="stButton"]) {
+  position: sticky !important;
+  top: 0;
+  z-index: 50;
+  margin: 0 0 12px 0 !important;
+  padding: 8px 0 !important;
+  background: linear-gradient(180deg, #0b1220 0%, rgba(11,18,32,.96) 80%, rgba(11,18,32,0) 100%) !important;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+/* The actual button: high-contrast gold-on-dark to match the
+   theme's gold CTA accent and to remain readable on the dark
+   surface. */
+div[data-testid="stElementContainer"]:has(.pdc-close-bar) + div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button,
+div[data-testid="element-container"]:has(.pdc-close-bar)  + div[data-testid="element-container"]:has(div[data-testid="stButton"]) button {
+  width: 100% !important;
+  min-height: 44px !important;
+  background: linear-gradient(180deg, #fde047 0%, #ca8a04 100%) !important;
+  color: #0b0b0b !important;
+  border: 1px solid #a16207 !important;
+  border-radius: 12px !important;
+  font-weight: 900 !important;
+  letter-spacing: .04em !important;
+  text-transform: uppercase !important;
+  font-size: .95rem !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.55) !important;
+  cursor: pointer !important;
+}
+div[data-testid="stElementContainer"]:has(.pdc-close-bar) + div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button *,
+div[data-testid="element-container"]:has(.pdc-close-bar)  + div[data-testid="element-container"]:has(div[data-testid="stButton"]) button * {
+  color: #0b0b0b !important;
+}
+/* Make sure the native Streamlit X close button stays in front of
+   our sticky bar AND gets a slightly larger tap target on phones,
+   so a user who wants it still has it. */
+div[data-testid="stDialog"] button[aria-label="Close"],
+div[role="dialog"] button[aria-label="Close"] {
+  position: sticky;
+  z-index: 60 !important;
+  min-width: 40px; min-height: 40px;
+}
+@media (max-width: 640px) {
+  div[data-testid="stElementContainer"]:has(.pdc-close-bar) + div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]),
+  div[data-testid="element-container"]:has(.pdc-close-bar)  + div[data-testid="element-container"]:has(div[data-testid="stButton"]) {
+    top: 0;
+    padding: 10px 0 !important;
+  }
+  div[data-testid="stElementContainer"]:has(.pdc-close-bar) + div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button,
+  div[data-testid="element-container"]:has(.pdc-close-bar)  + div[data-testid="element-container"]:has(div[data-testid="stButton"]) button {
+    min-height: 48px !important;
+    font-size: 1rem !important;
+  }
+}
 
 /* Game-log: capped height + scroll so a long L20/Season window is
    reachable without pushing other sections off-screen on phones. */
@@ -5843,6 +5917,25 @@ def _open_player_detail_dialog(payload_key: str):
     if not payload:
         st.write("No player selected.")
         return
+
+    # Sticky "Back to Matchup" close button at the top of the dialog. iOS
+    # users reported the native Streamlit X drifts off-screen once they
+    # scroll the long card, so we render our own always-visible close
+    # control inside the modal body. It sits in a wrapper div with the
+    # `.pdc-close-bar` marker so the CSS in _PLAYER_DETAIL_CSS can pin
+    # the following Streamlit button element to the top of the dialog
+    # scroll container.
+    st.markdown('<div class="pdc-close-bar"></div>', unsafe_allow_html=True)
+    if st.button(
+        "← Back to Matchup",
+        key=f"{payload_key}__close",
+        use_container_width=True,
+        type="secondary",
+    ):
+        # Clear active payload pointer and rerun — Streamlit dismisses the
+        # dialog when the script reruns after a widget event inside it.
+        st.session_state.pop("_pdc_active_key", None)
+        st.rerun()
 
     # Dynamic season label so the chip year doesn't go stale once the
     # calendar flips. Falls back to the slate-date year on the payload.

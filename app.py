@@ -525,12 +525,16 @@ html, body, [class*="css"] {
     font-weight: 800 !important;
 }
 
-/* ---- Selectbox / date-input / text-input / number-input ----
-   Streamlit's BaseWeb defaults render with white-on-white text on dark
-   themes. Force a readable dark-on-light look so the picked value is
-   always legible. */
+/* ---- Selectbox / multiselect / date-input / text-input / number-input ----
+   Streamlit's BaseWeb defaults render with white-on-dark or low-contrast
+   text on the dark shell. Force a readable dark-on-light look on BOTH
+   the closed control and the open dropdown menu so the picked value and
+   every option are always legible. */
 [data-baseweb="select"] > div,
+[data-baseweb="select"] > div > div,
+[data-baseweb="select"] input,
 [data-testid="stDateInput"] input,
+[data-testid="stTimeInput"] input,
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
 [data-testid="stTextArea"] textarea {
@@ -539,16 +543,77 @@ html, body, [class*="css"] {
     font-weight: 600 !important;
     border: 1px solid rgba(148, 163, 184, 0.55) !important;
 }
+[data-baseweb="select"] > div *,
+[data-baseweb="select"] input::placeholder {
+    color: #0f172a !important;
+}
 [data-baseweb="select"] svg { color: #0f172a !important; fill: #0f172a !important; }
-[data-baseweb="popover"] [role="listbox"] { background: #f8fafc !important; }
-[data-baseweb="popover"] [role="option"] {
-    color: #0f172a !important;
-    font-weight: 600 !important;
+
+/* Open dropdown menu: BaseWeb renders the popover in a portal at the
+   document root, so high-specificity, attribute-based selectors are
+   required. Target the listbox, every <li> option, the inner div/span
+   wrappers BaseWeb nests text in, and the hover/selected states. */
+[data-baseweb="popover"],
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="popover"] [role="listbox"],
+[data-baseweb="popover"] ul,
+[data-baseweb="menu"] [role="listbox"],
+[data-baseweb="menu"] ul {
+    background: #f8fafc !important;
+    border: 1px solid rgba(148, 163, 184, 0.55) !important;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45) !important;
 }
-[data-baseweb="popover"] [role="option"][aria-selected="true"] {
-    background: #fef3c7 !important;
+[data-baseweb="popover"] [role="option"],
+[data-baseweb="popover"] [role="option"] *,
+[data-baseweb="popover"] li,
+[data-baseweb="popover"] li *,
+[data-baseweb="menu"] [role="option"],
+[data-baseweb="menu"] [role="option"] *,
+[data-baseweb="menu"] li,
+[data-baseweb="menu"] li * {
+    color: #0f172a !important;
+    font-weight: 700 !important;
+    background-color: transparent !important;
+}
+[data-baseweb="popover"] [role="option"]:hover,
+[data-baseweb="popover"] li:hover,
+[data-baseweb="menu"] [role="option"]:hover,
+[data-baseweb="menu"] li:hover {
+    background-color: #ede9fe !important;
+}
+[data-baseweb="popover"] [role="option"]:hover *,
+[data-baseweb="popover"] li:hover *,
+[data-baseweb="menu"] [role="option"]:hover *,
+[data-baseweb="menu"] li:hover * {
+    color: #1e1147 !important;
+}
+[data-baseweb="popover"] [role="option"][aria-selected="true"],
+[data-baseweb="popover"] li[aria-selected="true"],
+[data-baseweb="menu"] [role="option"][aria-selected="true"],
+[data-baseweb="menu"] li[aria-selected="true"] {
+    background-color: #fef3c7 !important;
+}
+[data-baseweb="popover"] [role="option"][aria-selected="true"] *,
+[data-baseweb="popover"] li[aria-selected="true"] *,
+[data-baseweb="menu"] [role="option"][aria-selected="true"] *,
+[data-baseweb="menu"] li[aria-selected="true"] * {
+    color: #0f172a !important;
+    font-weight: 800 !important;
+}
+
+/* Multiselect chips inside the closed control */
+[data-baseweb="tag"] {
+    background: #1e1147 !important;
+    color: #facc15 !important;
+}
+[data-baseweb="tag"] * { color: #facc15 !important; }
+
+/* Calendar / date picker popover surface stays light too */
+[data-baseweb="calendar"],
+[data-baseweb="calendar"] * {
     color: #0f172a !important;
 }
+[data-baseweb="calendar"] { background: #f8fafc !important; }
 
 /* ---- Slider value label (bold gold on dark) ---- */
 [data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] + div,

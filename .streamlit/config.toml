@@ -1,7 +1,11 @@
 [theme]
-base = "light"
-primaryColor = "#7c3aed"
-backgroundColor = "#f5f3ff"
-secondaryBackgroundColor = "#ffffff"
-textColor = "#1a0b3a"
+# Modern minimal dark shell: solid deep-slate background across the whole
+# app, gold primary accent, bold off-white text. The previous light theme
+# was fighting our dark CSS overlay and washing out body text — this
+# aligns the Streamlit theme with the in-app CSS for consistent contrast.
+base = "dark"
+primaryColor = "#facc15"
+backgroundColor = "#0f172a"
+secondaryBackgroundColor = "#1e293b"
+textColor = "#f1f5f9"
 font = "sans serif"

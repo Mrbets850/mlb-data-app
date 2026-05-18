@@ -369,20 +369,24 @@ html, body,
 section.main,
 .main,
 .stApp {
-    /* Premium dark sports-betting/dashboard background. White content
-       cards/tables below pop against this midnight slate gradient just
-       like the player detail card from PR #47. */
-    background: radial-gradient(120% 80% at 10% 0%, #0f172a 0%, #060912 55%, #020409 100%) !important;
-    background-color: #060912 !important;
-    background-image: radial-gradient(120% 80% at 10% 0%, #0f172a 0%, #060912 55%, #020409 100%) !important;
+    /* Modern minimal: a single solid deep-slate background across the
+       entire app. The previous radial gradient washed text into the
+       background mid-page (the "background is killing the read of font"
+       complaint). #0f172a is dark enough for white card surfaces to pop
+       and light enough that headings/captions in #f8fafc / #fde68a stay
+       crisp. */
+    background: #0f172a !important;
+    background-color: #0f172a !important;
+    background-image: none !important;
 }
 /* Belt-and-suspenders: a body::before strip that paints any uncovered
    pixel behind the iframe content. Sits at z-index:-1 so it never
-   overlaps actual UI. */
+   overlaps actual UI. Solid color to match the app shell. */
+body, html { background: #0f172a !important; }
 body::before {
     content: "";
     position: fixed; inset: 0;
-    background: radial-gradient(120% 80% at 10% 0%, #0f172a 0%, #060912 55%, #020409 100%);
+    background: #0f172a;
     z-index: -1;
     pointer-events: none;
 }
@@ -424,8 +428,43 @@ body::before {
 @media (max-width: 640px) { .mobile-hide-swipe { display: none !important; } }
 html, body, [class*="css"] {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Arial, sans-serif;
-    color: #e2e8f0;
+    /* High-contrast off-white default — #f1f5f9 reads bolder on solid
+       #0f172a than the prior #e2e8f0, especially at small caption sizes. */
+    color: #f1f5f9;
     font-size: 16px;
+    font-weight: 500;
+}
+/* Bold, high-contrast headings on the solid dark background. */
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4,
+[data-testid="stMarkdownContainer"] h5,
+[data-testid="stMarkdownContainer"] h6 {
+    color: #f8fafc !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.005em;
+}
+/* Markdown paragraphs sitting directly on the dark shell need a brighter
+   tone than the legacy #cbd5e1 / #94a3b8 grays the codebase uses inline
+   — those wash out against #0f172a. */
+[data-testid="stMarkdownContainer"] > p,
+[data-testid="stMarkdownContainer"] > p > * {
+    color: #e2e8f0;
+    font-weight: 500;
+}
+[data-testid="stMarkdownContainer"] strong,
+[data-testid="stMarkdownContainer"] b {
+    color: #f8fafc;
+    font-weight: 800;
+}
+/* Streamlit caption text (st.caption) — bump from faint gray to a
+   readable slate-300 with stronger weight so help copy is actually
+   readable across the app. */
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] * {
+    color: #cbd5e1 !important;
+    font-weight: 600 !important;
 }
 /* Text inside content cards (white / light surfaces) keeps the dark
    slate ink the rest of the app was designed around. We scope by the
@@ -440,16 +479,146 @@ html, body, [class*="css"] {
     color: inherit;
 }
 /* Streamlit form labels (radios, selectboxes, captions outside cards)
-   sit directly on the dark background — bump to light slate so the user
-   can read them. Per-widget components keep their own colors when
-   rendered inside a white card via [class*="css"] inheritance. */
+   sit directly on the dark background — bump to bold light slate so
+   the user can read them. Per-widget components keep their own colors
+   when rendered inside a white card via [class*="css"] inheritance. */
 [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] *,
-[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] *,
 [data-testid="stMarkdownContainer"] > p,
 [data-testid="stMarkdownContainer"] > p > strong,
 [data-testid="stRadio"] label, [data-testid="stRadio"] label * {
+    color: #f1f5f9 !important;
+    font-weight: 700 !important;
+}
+
+/* ---- Streamlit tabs (used by Apps & Generators, Matchup/Injuries) ----
+   The default tab bar uses muted gray text that disappears on the solid
+   dark shell. Make selected tabs gold-on-purple and unselected tabs a
+   bold light-slate so they read at a glance. */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 6px !important;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.25) !important;
+}
+.stTabs [data-baseweb="tab"] {
+    color: #cbd5e1 !important;
+    font-weight: 700 !important;
+    background: rgba(30, 41, 59, 0.55) !important;
+    border-radius: 10px 10px 0 0 !important;
+    padding: 10px 16px !important;
+}
+.stTabs [data-baseweb="tab"]:hover { color: #f8fafc !important; }
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    color: #facc15 !important;
+    background: linear-gradient(180deg, #3b1f6b 0%, #1e1147 100%) !important;
+    border-bottom: 2px solid #facc15 !important;
+}
+.stTabs [data-baseweb="tab"][aria-selected="true"] * { color: #facc15 !important; }
+
+/* ---- Expanders ---- bold readable header on dark shell. */
+[data-testid="stExpander"] {
+    background: rgba(30, 41, 59, 0.55) !important;
+    border: 1px solid rgba(148, 163, 184, 0.25) !important;
+    border-radius: 12px !important;
+}
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary * {
+    color: #f8fafc !important;
+    font-weight: 800 !important;
+}
+
+/* ---- Selectbox / date-input / text-input / number-input ----
+   Streamlit's BaseWeb defaults render with white-on-white text on dark
+   themes. Force a readable dark-on-light look so the picked value is
+   always legible. */
+[data-baseweb="select"] > div,
+[data-testid="stDateInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+    background: #f8fafc !important;
+    color: #0f172a !important;
+    font-weight: 600 !important;
+    border: 1px solid rgba(148, 163, 184, 0.55) !important;
+}
+[data-baseweb="select"] svg { color: #0f172a !important; fill: #0f172a !important; }
+[data-baseweb="popover"] [role="listbox"] { background: #f8fafc !important; }
+[data-baseweb="popover"] [role="option"] {
+    color: #0f172a !important;
+    font-weight: 600 !important;
+}
+[data-baseweb="popover"] [role="option"][aria-selected="true"] {
+    background: #fef3c7 !important;
+    color: #0f172a !important;
+}
+
+/* ---- Slider value label (bold gold on dark) ---- */
+[data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] + div,
+[data-testid="stSlider"] [data-baseweb="tickmark"] {
+    color: #fde68a !important;
+    font-weight: 800 !important;
+}
+
+/* ---- Buttons (download/action) ---- gold accent, dark ink, bold. */
+[data-testid="stDownloadButton"] button,
+[data-testid="stButton"] button {
+    background: linear-gradient(180deg, #facc15 0%, #eab308 100%) !important;
+    color: #0f172a !important;
+    font-weight: 800 !important;
+    border: 1px solid #ca8a04 !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35) !important;
+}
+[data-testid="stDownloadButton"] button:hover,
+[data-testid="stButton"] button:hover {
+    background: linear-gradient(180deg, #fde047 0%, #facc15 100%) !important;
+}
+
+/* ---- Metric tiles (st.metric) ---- bold light text on dark. */
+[data-testid="stMetric"] [data-testid="stMetricLabel"],
+[data-testid="stMetric"] [data-testid="stMetricLabel"] * {
+    color: #cbd5e1 !important;
+    font-weight: 700 !important;
+}
+[data-testid="stMetric"] [data-testid="stMetricValue"],
+[data-testid="stMetric"] [data-testid="stMetricValue"] * {
+    color: #f8fafc !important;
+    font-weight: 900 !important;
+}
+
+/* ---- Inline gray "subtitle" copy used by many generator headers ----
+   The codebase frequently inlines style="color:#475569" or #64748b on
+   intro paragraphs. Those colors vanish on the dark shell — force a
+   readable slate-200 override when these styles sit outside a white
+   card surface. */
+[data-testid="stMarkdownContainer"] div[style*="color:#475569"],
+[data-testid="stMarkdownContainer"] div[style*="color: #475569"],
+[data-testid="stMarkdownContainer"] div[style*="color:#64748b"],
+[data-testid="stMarkdownContainer"] div[style*="color: #64748b"],
+[data-testid="stMarkdownContainer"] div[style*="color:#0f172a"] {
     color: #e2e8f0 !important;
 }
+[data-testid="stMarkdownContainer"] div[style*="color:#475569"] b,
+[data-testid="stMarkdownContainer"] div[style*="color:#64748b"] b {
+    color: #fde68a !important;
+}
+
+/* ---- Re-assert dark-on-light text inside light card surfaces ----
+   Cards/panels with explicit white/#f8fafc backgrounds (e.g. .carousel-
+   wrap, .section-card, .top3-card, .mhm-card, .lineup-banner) MUST keep
+   dark ink so they remain readable. We re-scope here in case any of the
+   global dark-text rules above leaked in. */
+.section-card:not(.dark), .section-card:not(.dark) p,
+.section-card:not(.dark) span:not([class*="mc-"]),
+.section-card:not(.dark) div:not([style*="background"]):not([class*="mc-"]),
+.section-card:not(.dark) h1, .section-card:not(.dark) h2,
+.section-card:not(.dark) h3, .section-card:not(.dark) h4,
+.carousel-wrap, .carousel-wrap *,
+.top3-card, .top3-card *,
+.mhm-card, .mhm-card *,
+.lineup-banner, .lineup-banner * {
+    color: #0f172a;
+}
+.section-card:not(.dark) .section-title,
+.carousel-wrap .section-title,
+.top3-card .section-title { color: #0f172a !important; }
 /* ---- desktop readability: bump font sizes on wider screens ---- */
 @media (min-width: 1100px) {
     html, body, [class*="css"] { font-size: 17px; }
@@ -604,14 +773,17 @@ html, body, [class*="css"] {
     border: 1px solid #1e3a8a; color:#fff;
 }
 .section-title, .section-title-lg {
-    /* MLB Edge electric-violet headline. Pops on BOTH light and dark
-       backgrounds — #7c3aed is tailwind violet-600, readable on white,
-       and the text-shadow gives it a soft halo so it stays crisp on the
-       dark purple panels. */
-    color: #7c3aed; font-size: 1.1rem; font-weight: 900;
-    margin: 0 0 10px; letter-spacing: -0.01em;
+    /* MLB Edge brand headline — gold on the dark shell so it carries
+       across the whole app at a glance. Cards/panels with light surfaces
+       re-color these back to dark slate via the .section-card scope
+       above. */
+    color: #facc15;
+    font-size: 1.1rem;
+    font-weight: 900;
+    margin: 0 0 10px;
+    letter-spacing: -0.01em;
     display: flex; align-items: center; gap: 10px;
-    text-shadow: 0 1px 0 rgba(255,255,255,0.35), 0 0 1px rgba(0,0,0,0.15);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.45);
 }
 .section-title img, .section-title-lg img { width: 28px; height: 28px; }
 
@@ -7169,6 +7341,18 @@ MOBILE_CARDS_CSS = (
     "@media (max-width: 640px) {"
     "  .mc-desktop { display:none !important; }"
     "  .mc-mobile  { display:block !important; }"
+    "}"
+    # Modern-minimal mode: render the dark player-card grid on every
+    # viewport, replacing the wide white desktop table entirely. Used by
+    # the Apps & Generators leaderboards (Hot / Cold / HR Milestones /
+    # Day vs Night HR) where the desktop dataframe was redundant clutter.
+    ".mc-always { display:block !important; }"
+    ".mc-always .mc-grid { grid-template-columns: 1fr; }"
+    "@media (min-width: 720px) {"
+    "  .mc-always .mc-grid { grid-template-columns: repeat(2, 1fr); }"
+    "}"
+    "@media (min-width: 1080px) {"
+    "  .mc-always .mc-grid { grid-template-columns: repeat(3, 1fr); }"
     "}"
     ".mc-grid { display:grid; grid-template-columns: 1fr; gap: 12px; "
     "  margin: 6px 0 12px 0; }"
@@ -14035,7 +14219,7 @@ _slate_df = _build_slate_dataframe(schedule_df, batters_df, pitchers_df, _slate_
 
 def _df_mobile_cards_html(df, *, name_col=None, sub_col=None, score_col=None,
                           score_label="Score", chip_cols=None, foot_cols=None,
-                          rank_col="#", max_chips=8):
+                          rank_col="#", max_chips=8, always_show=False):
     """Generic dataframe -> mobile-card-grid renderer.
 
     - name_col: header of the card (player / batter / matchup)
@@ -14117,27 +14301,36 @@ def _df_mobile_cards_html(df, *, name_col=None, sub_col=None, score_col=None,
             f'{foot_html}'
             '</div>'
         )
+    wrapper_cls = "mc-mobile mc-always" if always_show else "mc-mobile"
     return (
-        '<div class="mc-mobile"><div class="mc-grid">'
+        f'<div class="{wrapper_cls}"><div class="mc-grid">'
         + "".join(cards) +
         '</div></div>'
     )
 
 
-def _df_with_cards(df, **kwargs):
-    """Render an `st.dataframe` wrapped in .mc-desktop + a mobile cards grid."""
+def _df_with_cards(df, *, cards_only=False, **kwargs):
+    """Render a player-card grid for `df`.
+
+    By default (cards_only=False) emits an `st.dataframe` on desktop and a
+    card grid on mobile (the legacy hybrid). When cards_only=True the
+    desktop table is omitted and the card grid is shown on every viewport
+    — used by the Apps & Generators sections (Hot/Cold Batters, HR
+    Milestones, Day vs Night HR) where the wide white table was clutter.
+    """
     if df is None or df.empty:
         return
-    st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
-    st.dataframe(
-        df,
-        width='stretch',
-        hide_index=True,
-        height=min(720, 60 + 36 * len(df)),
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
+    if not cards_only:
+        st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
+        st.dataframe(
+            df,
+            width='stretch',
+            hide_index=True,
+            height=min(720, 60 + 36 * len(df)),
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
     st.markdown(
-        MOBILE_CARDS_CSS + _df_mobile_cards_html(df, **kwargs),
+        MOBILE_CARDS_CSS + _df_mobile_cards_html(df, always_show=cards_only, **kwargs),
         unsafe_allow_html=True,
     )
 
@@ -14159,17 +14352,10 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
     out = ranked[show_cols]
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
 
-    # Desktop: classic dataframe (preserved). Mobile: card grid below.
-    st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
-    st.dataframe(
-        style_matchup_table(out),
-        width='stretch',
-        hide_index=True,
-        height=min(640, 60 + 38 * len(out)),
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Mobile: dark cards in Slate-Pitchers style.
+    # Modern-minimal: dark player cards only. The wide white desktop
+    # dataframe was visual clutter ("ugly column graphs") so it's been
+    # removed in favor of the same Slate-Pitchers-style card grid we
+    # already render on phones, now also shown on desktop.
     mobile_cards = []
     for _, r in ranked.iterrows():
         match_score = r.get("Matchup")
@@ -14233,7 +14419,7 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
         ))
     st.markdown(
         MOBILE_CARDS_CSS +
-        '<div class="mc-mobile"><div class="mc-grid">'
+        '<div class="mc-mobile mc-always"><div class="mc-grid">'
         + "".join(mobile_cards) +
         '</div></div>',
         unsafe_allow_html=True,
@@ -14339,16 +14525,8 @@ if _render_hr_milestones:
         # Apply the cap and rebuild the rank column from 1.
         slate_hr = slate_hr.head(int(_hrm_limit)).reset_index(drop=True)
         slate_hr.insert(0, "#", range(1, len(slate_hr) + 1))
-        st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
-        st.dataframe(
-            slate_hr,
-            width='stretch',
-            hide_index=True,
-            height=min(640, 60 + 36 * len(slate_hr)),
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
 
-        # Mobile HR milestone cards.
+        # Modern-minimal: dark player cards only (no wide white table).
         hrm_cards = []
         for _, r in slate_hr.iterrows():
             season_hr = r.get("Season HR")
@@ -14402,7 +14580,7 @@ if _render_hr_milestones:
             ))
         st.markdown(
             MOBILE_CARDS_CSS +
-            '<div class="mc-mobile"><div class="mc-grid">'
+            '<div class="mc-mobile mc-always"><div class="mc-grid">'
             + "".join(hrm_cards) +
             '</div></div>',
             unsafe_allow_html=True,
@@ -14560,16 +14738,7 @@ if _render_hr_milestones:
                 f'</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
-            st.dataframe(
-                out_hr,
-                width='stretch',
-                hide_index=True,
-                height=min(640, 60 + 34 * len(out_hr)),
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            # Mobile HR-by-date cards.
+            # Modern-minimal: dark player cards only (no wide white table).
             hrd_cards = []
             for _, hrr in out_hr.iterrows():
                 # Distance/EV come in as already-formatted strings ("123" / "—")
@@ -14613,7 +14782,7 @@ if _render_hr_milestones:
                 ))
             st.markdown(
                 MOBILE_CARDS_CSS +
-                '<div class="mc-mobile"><div class="mc-grid">'
+                '<div class="mc-mobile mc-always"><div class="mc-grid">'
                 + "".join(hrd_cards) +
                 '</div></div>',
                 unsafe_allow_html=True,
@@ -14844,6 +15013,7 @@ if _render_day_night:
             else:
                 _df_with_cards(
                     table,
+                    cards_only=True,
                     name_col="Player", sub_col="Team",
                     score_col="Day HR", score_label="Day HR",
                     chip_cols=["Day HR/PA", "Day PA", "OPS", "AVG", "HR", "PA"],
@@ -14864,6 +15034,7 @@ if _render_day_night:
             else:
                 _df_with_cards(
                     table,
+                    cards_only=True,
                     name_col="Player", sub_col="Team",
                     score_col="Night HR", score_label="Night HR",
                     chip_cols=["Night HR/PA", "Night PA", "OPS", "AVG", "HR", "PA"],
@@ -14892,6 +15063,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         d_tbl,
+                        cards_only=True,
                         name_col="Player", sub_col="Team",
                         score_col="Day HR", score_label="Day HR",
                         chip_cols=["Day HR/PA", "Day PA", "OPS", "AVG"],
@@ -14908,6 +15080,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         n_tbl,
+                        cards_only=True,
                         name_col="Player", sub_col="Team",
                         score_col="Night HR", score_label="Night HR",
                         chip_cols=["Night HR/PA", "Night PA", "OPS", "AVG"],
@@ -15228,6 +15401,7 @@ if _render_day_night:
                         )
                         _df_with_cards(
                             disp,
+                            cards_only=True,
                             name_col="Player", sub_col="Team",
                             score_col="Target Score", score_label="Target",
                             chip_cols=["HR/PA", "PA", "HR", "OPS", "Bucket", "Confidence"],
@@ -15278,6 +15452,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         t_day,
+                        cards_only=True,
                         name_col="Player", sub_col="Team",
                         score_col="Edge (Day − Night)", score_label="Edge",
                         chip_cols=["Day HR", "Day PA", "Day HR/PA",
@@ -15294,6 +15469,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         t_night,
+                        cards_only=True,
                         name_col="Player", sub_col="Team",
                         score_col="Edge (Day − Night)", score_label="Edge",
                         chip_cols=["Night HR", "Night PA", "Night HR/PA",

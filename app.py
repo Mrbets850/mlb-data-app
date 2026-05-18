@@ -8,6 +8,11 @@ from services.lineup_service import (
     get_service as get_lineup_service,
     format_freshness as _format_lineup_freshness,
 )
+from services.slate_rollover import (
+    compute_default_slate_date as _compute_default_slate_date,
+    default_schedule_fetcher as _slate_rollover_fetcher,
+    now_utc as _slate_now_utc,
+)
 import re
 import unicodedata
 import urllib.parse
@@ -26,6 +31,41 @@ MLB_TZ = ZoneInfo("America/Chicago")
 def today_ct() -> date:
     """Return today's date in Central Time (matches the MLB slate day)."""
     return datetime.now(MLB_TZ).date()
+
+
+# Slate-rollover lookups hit the same StatsAPI schedule endpoint as the
+# main app, but we want a shorter TTL (5 min) than the 30-min schedule
+# cache: once the last game goes final, the rollover should advance
+# within ~grace_minutes regardless of what the bigger schedule cache
+# happens to be holding.
+@st.cache_data(ttl=300, show_spinner=False)
+def _slate_rollover_cached_games(target_iso: str):
+    return _slate_rollover_fetcher(date.fromisoformat(target_iso))
+
+
+def _slate_rollover_fetch_for_app(target_date: date):
+    return _slate_rollover_cached_games(target_date.strftime("%Y-%m-%d"))
+
+
+def auto_default_slate_date():
+    """Compute the rollover-aware default slate date.
+
+    Wraps :func:`services.slate_rollover.compute_default_slate_date`
+    with a cached schedule fetcher so the picker doesn't refetch on
+    every Streamlit rerun. Returns the full ``RolloverDecision`` so
+    callers can surface the reason / grace timer if they want.
+    Falls back to plain ``today_ct()`` if the rollover lookup blows up
+    for any reason — the picker default must never break the app.
+    """
+    try:
+        return _compute_default_slate_date(
+            today_ct(), _slate_now_utc(), _slate_rollover_fetch_for_app
+        )
+    except Exception:
+        from services.slate_rollover import RolloverDecision
+        return RolloverDecision(
+            slate_date=today_ct(), rolled_over=False, reason="current"
+        )
 
 # ===========================================================================
 # Config
@@ -9075,16 +9115,31 @@ st.markdown(
     '<div class="toolbar-section-title">Slate Controls</div>',
     unsafe_allow_html=True,
 )
+# Compute the rollover-aware default date once per run. If the current
+# CT slate has been final for 45+ minutes (and tomorrow has games),
+# this advances past today; otherwise it stays on today. The user's
+# manual picker selection (stored in session_state) always wins — we
+# only use this value when seeding the widget or honoring the "Today"
+# button.
+_slate_default = auto_default_slate_date()
+
 # Apply any pending "Today" reset BEFORE the date_input widget is instantiated.
 # Streamlit forbids writing to st.session_state[<widget_key>] after the widget
-# has been created, so we use a one-shot flag and rerun pattern.
+# has been created, so we use a one-shot flag and rerun pattern. The reset
+# target is the rollover-aware default, so the Today button does the right
+# thing late-night (i.e. snaps to tomorrow's slate once the grace period has
+# elapsed) instead of taking the user back to a finished slate.
 if st.session_state.pop("_reset_to_today", False):
-    st.session_state["slate_date_picker"] = today_ct()
+    st.session_state["slate_date_picker"] = _slate_default.slate_date
     st.session_state["_selected_idx"] = 0
 
 top_cols = st.columns([2.2, 1, 1])
 with top_cols[0]:
-    selected_date = st.date_input("📅 Slate date", value=today_ct(), key="slate_date_picker")
+    selected_date = st.date_input(
+        "📅 Slate date",
+        value=_slate_default.slate_date,
+        key="slate_date_picker",
+    )
 with top_cols[1]:
     st.markdown('<div class="toolbar-spacer-label">.</div>', unsafe_allow_html=True)
     if st.button("🔄 Refresh data", width='stretch', key="refresh_btn"):
@@ -9101,6 +9156,21 @@ with top_cols[2]:
         except Exception:
             pass
         st.rerun()
+
+# Small caption when the auto-rollover has moved the default off of
+# the literal CT date — gives the user a quick "you're on tomorrow's
+# slate because last night's games are done" cue without cluttering
+# the toolbar. Only shown when the user hasn't picked a different
+# date manually.
+if (
+    _slate_default.rolled_over
+    and selected_date == _slate_default.slate_date
+    and selected_date != today_ct()
+):
+    st.caption(
+        "🌙 Auto-rolled to the next slate · prior slate has been final for "
+        "45+ minutes. Use the date picker to go back."
+    )
 
 try:
     schedule_df = get_schedule(selected_date)

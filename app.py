@@ -4992,6 +4992,17 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
         park_factor_val = DEFAULT_PARK_FACTORS.get(home_abbr_for_park)
     except Exception:
         park_factor_val = None
+    # Prefer an explicit venue/stadium name from the slate row when one is
+    # present; the HR Due helper will otherwise fall back to its team-abbr
+    # -> ballpark mapping. Guard with hasattr so non-dict-like rows don't
+    # crash here.
+    park_name_val = None
+    if hasattr(player_row, "get"):
+        for _vk in ("Venue", "Stadium", "Ballpark", "Park", "venue", "stadium", "ballpark"):
+            _vv = player_row.get(_vk)
+            if _vv:
+                park_name_val = str(_vv).strip()
+                break
     # Opposing pitcher fields — the helper reads Barrel% first (primary HR
     # signal) and falls back to HR/9 if barrel data is absent. Forward the
     # pitcher row as-is so the helper can probe its preferred set of column
@@ -5013,6 +5024,8 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
             {**(p_dict or {}), "HR/9": p_hr9} if p_dict is not None else None
         ),
         park_factor=park_factor_val,
+        park_name=park_name_val,
+        home_team=home_abbr_for_park,
     )
 
     return {

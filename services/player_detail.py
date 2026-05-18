@@ -829,6 +829,77 @@ _HR_DUE_LEAGUE_PITCHER_BARREL_AVG = 7.0
 _HR_DUE_LEAGUE_PITCHER_H9_AVG = 8.4
 
 
+# Historical MLB ballpark HR park-factor ratings, expressed on a 1.00-neutral
+# scale (1.00 = league average, >1.00 = HR-friendly, <1.00 = pitcher-friendly).
+# Blended multi-season HR park factors for the current 30 MLB ballparks,
+# keyed by the team abbreviations used elsewhere in this app. Aliases for
+# common alternate abbreviations (CHW/OAK/WAS/KCR/SDP/SFG/TBR/TBD) included
+# so we can match whatever feed naming shows up upstream.
+_HR_DUE_PARK_FACTORS: dict[str, float] = {
+    "ARI": 1.03, "ATL": 1.02, "BAL": 1.04, "BOS": 0.98, "CHC": 1.02,
+    "CWS": 1.07, "CIN": 1.18, "CLE": 0.96, "COL": 1.12, "DET": 0.92,
+    "HOU": 1.04, "KC":  0.94, "LAA": 1.01, "LAD": 1.05, "MIA": 0.86,
+    "MIL": 1.05, "MIN": 1.00, "NYM": 0.94, "NYY": 1.12, "ATH": 0.94,
+    "OAK": 0.94, "PHI": 1.09, "PIT": 0.94, "SD":  0.92, "SF":  0.88,
+    "SEA": 0.92, "STL": 0.98, "TB":  0.95, "TEX": 1.08, "TOR": 1.05,
+    "WSH": 1.01, "WAS": 1.01, "CHW": 1.07, "KCR": 0.94, "SDP": 0.92,
+    "SFG": 0.88, "TBR": 0.95, "TBD": 0.95,
+}
+
+# Stadium/ballpark display names so the HR Park criterion can show the venue
+# alongside the factor (e.g. "Great American Ball Park HR factor: 1.18").
+_HR_DUE_PARK_NAMES: dict[str, str] = {
+    "ARI": "Chase Field",
+    "ATL": "Truist Park",
+    "BAL": "Oriole Park at Camden Yards",
+    "BOS": "Fenway Park",
+    "CHC": "Wrigley Field",
+    "CWS": "Rate Field",
+    "CHW": "Rate Field",
+    "CIN": "Great American Ball Park",
+    "CLE": "Progressive Field",
+    "COL": "Coors Field",
+    "DET": "Comerica Park",
+    "HOU": "Daikin Park",
+    "KC":  "Kauffman Stadium",
+    "KCR": "Kauffman Stadium",
+    "LAA": "Angel Stadium",
+    "LAD": "Dodger Stadium",
+    "MIA": "loanDepot park",
+    "MIL": "American Family Field",
+    "MIN": "Target Field",
+    "NYM": "Citi Field",
+    "NYY": "Yankee Stadium",
+    "ATH": "Sutter Health Park",
+    "OAK": "Sutter Health Park",
+    "PHI": "Citizens Bank Park",
+    "PIT": "PNC Park",
+    "SD":  "Petco Park",
+    "SDP": "Petco Park",
+    "SF":  "Oracle Park",
+    "SFG": "Oracle Park",
+    "SEA": "T-Mobile Park",
+    "STL": "Busch Stadium",
+    "TB":  "George M. Steinbrenner Field",
+    "TBR": "George M. Steinbrenner Field",
+    "TBD": "George M. Steinbrenner Field",
+    "TEX": "Globe Life Field",
+    "TOR": "Rogers Centre",
+    "WSH": "Nationals Park",
+    "WAS": "Nationals Park",
+}
+
+
+def _lookup_park(team_abbr: Any) -> tuple[str | None, float | None]:
+    """Resolve (park_name, factor) for a team abbreviation on the 1.00 scale."""
+    if team_abbr is None:
+        return (None, None)
+    key = str(team_abbr).strip().upper()
+    if not key:
+        return (None, None)
+    return (_HR_DUE_PARK_NAMES.get(key), _HR_DUE_PARK_FACTORS.get(key))
+
+
 # Column names a pitcher row might carry for barrel rate. The slate builder
 # in this repo renames Savant's ``barrel_batted_rate`` to ``Barrel%`` and
 # ``Brl/BIP%``, but raw rows from upstream feeds may still use the original
@@ -1036,6 +1107,8 @@ def compute_hr_due_indicator(*,
                              league_hr9: Any = None,
                              league_h9: Any = None,
                              park_factor: Any = None,
+                             park_name: Any = None,
+                             home_team: Any = None,
                              ) -> dict:
     """Return the 6-criterion "HR Due" composite for one batter.
 
@@ -1203,17 +1276,43 @@ def compute_hr_due_indicator(*,
                               "state": state})
 
     # 6) Park HR factor.
-    pf = _f_or_none(park_factor)
+    # Scale convention here is 1.00-neutral: >1.00 = HR-friendly, =1.00
+    # neutral, <1.00 pitcher-friendly. Older callers that pass a 100-based
+    # value (e.g. 112) are auto-converted by dividing by 100 so we don't
+    # silently mark every park as wildly HR-friendly.
+    pf_raw = _f_or_none(park_factor)
+    pf = pf_raw / 100.0 if (pf_raw is not None and pf_raw > 5.0) else pf_raw
+
+    # Resolve park display name from explicit override, otherwise look it up
+    # by home-team abbreviation. Factor falls back to the team mapping when
+    # the caller didn't pass one but we do know the home team — that way a
+    # known team with missing factor still shows useful detail instead of
+    # "Data unavailable".
+    display_name = str(park_name).strip() if park_name else ""
+    lookup_name, lookup_factor = _lookup_park(home_team)
+    if not display_name and lookup_name:
+        display_name = lookup_name
+    if pf is None and lookup_factor is not None:
+        pf = lookup_factor
+
     if pf is None:
-        crits.append({"key": "park_hr",
-                      "title": "HR Park",
-                      "detail": "Data unavailable",
-                      "state": "missing"})
+        # Known team but no factor mapping yet: surface as neutral 1.00
+        # rather than "Data unavailable" so the user still sees the venue.
+        if display_name:
+            detail = f"{display_name} HR factor: 1.00 (neutral 1.00)"
+            crits.append({"key": "park_hr",
+                          "title": "HR Park",
+                          "detail": detail,
+                          "state": "miss"})
+        else:
+            crits.append({"key": "park_hr",
+                          "title": "HR Park",
+                          "detail": "Data unavailable",
+                          "state": "missing"})
     else:
-        delta = pf - 100.0
-        sign = "+" if delta >= 0 else ""
-        detail = f"Park HR factor: {sign}{delta:.0f}% HRs today"
-        state = "hit" if pf > 100.0 else "miss"
+        venue = display_name or "Park"
+        detail = f"{venue} HR factor: {pf:.2f} (neutral 1.00)"
+        state = "hit" if pf > 1.0 else "miss"
         crits.append({"key": "park_hr",
                       "title": "HR Park",
                       "detail": detail,

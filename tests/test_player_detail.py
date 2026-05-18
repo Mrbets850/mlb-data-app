@@ -775,36 +775,124 @@ class TestComputeHrDueIndicator(unittest.TestCase):
         crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
         self.assertEqual(crit["state"], "miss")
 
-    def test_pitcher_fallback_hr9_when_no_barrel(self):
-        # No barrel column present — must fall back to HR/9 and label it.
+    # --- H/9 secondary fallback -------------------------------------------
+
+    def test_pitcher_h9_hit_above_league(self):
+        # No barrel column — H/9 is the next signal, hits above league avg.
+        out = compute_hr_due_indicator(opp_pitcher_row={"H/9": 9.4})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "hit")
+        self.assertEqual(crit["title"], "Hit-Friendly Pitcher")
+        self.assertIn("H/9", crit["detail"])
+        self.assertIn("9.4", crit["detail"])
+        self.assertIn("MLB avg 8.4", crit["detail"])
+
+    def test_pitcher_h9_miss_at_or_below_league(self):
+        # Equal to league average must be a miss (strict ">" rule).
+        out = compute_hr_due_indicator(opp_pitcher_row={"H/9": 8.4})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "miss")
+        self.assertEqual(crit["title"], "Hit-Friendly Pitcher")
+        self.assertIn("H/9", crit["detail"])
+
+    def test_pitcher_h9_miss_below_league(self):
+        out = compute_hr_due_indicator(opp_pitcher_row={"H/9": 7.1})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "miss")
+        self.assertIn("7.1", crit["detail"])
+
+    def test_pitcher_h9_alias_columns(self):
+        # Every documented alias must resolve to the same hit/miss decision.
+        for key in ("H/9", "H9", "H_per_9", "h_per_9",
+                    "hits_per_9", "Hits/9", "hits9", "H/9.0"):
+            out = compute_hr_due_indicator(opp_pitcher_row={key: 9.4})
+            crit = next(c for c in out["criteria"]
+                        if c["key"] == "pitcher_barrel")
+            self.assertEqual(
+                crit["state"], "hit",
+                msg=f"alias {key!r} did not resolve to a hit")
+            self.assertEqual(crit["title"], "Hit-Friendly Pitcher")
+
+    def test_pitcher_h9_derived_from_h_and_ip(self):
+        # No precomputed H/9 — derive from raw hits + innings pitched.
+        out = compute_hr_due_indicator(
+            opp_pitcher_row={"H": 95, "IP": 90.0},  # 9.5 H/9
+        )
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "hit")
+        self.assertEqual(crit["title"], "Hit-Friendly Pitcher")
+
+    def test_pitcher_h9_uses_supplied_league_value(self):
+        # Caller can override the default MLB H/9 average.
+        out = compute_hr_due_indicator(
+            opp_pitcher_row={"H/9": 8.5},
+            league_h9=9.0,
+        )
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        # 8.5 < 9.0 → miss under override
+        self.assertEqual(crit["state"], "miss")
+        self.assertIn("MLB avg 9.0", crit["detail"])
+
+    # --- Precedence -------------------------------------------------------
+
+    def test_pitcher_barrel_beats_h9_when_both_present(self):
+        # Barrel% is primary — H/9 is ignored when barrel rate exists.
+        out = compute_hr_due_indicator(
+            opp_pitcher_row={"Barrel%": 9.8, "H/9": 6.0},
+        )
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "hit")  # 9.8 > 7.0
+        self.assertEqual(crit["title"], "Barrel-Friendly Pitcher")
+        self.assertIn("Barrel%", crit["detail"])
+        self.assertNotIn("H/9", crit["detail"])
+
+    def test_pitcher_h9_beats_hr9_when_both_present(self):
+        # H/9 is secondary — HR/9 is only consulted when H/9 is absent.
+        out = compute_hr_due_indicator(
+            opp_pitcher_row={"H/9": 9.4, "HR/9": 0.50},
+        )
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
+        self.assertEqual(crit["state"], "hit")  # 9.4 > 8.4
+        self.assertEqual(crit["title"], "Hit-Friendly Pitcher")
+        self.assertIn("H/9", crit["detail"])
+        self.assertNotIn("HR/9", crit["detail"])
+
+    def test_pitcher_fallback_hr9_when_no_barrel_no_h9(self):
+        # Tertiary: HR/9 only when neither barrel rate nor H/9 is present.
         out = compute_hr_due_indicator(opp_pitcher_row={"HR/9": 1.69})
         crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
         self.assertEqual(crit["state"], "hit")
-        self.assertIn("Fallback", crit["detail"])
+        self.assertEqual(crit["title"], "HR-Friendly Pitcher")
+        self.assertIn("HR/9", crit["detail"])
         self.assertIn("1.69", crit["detail"])
+        self.assertIn("MLB avg 1.30", crit["detail"])
 
     def test_pitcher_fallback_hr9_derived_from_hr_and_ip(self):
+        # HR/9 not precomputed but HR + IP are — derive 9*HR/IP.
         out = compute_hr_due_indicator(
             opp_pitcher_row={"HR": 20, "IP": 100.0},  # 1.80 HR/9
         )
         crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
         self.assertEqual(crit["state"], "hit")
-        self.assertIn("Fallback", crit["detail"])
+        self.assertEqual(crit["title"], "HR-Friendly Pitcher")
 
-    def test_pitcher_missing_when_no_data_at_all(self):
+    def test_pitcher_missing_only_when_no_signal_at_all(self):
+        # All three columns missing → still no inflation, marked missing.
         out = compute_hr_due_indicator(opp_pitcher_row={})
         crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
         self.assertEqual(crit["state"], "missing")
+        self.assertEqual(crit["detail"], "Data unavailable")
 
     def test_pitcher_barrel_preferred_over_hr9_when_both_present(self):
-        # If both columns are present, primary metric wins and detail is barrel.
+        # Barrel% should still win over HR/9 when H/9 is absent.
         out = compute_hr_due_indicator(
             opp_pitcher_row={"Barrel%": 9.8, "HR/9": 0.50},
         )
         crit = next(c for c in out["criteria"] if c["key"] == "pitcher_barrel")
         self.assertEqual(crit["state"], "hit")
+        self.assertEqual(crit["title"], "Barrel-Friendly Pitcher")
         self.assertIn("Barrel%", crit["detail"])
-        self.assertNotIn("Fallback", crit["detail"])
+        self.assertNotIn("HR/9", crit["detail"])
 
     def test_park_factor_hit_above_neutral(self):
         out = compute_hr_due_indicator(park_factor=131)

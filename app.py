@@ -4677,13 +4677,83 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
 
 _PLAYER_DETAIL_CSS = """
 <style>
+/* ---------------------------------------------------------------
+   Modal-scoped dark surface. The app's Streamlit theme is "light"
+   (light purple background, near-black text). The player detail
+   dialog rendered by st.dialog inherits that light surface, which
+   made the dark-card content look mismatched and the Streamlit
+   chrome (radio chips, helper text) appear as dark-on-dark or
+   washed-out gray. We force the dialog container itself to a
+   premium dark surface and recolor every Streamlit-rendered text
+   node inside it to light slate so the modal reads as one cohesive
+   dark card matching the screenshots.
+   --------------------------------------------------------------- */
+div[data-testid="stDialog"] > div > div,
+div[role="dialog"] {
+  background: #0b1220 !important;
+  color: #f8fafc !important;
+}
+div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] *,
+div[role="dialog"] [data-testid="stMarkdownContainer"] *,
+div[data-testid="stDialog"] label, div[role="dialog"] label,
+div[data-testid="stDialog"] p, div[role="dialog"] p,
+div[data-testid="stDialog"] span, div[role="dialog"] span {
+  color: #f8fafc;
+}
+/* Streamlit modal title bar (the "Player detail" header) */
+div[data-testid="stDialog"] h1, div[role="dialog"] h1,
+div[data-testid="stDialog"] h2, div[role="dialog"] h2,
+div[data-testid="stDialog"] h3, div[role="dialog"] h3,
+div[data-testid="stDialog"] header, div[role="dialog"] header {
+  color: #f8fafc !important;
+}
+/* Radio (chip toggle) above the detail card. Streamlit renders
+   each option as a label inside a div[role=radiogroup]; the
+   default option labels are near-black on the light theme. */
+div[data-testid="stDialog"] div[role="radiogroup"] label,
+div[role="dialog"] div[role="radiogroup"] label,
+div[data-testid="stDialog"] div[role="radiogroup"] label p,
+div[role="dialog"] div[role="radiogroup"] label p {
+  color: #e2e8f0 !important; font-weight: 800;
+}
+div[data-testid="stDialog"] div[role="radiogroup"] label:has(input:checked) p,
+div[role="dialog"] div[role="radiogroup"] label:has(input:checked) p {
+  color: #7dd3fc !important;
+}
+/* Streamlit dataframe / table fallbacks inside the dialog. */
+div[data-testid="stDialog"] [data-testid="stTable"] *,
+div[role="dialog"] [data-testid="stTable"] *,
+div[data-testid="stDialog"] [data-testid="stDataFrame"] *,
+div[role="dialog"] [data-testid="stDataFrame"] * {
+  color: #e2e8f0 !important;
+}
+/* Expander / accordion labels inside the dialog (if used). */
+div[data-testid="stDialog"] details summary,
+div[role="dialog"] details summary,
+div[data-testid="stDialog"] [data-testid="stExpander"] *,
+div[role="dialog"] [data-testid="stExpander"] * {
+  color: #e2e8f0 !important;
+}
+/* Close button (X) — keep it visible on the dark surface. */
+div[data-testid="stDialog"] button[aria-label="Close"],
+div[role="dialog"] button[aria-label="Close"] {
+  color: #f8fafc !important;
+}
+
+/* ---------------------------------------------------------------
+   Player detail card body. All text is white or bright slate on
+   dark cards; muted/helper text uses #cbd5e1 (slate-300) so even
+   the lightest helper line is readable. Sky-blue accent
+   (#38bdf8 / #7dd3fc / #93c5fd) is reserved for labels and chips.
+   --------------------------------------------------------------- */
 .pdc-root { color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 .pdc-root * { box-sizing: border-box; }
 .pdc-tabs { display:flex; gap:24px; justify-content:center; margin: 4px 0 12px 0; }
-.pdc-tab { font-size:.72rem; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.08em; }
+.pdc-tab { font-size:.72rem; font-weight:800; color:#cbd5e1; text-transform:uppercase; letter-spacing:.08em; }
 .pdc-tab.is-active { color:#f8fafc; border-bottom: 2px solid #38bdf8; padding-bottom: 4px; }
 .pdc-card { background: linear-gradient(180deg, #111827 0%, #0b1220 100%); border-radius: 18px;
-  padding: 14px 16px; margin: 10px 0; border: 1px solid #1e293b; box-shadow: 0 4px 18px rgba(0,0,0,.35); }
+  padding: 14px 16px; margin: 10px 0; border: 1px solid #1e293b; box-shadow: 0 4px 18px rgba(0,0,0,.35);
+  color: #f8fafc; }
 .pdc-header-row { display:flex; align-items:center; gap: 14px; }
 .pdc-avatar-wrap { flex: 0 0 72px; position: relative; }
 .pdc-avatar {
@@ -4708,46 +4778,44 @@ _PLAYER_DETAIL_CSS = """
 }
 .pdc-header-body { flex: 1 1 auto; min-width: 0; }
 .pdc-name { font-size: 1.25rem; font-weight: 900; color:#f8fafc; }
-.pdc-meta { font-size: .78rem; color:#94a3b8; font-weight: 700; margin-top: 2px; }
+.pdc-meta { font-size: .78rem; color:#cbd5e1; font-weight: 700; margin-top: 2px; }
 .pdc-next { display:flex; align-items:center; justify-content:space-between; padding: 10px 12px;
-  background: rgba(56,189,248,.08); border:1px solid rgba(56,189,248,.25); border-radius: 12px;
+  background: rgba(56,189,248,.12); border:1px solid rgba(56,189,248,.35); border-radius: 12px;
   margin-top: 10px; }
-.pdc-next-left  { font-size:.85rem; font-weight:800; color:#e2e8f0; }
-.pdc-next-right { font-size:.72rem; font-weight:700; color:#7dd3fc; }
-.pdc-section-title { font-size:.8rem; font-weight:900; color:#38bdf8; text-transform:uppercase;
+.pdc-next-left  { font-size:.85rem; font-weight:800; color:#f8fafc; }
+.pdc-next-right { font-size:.72rem; font-weight:800; color:#7dd3fc; }
+.pdc-section-title { font-size:.8rem; font-weight:900; color:#7dd3fc; text-transform:uppercase;
   letter-spacing:.08em; margin: 12px 0 6px 0; display:flex; align-items:center; gap:8px; }
 .pdc-section-title::before { content:""; width: 4px; height: 14px; background:#38bdf8; border-radius:3px; display:inline-block; }
 .pdc-rating { display:flex; gap: 14px; align-items:stretch; }
 .pdc-rating-score { flex: 0 0 92px; background:#0b1220; border:1px solid #1e293b; border-radius: 14px;
   padding: 12px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
 .pdc-rating-score .num  { font-size: 1.8rem; font-weight:900; line-height:1; }
-.pdc-rating-score .tier { font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; margin-top:6px; color:#94a3b8; }
+.pdc-rating-score .tier { font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; margin-top:6px; color:#e2e8f0; }
 .pdc-rating.tier-Juicy  .num { color:#22c55e; }
 .pdc-rating.tier-Risky  .num { color:#4ade80; }
 .pdc-rating.tier-Average .num { color:#facc15; }
 .pdc-rating.tier-Above-Avg .num { color:#fb923c; }
 .pdc-rating.tier-Elite  .num { color:#ef4444; }
 .pdc-rating-body { flex: 1 1 auto; }
-.pdc-rating-name { font-size:.95rem; font-weight:800; color:#e2e8f0; }
+.pdc-rating-name { font-size:.95rem; font-weight:800; color:#f8fafc; }
 .pdc-rating-bullets { margin: 6px 0 0 0; padding: 0; list-style: none; }
-.pdc-rating-bullets li { font-size:.72rem; color:#cbd5e1; font-weight:700; padding-left: 14px; position:relative; line-height:1.35; }
+.pdc-rating-bullets li { font-size:.74rem; color:#e2e8f0; font-weight:700; padding-left: 14px; position:relative; line-height:1.4; }
 .pdc-rating-bullets li::before { content:"•"; position:absolute; left:0; color:#38bdf8; }
 .pdc-table { width:100%; border-collapse: separate; border-spacing: 0; font-size:.74rem; }
-.pdc-table th { color:#94a3b8; font-weight:800; text-transform:uppercase; letter-spacing:.06em;
-  font-size:.62rem; padding: 6px 6px; text-align:right; border-bottom: 1px solid #1e293b; }
+.pdc-table th { color:#7dd3fc; font-weight:900; text-transform:uppercase; letter-spacing:.06em;
+  font-size:.64rem; padding: 6px 6px; text-align:right; border-bottom: 1px solid #1e293b; }
 .pdc-table th:first-child, .pdc-table td:first-child { text-align:left; }
-.pdc-table td { color:#e2e8f0; padding: 7px 6px; font-weight:700; text-align:right;
+.pdc-table td { color:#f8fafc; padding: 7px 6px; font-weight:700; text-align:right;
   border-bottom: 1px solid rgba(30,41,59,.6); }
 .pdc-table tr:last-child td { border-bottom: none; }
-.pdc-table .row-label { color:#cbd5e1; font-weight:800; }
-.pdc-table .row-label .proxy { color:#64748b; font-size:.58rem; font-weight:700; margin-left:6px;
+.pdc-table .row-label { color:#f8fafc; font-weight:800; }
+.pdc-table .row-label .proxy { color:#bae6fd; font-size:.58rem; font-weight:800; margin-left:6px;
   text-transform:uppercase; letter-spacing:.05em; }
 .pdc-chips { display:flex; gap:6px; overflow-x:auto; padding: 4px 0 8px 0; margin: 0 -2px;
   -webkit-overflow-scrolling: touch; }
 .pdc-chip { flex: 0 0 auto; min-width: 64px; background:#0b1220; border:1px solid #1e293b;
   border-radius: 12px; padding: 8px 10px; text-align:center; }
-/* L5/L10/L20/Season labels: brighter sky-blue so the window label is
-   readable on the dark chip — the prior #64748b ink was nearly invisible. */
 .pdc-chip .lab { font-size:.66rem; font-weight:900; color:#93c5fd;
   text-transform:uppercase; letter-spacing:.06em; }
 .pdc-chip .val { font-size:.98rem; font-weight:900; color:#f8fafc; margin-top: 3px; }
@@ -4757,34 +4825,34 @@ _PLAYER_DETAIL_CSS = """
 .pdc-recent { display:flex; flex-direction:column; gap:8px; }
 .pdc-recent-pills { display:flex; gap:8px; }
 .pdc-pill { background:#0b1220; border:1px solid #1e293b; border-radius: 999px; padding: 4px 10px;
-  font-size:.7rem; font-weight:800; color:#cbd5e1; }
+  font-size:.7rem; font-weight:800; color:#e2e8f0; }
 .pdc-pill .num { color:#7dd3fc; margin-left:4px; }
 .pdc-bars { display:flex; gap:6px; align-items:flex-end; min-height: 64px; padding: 6px 0 0 0; }
 .pdc-bar { flex: 1 1 0; background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
   border-radius: 4px 4px 0 0; min-height: 4px; position:relative; }
 .pdc-bar.empty { background:#1e293b; }
 .pdc-bar .v { position:absolute; top:-14px; left:50%; transform: translateX(-50%);
-  font-size:.58rem; color:#94a3b8; font-weight:800; }
+  font-size:.62rem; color:#f8fafc; font-weight:900; }
 .pdc-log-table { width:100%; border-collapse: separate; border-spacing: 0;
   background:#0b1220; border-radius: 12px; overflow:hidden; border:1px solid #1e293b; }
-.pdc-log-table th { background:#0f172a; color:#94a3b8; font-size:.58rem; font-weight:900;
+.pdc-log-table th { background:#0f172a; color:#7dd3fc; font-size:.6rem; font-weight:900;
   text-transform:uppercase; letter-spacing:.06em; padding: 8px 6px; text-align:right;
   border-bottom: 1px solid #1e293b; }
 .pdc-log-table th:first-child, .pdc-log-table td:first-child { text-align:left; }
-.pdc-log-table td { color:#e2e8f0; font-size:.74rem; font-weight:700; padding: 7px 6px;
+.pdc-log-table td { color:#f8fafc; font-size:.74rem; font-weight:700; padding: 7px 6px;
   text-align:right; border-bottom: 1px solid rgba(30,41,59,.6); }
 .pdc-log-table tr:last-child td { border-bottom: none; }
-.pdc-log-opp { color:#94a3b8; font-size:.62rem; font-weight:700; }
-.pdc-empty { color:#64748b; font-size:.78rem; font-weight:700; font-style: italic; padding: 8px 4px; }
+.pdc-log-opp { color:#bae6fd; font-size:.62rem; font-weight:700; }
+.pdc-empty { color:#cbd5e1; font-size:.82rem; font-weight:700; font-style: italic; padding: 8px 4px; }
 .pdc-recap { display:grid; grid-template-columns: repeat(4, 1fr); gap:6px; }
 .pdc-recap-tile { background:#0b1220; border:1px solid #1e293b; border-radius: 10px;
   padding: 6px 4px; text-align:center; }
 .pdc-recap-tile .lab { font-size:.62rem; font-weight:900; color:#93c5fd;
   text-transform:uppercase; letter-spacing:.06em; }
 .pdc-recap-tile .val { font-size:.9rem; font-weight:900; color:#f8fafc; margin-top:2px; }
-.pdc-likely { padding: 4px 10px; border-radius: 999px; background: rgba(56,189,248,.15);
-  color:#7dd3fc; font-weight: 800; font-size:.72rem; display:inline-block; margin-top:6px; }
-.pdc-likely-reason { color:#94a3b8; font-size:.66rem; font-weight:700; margin-top:4px; line-height:1.3; }
+.pdc-likely { padding: 4px 10px; border-radius: 999px; background: rgba(56,189,248,.22);
+  color:#bae6fd; font-weight: 800; font-size:.74rem; display:inline-block; margin-top:6px; }
+.pdc-likely-reason { color:#cbd5e1; font-size:.7rem; font-weight:700; margin-top:4px; line-height:1.35; }
 </style>
 """
 

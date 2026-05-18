@@ -17,15 +17,19 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from services.player_detail import (
+    aggregate_window,
     build_bvp_rows,
     build_split_windows,
     classify_metric,
     classify_pitcher_tier,
     compute_pitcher_rating,
     fetch_batter_game_log,
+    filter_log_for_split,
     format_game_log_rows,
     headshot_url,
     heatmap_style_for,
+    split_label_to_key,
+    team_logo_url,
 )
 
 
@@ -229,8 +233,162 @@ class TestFormatGameLogRows(unittest.TestCase):
         for r in out:
             self.assertTrue(r["opp_label"].startswith("@") or r["opp_label"].startswith("vs "))
 
+    def test_includes_strikeouts(self):
+        # User-facing requirement: every row exposes a K column even when 0.
+        rows = fetch_batter_game_log(
+            12345, 2026, http_get=_fake_get(_payload_for(5, 0))
+        )
+        out = format_game_log_rows(rows, limit=5)
+        for r in out:
+            self.assertIn("k", r)
+            self.assertIsInstance(r["k"], int)
+            # The canned payload sets strikeOuts=1 per game.
+            self.assertEqual(r["k"], 1)
+
+    def test_exposes_opp_logo_url(self):
+        # Each row carries the opponent abbreviation AND a public-CDN logo
+        # URL so the UI can render the team logo without a separate lookup.
+        rows = fetch_batter_game_log(
+            12345, 2026, http_get=_fake_get(_payload_for(3, 0))
+        )
+        out = format_game_log_rows(rows, limit=3)
+        for r in out:
+            self.assertEqual(r["opp"], "LAD")
+            self.assertIsNotNone(r["opp_logo"])
+            self.assertIn("mlbstatic.com", r["opp_logo"])
+
     def test_empty_input(self):
         self.assertEqual(format_game_log_rows([]), [])
+
+
+class TestTeamLogoUrl(unittest.TestCase):
+    """Logo URL builder — pure, free public CDN, abbreviation -> SVG URL.
+
+    The interactive Hits L10 chart and the modal's game log both lean on
+    this helper to show a team logo next to each opponent. It must never
+    raise on bad input, and must accept the common abbreviation aliases
+    (CHW/CWS, KCR/KC, etc.) so old data doesn't blank the icon.
+    """
+
+    def test_returns_none_for_missing(self):
+        self.assertIsNone(team_logo_url(None))
+        self.assertIsNone(team_logo_url(""))
+        self.assertIsNone(team_logo_url("   "))
+
+    def test_returns_none_for_unknown(self):
+        self.assertIsNone(team_logo_url("XYZ"))
+
+    def test_returns_url_for_canonical_abbr(self):
+        u = team_logo_url("LAD")
+        self.assertIsNotNone(u)
+        self.assertIn("mlbstatic.com/team-logos/", u)
+        self.assertTrue(u.endswith(".svg"))
+
+    def test_accepts_alias_abbrs(self):
+        # OAK and ATH should both resolve to the same id (133).
+        self.assertEqual(team_logo_url("OAK"), team_logo_url("ATH"))
+        # KCR -> KC
+        self.assertEqual(team_logo_url("KCR"), team_logo_url("KC"))
+
+
+class TestSplitLabelToKey(unittest.TestCase):
+    def test_canonical_keys_passthrough(self):
+        for k in ("L5", "L10", "L20", "Season", "TwoYear"):
+            self.assertEqual(split_label_to_key(k), k)
+
+    def test_year_resolves_to_season(self):
+        self.assertEqual(split_label_to_key("2026"), "Season")
+        self.assertEqual(split_label_to_key("2025"), "Season")
+
+    def test_two_year_label_variants(self):
+        self.assertEqual(split_label_to_key("’25-’26"), "TwoYear")
+        self.assertEqual(split_label_to_key("25-26"), "TwoYear")
+
+    def test_h2h_falls_back_to_l10(self):
+        # Without true H2H data the modal renders L10 — keep the fallback
+        # so a missing opponent never blanks the UI.
+        self.assertEqual(split_label_to_key("H2H"), "L10")
+
+    def test_unknown_label_safe_default(self):
+        self.assertEqual(split_label_to_key("???"), "L10")
+        self.assertEqual(split_label_to_key(None), "L10")
+
+
+class TestFilterLogForSplit(unittest.TestCase):
+    """Pinning the dynamic-window filter the modal uses to repaint stats
+    when the user taps a chip. Without this, the modal stayed static."""
+
+    def setUp(self):
+        self.rows = fetch_batter_game_log(
+            12345, 2026, http_get=_fake_get(_payload_for(12, 3))
+        )
+        self.end = date(2026, 4, 15)
+
+    def test_l5_returns_last_five(self):
+        out = filter_log_for_split(self.rows, "L5", 2026, self.end)
+        self.assertEqual(len(out), 5)
+        self.assertEqual(out[-1]["date"], "2026-04-12")
+
+    def test_l20_caps_at_available(self):
+        out = filter_log_for_split(self.rows, "L20", 2026, self.end)
+        self.assertEqual(len(out), 15)  # only 15 games on file
+
+    def test_season_isolates_current_year(self):
+        out = filter_log_for_split(self.rows, "Season", 2026, self.end)
+        self.assertEqual(len(out), 12)
+        for r in out:
+            self.assertTrue(r["date"].startswith("2026"))
+
+    def test_two_year_includes_prior(self):
+        out = filter_log_for_split(self.rows, "TwoYear", 2026, self.end)
+        self.assertEqual(len(out), 15)
+
+    def test_h2h_with_matching_opponent(self):
+        # All 2026 games are vs LAD — H2H against LAD should return only
+        # those, not the prior-season BOS rows.
+        out = filter_log_for_split(
+            self.rows, "H2H", 2026, self.end, opp_team="LAD"
+        )
+        self.assertEqual(len(out), 12)
+        for r in out:
+            self.assertEqual(r["opponent"], "LAD")
+
+    def test_h2h_no_match_falls_back_to_l10(self):
+        # Opponent that never appeared -> fall back to L10 so the modal
+        # never shows an empty body.
+        out = filter_log_for_split(
+            self.rows, "H2H", 2026, self.end, opp_team="NYY"
+        )
+        self.assertEqual(len(out), 10)
+
+    def test_empty_log_returns_empty(self):
+        self.assertEqual(filter_log_for_split([], "L10", 2026, self.end), [])
+
+
+class TestAggregateWindowExposed(unittest.TestCase):
+    """The dialog needs to aggregate an arbitrary slice (H2H subset) so
+    aggregate_window is publicly exported. Verify it sums correctly."""
+
+    def test_aggregate_basic(self):
+        rows = [
+            {"pa": 5, "ab": 4, "h": 2, "hr": 1, "bb": 1, "k": 1, "tb": 5,
+             "hbp": 0, "sf": 0},
+            {"pa": 4, "ab": 4, "h": 1, "hr": 0, "bb": 0, "k": 2, "tb": 1,
+             "hbp": 0, "sf": 0},
+        ]
+        out = aggregate_window(rows)
+        self.assertEqual(out["games"], 2)
+        self.assertEqual(out["PA"], 9)
+        self.assertEqual(out["AB"], 8)
+        self.assertEqual(out["H"], 3)
+        self.assertEqual(out["HR"], 1)
+        self.assertAlmostEqual(out["AVG"], 3 / 8)
+
+    def test_aggregate_empty(self):
+        out = aggregate_window([])
+        self.assertEqual(out["games"], 0)
+        self.assertEqual(out["PA"], 0)
+        self.assertIsNone(out["AVG"])
 
 
 class TestClassifyMetric(unittest.TestCase):

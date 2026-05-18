@@ -4545,6 +4545,9 @@ from services.player_detail import (
     headshot_url as _pd_headshot_url,
     heatmap_style_for as _pd_heatmap_style_for,
     classify_pitcher_tier as _pd_classify_pitcher_tier,
+    team_logo_url as _pd_team_logo_url,
+    filter_log_for_split as _pd_filter_log_for_split,
+    split_label_to_key as _pd_split_label_to_key,
 )
 
 
@@ -4653,7 +4656,14 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
     log_rows = _pd_format_game_log_rows(game_log, limit=10)
 
     # Recent chart inputs: last 10 hits-per-game (for green bar chart strip).
-    recent = [r.get("h", 0) for r in game_log[-10:]] if game_log else []
+    recent_slice = game_log[-10:] if game_log else []
+    recent = [r.get("h", 0) for r in recent_slice]
+    recent_opps = [
+        {"abbr": r.get("opponent") or "",
+         "logo": _pd_team_logo_url(r.get("opponent") or ""),
+         "is_home": bool(r.get("is_home"))}
+        for r in recent_slice
+    ]
     if recent:
         avg_h = sum(recent) / len(recent)
         sorted_r = sorted(recent)
@@ -4662,11 +4672,14 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
     else:
         avg_h = median_h = None
 
+    opp_team_abbr = str(player_row.get("Opp") or "").strip().upper()
+
     return {
         "header": {
             "name": name, "team": team, "spot": spot,
             "bat_side": bat_side, "pitch_hand": pitch_hand,
             "opp_pitcher": opp_name,
+            "opp_team": opp_team_abbr,
             "slate_date": slate_iso,
             "player_id": int(pid) if pid else None,
             "headshot": _pd_headshot_url(pid),
@@ -4675,7 +4688,11 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
         "bvp_rows": bvp_rows,
         "rating": rating,
         "game_log_rows": log_rows,
-        "recent": {"values": recent, "avg": avg_h, "median": median_h},
+        "game_log": game_log,
+        "log_season": log_season,
+        "slate_iso": slate_iso,
+        "recent": {"values": recent, "avg": avg_h, "median": median_h,
+                   "opponents": recent_opps},
         # Carry the batter's own heat-map metrics so the dialog can show a
         # "what the tile said" recap (keeps numbers consistent w/ the board).
         "tile": {
@@ -4913,6 +4930,59 @@ div[role="dialog"] button[aria-label="Close"] {
 .pdc-rating-score.pdc-hm-good { background:#14532d; border-color:#22c55e; }
 .pdc-rating-score.pdc-hm-okay { background:#78350f; border-color:#facc15; }
 .pdc-rating-score.pdc-hm-bad  { background:#7f1d1d; border-color:#ef4444; }
+
+/* ---------------------------------------------------------------
+   Modal sizing + scrolling. The dialog body must scroll on phones
+   so the Game Log at the bottom isn't clipped by the viewport. We
+   cap the dialog at ~90vh and let the inner scroll container
+   handle overflow with momentum on iOS. Bottom padding gives the
+   user space below the last row so it doesn't sit flush against
+   the safe-area inset on notch devices.
+   --------------------------------------------------------------- */
+div[data-testid="stDialog"] > div > div,
+div[role="dialog"] {
+  max-height: 92vh !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+div[data-testid="stDialog"] [data-testid="stVerticalBlock"],
+div[role="dialog"]         [data-testid="stVerticalBlock"] {
+  padding-bottom: 32px;
+}
+.pdc-root { padding-bottom: 96px; }
+.pdc-root, .pdc-card { overflow-x: hidden; }
+.pdc-modal-tail { height: 64px; }
+
+/* Game-log: capped height + scroll so a long L20/Season window is
+   reachable without pushing other sections off-screen on phones. */
+.pdc-log-scroll {
+  max-height: 56vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.pdc-log-opp-logo {
+  width: 14px; height: 14px; vertical-align: middle;
+  margin-right: 4px; display: inline-block;
+}
+.pdc-log-opp-abbr { vertical-align: middle; }
+
+/* Bar chart columns now carry an opponent logo strip below each
+   bar so the user can see WHO the batter faced at a glance. */
+.pdc-bar-col {
+  flex: 1 1 0; min-width: 0; display:flex; flex-direction:column; align-items:stretch;
+}
+.pdc-bar-track {
+  flex: 1 1 auto; min-height: 56px; display:flex; align-items:flex-end;
+}
+.pdc-bar-track .pdc-bar { width: 100%; }
+.pdc-bar-opp {
+  height: 22px; margin-top: 4px;
+  display:flex; align-items:center; justify-content:center;
+}
+.pdc-bar-opp img { width: 18px; height: 18px; object-fit: contain; }
+.pdc-bar-opp--text {
+  font-size: .55rem; font-weight: 900; color: #bae6fd;
+}
 </style>
 """
 
@@ -4920,8 +4990,10 @@ div[role="dialog"] button[aria-label="Close"] {
 def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     """Build the dark detail card HTML markup for one player payload.
 
-    Active split chip is passed in so the radio above the dialog can toggle
-    which window the BvP / splits panel emphasises.
+    Active split chip drives the dynamic sections: the "selected window"
+    recap, the recent-hits chart, and the game-log table all recompute for
+    the chosen scope (L5 / L10 / L20 / Season / TwoYear / H2H) so the modal
+    is truly interactive instead of showing static numbers.
     """
     h = payload["header"]
     tile = payload["tile"]
@@ -4930,6 +5002,38 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     bvp_rows = payload["bvp_rows"]
     log_rows = payload["game_log_rows"]
     recent = payload["recent"]
+    game_log = payload.get("game_log") or []
+    log_season = int(payload.get("log_season") or date.today().year)
+    slate_iso = payload.get("slate_iso") or ""
+
+    # Resolve active split -> rows we render the dynamic sections from.
+    try:
+        end_dt = date.fromisoformat(slate_iso[:10]) if slate_iso else date.today()
+    except Exception:
+        end_dt = date.today()
+    active_rows = _pd_filter_log_for_split(
+        game_log, active_chip, log_season, end_dt,
+        opp_team=h.get("opp_team"),
+    )
+    active_key = _pd_split_label_to_key(active_chip)
+    # Aggregates for the *selected* window. Re-uses the canonical buckets
+    # when the active chip maps cleanly to one of them (faster, same math),
+    # and falls back to a fresh aggregation for H2H / unmapped chips.
+    if active_chip == "H2H":
+        # Aggregate the H2H subset on the fly so H2H shows real numbers
+        # instead of the same L10 figures.
+        from services.player_detail import aggregate_window as _pd_agg_window
+        active_agg = _pd_agg_window(active_rows)
+    else:
+        active_agg = splits.get(active_key) or {}
+    # Whether the H2H tab found any true head-to-head games — drives the
+    # "proxy" badge so the user knows when we fell back to L10.
+    h2h_actual = False
+    if active_chip == "H2H" and h.get("opp_team"):
+        opp_norm = str(h.get("opp_team") or "").upper()
+        h2h_actual = any(
+            str(r.get("opponent") or "").upper() == opp_norm for r in active_rows
+        )
 
     # Header card.
     meta_bits = []
@@ -5106,14 +5210,17 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         '</div>'
     )
 
-    # Splits chips.
+    # Splits chips. Each chip shows the AVG for its window so the user can
+    # compare scopes at a glance; tapping a chip (via the radio above) makes
+    # the dynamic sections below recompute for that window.
+    season_year = log_season
     chip_specs = [
-        ("H2H",   splits.get("L5")),
-        ("L5",    splits.get("L5")),
-        ("L10",   splits.get("L10")),
-        ("L20",   splits.get("L20")),
-        ("2026",  splits.get("Season")),
-        ("’25-’26", splits.get("TwoYear")),
+        ("H2H",       splits.get("L10")),
+        ("L5",        splits.get("L5")),
+        ("L10",       splits.get("L10")),
+        ("L20",       splits.get("L20")),
+        (str(season_year), splits.get("Season")),
+        ("’25-’26",   splits.get("TwoYear")),
     ]
     chip_html = []
     for label, agg in chip_specs:
@@ -5139,61 +5246,163 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         '</div>'
     )
 
-    # Recent bars (last 10 games hits).
-    vals = recent.get("values") or []
+    # Dynamic "selected window" recap — drives the interactive feel.
+    # Tapping H2H / L5 / L10 / L20 / Season / TwoYear re-renders this block
+    # with that scope's PA, AVG, OPS, HR%, BB%, K%, SLG and a banded color
+    # for each so the modal is genuinely responsive instead of static.
+    def _fmt3(v):
+        if v is None or (isinstance(v, float) and v != v):
+            return "—"
+        s = f"{float(v):.3f}"
+        return s[1:] if s.startswith("0.") else s
+    games_n = int(active_agg.get("games") or 0)
+    pa_n = int(active_agg.get("PA") or 0)
+    proxy_badge = ""
+    if active_chip == "H2H" and not h2h_actual:
+        proxy_badge = ('<span class="pdc-likely" style="margin-left:8px;'
+                       'background:rgba(202,138,4,.25);color:#fde68a;">'
+                       'L10 proxy — no H2H history</span>')
+    elif active_chip == "H2H" and h2h_actual:
+        proxy_badge = ('<span class="pdc-likely" style="margin-left:8px;'
+                       'background:rgba(34,197,94,.20);color:#bbf7d0;">'
+                       f'True H2H · {games_n} games vs {h.get("opp_team","")}</span>')
+    selected_recap = (
+        f'<div class="pdc-section-title">Selected — {active_chip}{proxy_badge}</div>'
+        '<div class="pdc-card">'
+        '<div class="pdc-recap">'
+        + _r("G", games_n, "{:.0f}")
+        + _r("PA", pa_n, "{:.0f}")
+        + _r("AVG", active_agg.get("AVG"), metric="AVG")
+        + _r("OPS", active_agg.get("OPS"), metric="OPS")
+        + _r("HR%", active_agg.get("HR%"), "{:.1f}%", metric="HR%")
+        + _r("K%",  active_agg.get("K%"),  "{:.1f}%", metric="K%")
+        + '</div></div>'
+    )
+
+    # Recent bars — show the *selected* window's hits-per-game with the
+    # opponent's team logo under each bar. For very wide scopes (Season /
+    # TwoYear) we cap to the most recent 20 bars so the chart stays
+    # readable on phone screens.
+    if active_rows:
+        chart_rows = active_rows[-20:]
+        vals = [int(r.get("h") or 0) for r in chart_rows]
+        chart_opps = [
+            {"abbr": (r.get("opponent") or ""),
+             "logo": _pd_team_logo_url(r.get("opponent") or ""),
+             "is_home": bool(r.get("is_home"))}
+            for r in chart_rows
+        ]
+        if vals:
+            chart_avg = sum(vals) / len(vals)
+            sorted_v = sorted(vals)
+            mid = len(sorted_v) // 2
+            chart_median = (sorted_v[mid] if len(sorted_v) % 2 == 1
+                            else (sorted_v[mid - 1] + sorted_v[mid]) / 2)
+        else:
+            chart_avg = chart_median = None
+    else:
+        vals = recent.get("values") or []
+        chart_opps = recent.get("opponents") or []
+        chart_avg = recent.get("avg")
+        chart_median = recent.get("median")
     max_v = max(vals) if vals else 1
     bar_html = []
-    for v in vals:
+    for i, v in enumerate(vals):
         pct = (v / max_v * 100) if max_v else 0
         cls = "empty" if v == 0 else ""
+        opp = chart_opps[i] if i < len(chart_opps) else {}
+        abbr = (opp.get("abbr") or "").strip()
+        logo = opp.get("logo")
+        loc = "@" if not opp.get("is_home") else "vs"
+        if logo:
+            opp_chip = (
+                f'<div class="pdc-bar-opp" title="{loc} {abbr}">'
+                f'<img src="{logo}" alt="{abbr}" loading="lazy" '
+                f'referrerpolicy="no-referrer" '
+                f'onerror="this.style.display=\'none\';this.parentElement.innerText=\'{abbr}\';"/>'
+                f'</div>'
+            )
+        elif abbr:
+            opp_chip = f'<div class="pdc-bar-opp pdc-bar-opp--text">{abbr}</div>'
+        else:
+            opp_chip = '<div class="pdc-bar-opp"></div>'
         bar_html.append(
+            f'<div class="pdc-bar-col">'
+            f'<div class="pdc-bar-track">'
             f'<div class="pdc-bar {cls}" style="height:{max(6, pct)}%"><span class="v">{v}</span></div>'
+            f'</div>'
+            f'{opp_chip}'
+            f'</div>'
         )
-    avg_str = f"{recent['avg']:.2f}" if recent.get("avg") is not None else "—"
-    med_str = f"{recent['median']:.1f}" if recent.get("median") is not None else "—"
+    avg_str = f"{chart_avg:.2f}" if chart_avg is not None else "—"
+    med_str = f"{chart_median:.1f}" if chart_median is not None else "—"
+    chart_title = f"Recent — Hits ({active_chip})" if vals else "Recent — Hits"
     if vals:
         recent_html = (
-            '<div class="pdc-section-title">Recent — Hits (L10)</div>'
+            f'<div class="pdc-section-title">{chart_title}</div>'
             '<div class="pdc-card pdc-recent">'
             '<div class="pdc-recent-pills">'
             f'<div class="pdc-pill">Avg<span class="num">{avg_str}</span></div>'
             f'<div class="pdc-pill">Median<span class="num">{med_str}</span></div>'
+            f'<div class="pdc-pill">N<span class="num">{len(vals)}</span></div>'
             '</div>'
             f'<div class="pdc-bars">{"".join(bar_html)}</div>'
             '</div>'
         )
     else:
-        recent_html = ""
+        recent_html = (
+            f'<div class="pdc-section-title">{chart_title}</div>'
+            '<div class="pdc-card"><div class="pdc-empty">No games in this window yet.</div></div>'
+        )
 
-    # Game log table.
+    # Game log table — filtered to the active split. Adds a K column
+    # (batter strikeouts) the user explicitly asked for, plus a small team
+    # logo next to each opponent abbreviation.
+    scope_log = _pd_format_game_log_rows(active_rows, limit=20)
     log_body = []
-    for r in log_rows:
+    for r in scope_log:
+        opp_abbr = r.get("opp") or ""
+        opp_logo = r.get("opp_logo")
+        if opp_logo:
+            opp_html = (
+                f'<img src="{opp_logo}" class="pdc-log-opp-logo" '
+                f'alt="{opp_abbr}" loading="lazy" '
+                f'referrerpolicy="no-referrer" '
+                f'onerror="this.style.display=\'none\';"/>'
+                f'<span class="pdc-log-opp-abbr">{r["opp_label"]}</span>'
+            )
+        else:
+            opp_html = f'<span class="pdc-log-opp-abbr">{r["opp_label"]}</span>'
         log_body.append(
             f'<tr>'
-            f'<td><div>{r["date_short"]}</div><div class="pdc-log-opp">{r["opp_label"]} {r["score"]}</div></td>'
+            f'<td><div>{r["date_short"]}</div>'
+            f'<div class="pdc-log-opp">{opp_html} {r["score"]}</div></td>'
             f'<td>{r["ab"]}</td>'
             f'<td>{r["h"]}</td>'
             f'<td>{r["hr"]}</td>'
             f'<td>{r["tb"]}</td>'
             f'<td>{r["rbi"]}</td>'
+            f'<td>{r["k"]}</td>'
             f'</tr>'
         )
     if log_body:
         log_html = (
-            '<div class="pdc-section-title">Game Log</div>'
+            f'<div class="pdc-section-title">Game Log — {active_chip}</div>'
             '<div class="pdc-card" style="padding: 0;">'
+            '<div class="pdc-log-scroll">'
             '<table class="pdc-log-table">'
             '<thead><tr>'
-            '<th>Date</th><th>AB</th><th>H</th><th>HR</th><th>TB</th><th>RBI</th>'
+            '<th>Date</th><th>AB</th><th>H</th><th>HR</th><th>TB</th><th>RBI</th><th>K</th>'
             '</tr></thead>'
             f'<tbody>{"".join(log_body)}</tbody>'
             '</table>'
             '</div>'
+            '</div>'
         )
     else:
         log_html = (
-            '<div class="pdc-section-title">Game Log</div>'
-            '<div class="pdc-card"><div class="pdc-empty">No recent games on file yet.</div></div>'
+            f'<div class="pdc-section-title">Game Log — {active_chip}</div>'
+            '<div class="pdc-card"><div class="pdc-empty">No games in this window yet.</div></div>'
         )
 
     return (
@@ -5204,8 +5413,10 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         + rating_html
         + bvp_html
         + chips_html
+        + selected_recap
         + recent_html
         + log_html
+        + '<div class="pdc-modal-tail"></div>'
         + '</div>'
     )
 
@@ -5223,11 +5434,17 @@ def _open_player_detail_dialog(payload_key: str):
         st.write("No player selected.")
         return
 
-    chips = ["H2H", "L5", "L10", "L20", "2026", "’25-’26"]
+    # Dynamic season label so the chip year doesn't go stale once the
+    # calendar flips. Falls back to the slate-date year on the payload.
+    try:
+        season_label = str(int(payload.get("log_season") or date.today().year))
+    except Exception:
+        season_label = str(date.today().year)
+    chips = ["H2H", "L5", "L10", "L20", season_label, "’25-’26"]
     active = st.radio(
         "Window",
         chips,
-        index=1,
+        index=2,
         horizontal=True,
         label_visibility="collapsed",
         key=f"{payload_key}__chip",
@@ -5237,6 +5454,13 @@ def _open_player_detail_dialog(payload_key: str):
 
 _MATCHUP_CTA_CSS = (
     '<div class="mhm-cta-host">'
+    # Open Sans is free and hosted on Google Fonts; the font file is fetched
+    # once by the browser and cached. Without the import Streamlit's theme
+    # was falling back to the system stack which kept the CTA looking light /
+    # purple-tinted, so the import + explicit family fixes it everywhere.
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@700;800;900&display=swap" rel="stylesheet">'
     '<style>'
     # Each Streamlit button that immediately follows a .mhm-card-host wrapper
     # is rendered as that card's footer: flush against the card, no border
@@ -5245,43 +5469,54 @@ _MATCHUP_CTA_CSS = (
     '.mhm-card-host { margin-bottom: 0; }'
     '.mhm-card-host + div[data-testid="stButton"] { margin-top: 0 !important; '
     '  margin-bottom: 16px !important; }'
-    '.mhm-card-host + div[data-testid="stButton"] button { '
+    # Heavy-handed selector chain — Streamlit's default theme paints buttons
+    # with its primary color (which on the user's theme rendered as a
+    # purple/blue gradient). We target every nesting Streamlit might emit
+    # (button, kind="secondary", baseButton, etc.) and force the gold pill.
+    '.mhm-card-host + div[data-testid="stButton"] button, '
+    '.mhm-card-host + div[data-testid="stButton"] button[kind], '
+    '.mhm-card-host + div[data-testid="stButton"] button[data-testid], '
+    '.mhm-card-host + div[data-testid="stButton"] > button { '
     '  width: 100%; min-height: 54px; '
-    # Gold pill — replaces the previous blue/purple gradient at the user's
-    # request. Two-stop amber→gold gives the button a polished metallic
-    # feel; the dark amber border anchors it against the card's dark body.
-    '  background: linear-gradient(180deg, #fde047 0%, #ca8a04 100%); '
+    '  background: linear-gradient(180deg, #fde047 0%, #ca8a04 100%) !important; '
+    '  background-color: #f7c948 !important; '
     '  color: #0b0b0b !important; '
-    '  border: 1px solid #a16207; border-top: 1px dashed #92400e; '
-    '  border-radius: 0 0 14px 14px; '
-    '  padding: 12px 14px; '
-    '  font-weight: 900 !important; font-size: .98rem; line-height: 1.2; '
-    '  letter-spacing: .06em; text-align: center; text-transform: uppercase; '
-    '  text-shadow: none; '
-    '  box-shadow: 0 6px 16px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.55); '
+    '  border: 1px solid #a16207 !important; '
+    '  border-top: 1px dashed #92400e !important; '
+    '  border-radius: 0 0 14px 14px !important; '
+    '  padding: 12px 14px !important; '
+    '  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", '
+    '    Roboto, sans-serif !important; '
+    '  font-weight: 900 !important; font-size: 1rem !important; line-height: 1.2 !important; '
+    '  letter-spacing: .08em !important; text-align: center !important; '
+    '  text-transform: uppercase !important; text-shadow: none !important; '
+    '  box-shadow: 0 6px 16px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.55) !important; '
     '  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease; '
     '  white-space: nowrap; '
     '} '
     '.mhm-card-host + div[data-testid="stButton"] button:hover { '
     '  filter: brightness(1.06); '
-    '  box-shadow: 0 8px 22px rgba(202,138,4,.55), inset 0 1px 0 rgba(255,255,255,.65); '
-    '  border-color: #fbbf24; } '
+    '  box-shadow: 0 8px 22px rgba(202,138,4,.55), inset 0 1px 0 rgba(255,255,255,.65) !important; '
+    '  border-color: #fbbf24 !important; } '
     '.mhm-card-host + div[data-testid="stButton"] button:active { '
     '  transform: translateY(1px); filter: brightness(.95); }'
-    # Streamlit wraps the button label in a <p>. Force the inner text to
-    # black + bold so the gold pill always reads as bold black letters
-    # regardless of theme overrides.
+    # Streamlit wraps the button label in <p>/<span>/<div>; force EVERY
+    # descendant text node to bold black Open Sans so theme overrides
+    # (which previously left the text purple/thin) cannot win.
+    '.mhm-card-host + div[data-testid="stButton"] button *, '
     '.mhm-card-host + div[data-testid="stButton"] button p, '
     '.mhm-card-host + div[data-testid="stButton"] button span, '
     '.mhm-card-host + div[data-testid="stButton"] button div { '
     '  margin: 0 !important; color: #0b0b0b !important; '
-    '  font-weight: 900 !important; letter-spacing: .06em !important; '
+    '  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", '
+    '    Roboto, sans-serif !important; '
+    '  font-weight: 900 !important; letter-spacing: .08em !important; '
     '  text-transform: uppercase !important; '
     '  white-space: nowrap !important; }'
     '@media (max-width: 640px) { '
     '  .mhm-card-host + div[data-testid="stButton"] button { '
-    '    min-height: 56px; font-size: .96rem; padding: 14px 12px; '
-    '    letter-spacing: .04em; } }'
+    '    min-height: 56px; font-size: .98rem !important; padding: 14px 12px !important; '
+    '    letter-spacing: .06em !important; } }'
     '</style></div>'
 )
 

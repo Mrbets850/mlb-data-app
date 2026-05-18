@@ -4827,6 +4827,15 @@ from services.player_detail import (
     split_label_to_key as _pd_split_label_to_key,
 )
 
+# HR Due Indicator landed in services/player_detail.py in this PR. Wrap in a
+# defensive import so a stale deployment never bricks the whole app — if the
+# helper is missing we fall back to a no-op returning a "no data" payload.
+try:
+    from services.player_detail import compute_hr_due_indicator as _pd_compute_hr_due
+except ImportError:
+    def _pd_compute_hr_due(**_kwargs):
+        return {"score": 0, "total": 6, "label": "Cold", "criteria": []}
+
 # Defensive imports for the two helpers added most recently (PR #54).
 # If a deployment ever runs against a stale services/player_detail.py
 # (e.g. before Streamlit Cloud finishes picking up the redeploy), these
@@ -4972,6 +4981,37 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
 
     opp_team_abbr = str(player_row.get("Opp") or "").strip().upper()
 
+    # HR Due Indicator — six-criterion composite ("is this batter overdue?").
+    # Inputs come from data we already have on the slate row + opposing pitcher
+    # row + game log; the helper degrades gracefully when any one signal is
+    # missing so the card never crashes.
+    own_team = str(player_row.get("Team") or "").strip().upper()
+    loc = str(player_row.get("Loc") or "").strip()
+    home_abbr_for_park = own_team if loc == "vs" else (opp_team_abbr or own_team)
+    try:
+        park_factor_val = DEFAULT_PARK_FACTORS.get(home_abbr_for_park)
+    except Exception:
+        park_factor_val = None
+    # Pitcher HR/9 — prefer the pitcher row's value, otherwise let the helper
+    # derive from HR / IP if those are present.
+    p_hr9 = None
+    if p_dict is not None:
+        for key in ("HR/9", "hr9", "homeRunsPer9"):
+            v = p_dict.get(key)
+            if v is not None:
+                p_hr9 = v
+                break
+    hr_due = _pd_compute_hr_due(
+        game_log=game_log,
+        season_barrel_pct=player_row.get("Brl/BIP%") or player_row.get("Barrel%"),
+        season_la=player_row.get("LA"),
+        recent_la=None,
+        opp_pitcher_row=(
+            {**(p_dict or {}), "HR/9": p_hr9} if p_dict is not None else None
+        ),
+        park_factor=park_factor_val,
+    )
+
     return {
         "header": {
             "name": name, "team": team, "spot": spot,
@@ -4991,6 +5031,7 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
         "slate_iso": slate_iso,
         "recent": {"values": recent, "avg": avg_h, "median": median_h,
                    "opponents": recent_opps},
+        "hr_due": hr_due,
         # Carry the batter's own heat-map metrics so the dialog can show a
         # "what the tile said" recap (keeps numbers consistent w/ the board).
         "tile": {
@@ -5425,6 +5466,98 @@ div[role="dialog"] button[aria-label="Close"] {
   .pdc-bar-opp img { max-width: 18px; max-height: 18px; }
   .pdc-bar-opp-fallback { font-size: .5rem; }
 }
+
+/* ---------------------------------------------------------------
+   HR Due Indicator — premium dark card with a red/pink accent
+   border + faint glow, six criterion rows each with a green check
+   (or muted dot for miss / missing). The score line is the
+   marquee element ("6 / 6 Due 🔥") and uses a red->pink gradient
+   to read as the urgency tile from the screenshot.
+   --------------------------------------------------------------- */
+.pdc-hrdue {
+  position: relative;
+  background: linear-gradient(180deg, #1a0a10 0%, #120608 100%);
+  border: 1px solid rgba(244, 63, 94, .55);
+  border-radius: 16px;
+  padding: 16px 16px 14px;
+  margin: 14px 0;
+  box-shadow: 0 0 0 1px rgba(244, 63, 94, .12),
+              0 12px 28px -10px rgba(244, 63, 94, .35);
+}
+.pdc-hrdue-title {
+  font-size: .72rem;
+  letter-spacing: .14em;
+  color: #fda4af;
+  text-transform: uppercase;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+.pdc-hrdue-score {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 12px;
+}
+.pdc-hrdue-score .num {
+  font-size: 2.4rem; font-weight: 900;
+  background: linear-gradient(180deg, #fb7185 0%, #f43f5e 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  line-height: 1; letter-spacing: -.02em;
+}
+.pdc-hrdue-score .den {
+  font-size: 1rem; font-weight: 700; color: #fda4af; opacity: .9;
+}
+.pdc-hrdue-score .lbl {
+  font-size: 1.1rem; font-weight: 800; color: #fecdd3;
+  margin-left: 6px;
+}
+.pdc-hrdue-list {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.pdc-hrdue-item {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, .55);
+  border: 1px solid rgba(34, 197, 94, .30);
+}
+.pdc-hrdue-item.is-miss {
+  border-color: rgba(100, 116, 139, .25);
+  background: rgba(15, 23, 42, .40);
+}
+.pdc-hrdue-item.is-missing {
+  border-color: rgba(100, 116, 139, .18);
+  background: rgba(15, 23, 42, .30);
+  opacity: .80;
+}
+.pdc-hrdue-check {
+  flex: 0 0 auto;
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 900; line-height: 1;
+  color: #22c55e;
+  font-size: 1.05rem;
+  margin-top: 2px;
+}
+.pdc-hrdue-item.is-miss .pdc-hrdue-check { color: #475569; }
+.pdc-hrdue-item.is-missing .pdc-hrdue-check { color: #334155; }
+.pdc-hrdue-body { flex: 1 1 auto; min-width: 0; }
+.pdc-hrdue-h    {
+  font-size: 1rem; font-weight: 800; color: #f8fafc;
+  margin-bottom: 2px;
+}
+.pdc-hrdue-d    {
+  font-size: .85rem; color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.35; word-break: break-word;
+}
+.pdc-hrdue-item.is-missing .pdc-hrdue-d { color: #64748b; font-style: italic; }
+@media (max-width: 380px) {
+  .pdc-hrdue { padding: 14px 12px 12px; }
+  .pdc-hrdue-score .num { font-size: 2rem; }
+  .pdc-hrdue-item { padding: 8px 10px; gap: 10px; }
+  .pdc-hrdue-h { font-size: .95rem; }
+  .pdc-hrdue-d { font-size: .78rem; }
+}
 </style>
 """
 
@@ -5557,6 +5690,47 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         )
     else:
         grade_badge_html = ""
+
+    # HR Due Indicator block — rendered between the header card and the
+    # slate snapshot recap so it reads as the marquee call-out the same way
+    # the screenshot does. Built from payload["hr_due"]; tolerant of empty.
+    hr_due = payload.get("hr_due") or {}
+    hr_due_items_html = ""
+    for c in (hr_due.get("criteria") or []):
+        state = c.get("state", "missing")
+        if state == "hit":
+            mark = "✓"
+            state_cls = ""
+        elif state == "miss":
+            mark = "×"
+            state_cls = "is-miss"
+        else:
+            mark = "•"
+            state_cls = "is-missing"
+        title = c.get("title", "")
+        detail = c.get("detail", "")
+        hr_due_items_html += (
+            f'<div class="pdc-hrdue-item {state_cls}">'
+            f'<span class="pdc-hrdue-check" aria-hidden="true">{mark}</span>'
+            f'<div class="pdc-hrdue-body">'
+            f'<div class="pdc-hrdue-h">{title}</div>'
+            f'<div class="pdc-hrdue-d">{detail}</div>'
+            f'</div></div>'
+        )
+    if hr_due.get("criteria"):
+        hr_due_html = (
+            '<div class="pdc-hrdue">'
+            '<div class="pdc-hrdue-title">HR Due Indicator</div>'
+            '<div class="pdc-hrdue-score">'
+            f'<span class="num">{int(hr_due.get("score", 0))}</span>'
+            f'<span class="den">/ {int(hr_due.get("total", 6))}</span>'
+            f'<span class="lbl">{hr_due.get("label", "")}</span>'
+            '</div>'
+            f'<div class="pdc-hrdue-list">{hr_due_items_html}</div>'
+            '</div>'
+        )
+    else:
+        hr_due_html = ""
 
     header_card = (
         f'<div class="pdc-card">'
@@ -5893,6 +6067,7 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         _PLAYER_DETAIL_CSS
         + '<div class="pdc-root">'
         + header_card
+        + hr_due_html
         + recap_html
         + rating_html
         + bvp_html

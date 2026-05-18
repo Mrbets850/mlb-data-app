@@ -794,3 +794,329 @@ def filter_log_for_split(game_log: list[dict], split: str,
         return [r for r in filtered if (r.get("date") or "")[:4]
                 in (str(season), str(season - 1))]
     return filtered[-10:]
+
+
+# --- HR Due Indicator -------------------------------------------------------
+#
+# A six-criterion "is this hitter overdue for a HR?" composite shown on the
+# interactive player detail card. Each criterion resolves to one of three
+# states:
+#   - "hit"     : the signal points to a HR being likely (✓, counted in score)
+#   - "miss"    : the signal does not support a HR
+#   - "missing" : we did not have the data to evaluate it
+#
+# Score is always reported as ``hits / 6`` so the denominator stays stable
+# even when a criterion is missing — the user sees a "Data unavailable"
+# subtitle on that row rather than a layout shift.
+
+# League-typical anchors used as fallbacks when the caller has not supplied
+# a measured median. These mirror MLB-wide averages over the last few
+# seasons; they are deliberately conservative so we don't over-claim a
+# "hit" purely on a benchmark we made up.
+_HR_DUE_LEAGUE_BARREL_MEDIAN = 7.0      # MLB median barrel% (Statcast)
+_HR_DUE_LEAGUE_HR9_AVG       = 1.30     # MLB-wide HR/9 allowed
+_HR_DUE_LA_LOW               = 15.0     # Lower edge of HR-friendly LA window
+_HR_DUE_LA_HIGH              = 25.0     # Upper edge of HR-friendly LA window
+
+
+def _f_or_none(value: Any) -> float | None:
+    """Coerce to float, returning None for missing/NaN/non-numeric."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if f != f:  # NaN
+        return None
+    return f
+
+
+def _recent_barrel_count(game_log: list[dict] | None, n: int = 3) -> int | None:
+    """Return barrels in the last ``n`` games, or None if unknown.
+
+    The StatsAPI game-log we fetch does not carry per-game barrels, so we
+    fall back to a hit-with-HR-or-XBH proxy: any HR in the window counts as
+    a barrel, and a 2+ extra-base-hit game (2B/3B/HR) is treated as one as
+    well. This is intentionally conservative — we'd rather under-count a
+    barrel and miss the criterion than over-claim it.
+    """
+    if not game_log:
+        return None
+    window = list(game_log)[-int(n):]
+    if not window:
+        return None
+    barrels = 0
+    for r in window:
+        try:
+            hr = int(r.get("hr") or 0)
+            d  = int(r.get("doubles") or 0)
+            t  = int(r.get("triples") or 0)
+        except Exception:
+            continue
+        if hr >= 1:
+            barrels += hr
+            continue
+        if (d + t) >= 2:
+            barrels += 1
+    return barrels
+
+
+def _recent_la_avg(game_log: list[dict] | None, n: int = 7) -> float | None:
+    """Recent launch-angle average over the last ``n`` games when present.
+
+    Game logs from StatsAPI rarely include LA, so this returns None for
+    most batters. The HR Due helper falls back to season LA when this is
+    missing. Wrapped so a future ingest that does carry per-game LA can
+    drop straight in without re-plumbing the criterion.
+    """
+    if not game_log:
+        return None
+    window = list(game_log)[-int(n):]
+    vals: list[float] = []
+    for r in window:
+        la = _f_or_none(r.get("launch_angle") or r.get("la"))
+        if la is not None:
+            vals.append(la)
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
+def _bips_since_last_hr(game_log: list[dict] | None) -> int | None:
+    """Count BIPs (AB - K) between the most recent HR and the end of the log.
+
+    Returns None when we cannot find a HR in the log at all — that case is
+    "career drought unknown" rather than "zero", so callers can mark the
+    drought criterion as missing instead of inflating it.
+    """
+    if not game_log:
+        return None
+    # Walk newest -> oldest counting BIPs until we hit a HR game. The HR game
+    # itself ends the count (the HR cleared the drought), so its BIPs aren't
+    # included in the post-HR streak.
+    bips = 0
+    found_hr = False
+    for r in reversed(game_log):
+        try:
+            hr = int(r.get("hr") or 0)
+            ab = int(r.get("ab") or 0)
+            k  = int(r.get("k") or 0)
+        except Exception:
+            continue
+        if hr >= 1:
+            found_hr = True
+            break
+        bips += max(0, ab - k)
+    if not found_hr:
+        return None
+    return bips
+
+
+def _hr_gap_stats(game_log: list[dict] | None) -> dict | None:
+    """Median + std-dev of BIP gaps between consecutive HRs.
+
+    Returns ``{"median": float, "sd": float, "n_gaps": int}`` or None if the
+    log has fewer than two HRs to compute a gap from.
+    """
+    if not game_log:
+        return None
+    gaps: list[int] = []
+    running = 0
+    saw_hr = False
+    for r in game_log:
+        try:
+            hr = int(r.get("hr") or 0)
+            ab = int(r.get("ab") or 0)
+            k  = int(r.get("k") or 0)
+        except Exception:
+            continue
+        bips = max(0, ab - k)
+        if hr >= 1:
+            if saw_hr:
+                gaps.append(running)
+            saw_hr = True
+            # A multi-HR game resets the gap to zero between same-game HRs.
+            for _ in range(max(0, hr - 1)):
+                gaps.append(0)
+            running = 0
+        else:
+            running += bips
+    if not gaps:
+        return None
+    n = len(gaps)
+    sorted_g = sorted(gaps)
+    mid = n // 2
+    median = sorted_g[mid] if n % 2 == 1 else (sorted_g[mid - 1] + sorted_g[mid]) / 2.0
+    mean = sum(gaps) / n
+    if n > 1:
+        var = sum((g - mean) ** 2 for g in gaps) / (n - 1)
+        sd = var ** 0.5
+    else:
+        sd = 0.0
+    return {"median": float(median), "sd": float(sd), "n_gaps": n}
+
+
+def compute_hr_due_indicator(*,
+                             game_log: list[dict] | None = None,
+                             season_barrel_pct: Any = None,
+                             league_barrel_median: Any = None,
+                             season_la: Any = None,
+                             recent_la: Any = None,
+                             opp_pitcher_row: dict | None = None,
+                             league_hr9: Any = None,
+                             park_factor: Any = None,
+                             ) -> dict:
+    """Return the 6-criterion "HR Due" composite for one batter.
+
+    Returns a dict with:
+      score         : int 0-6 (count of "hit" criteria)
+      total         : int 6 (denominator, fixed)
+      label         : "Due 🔥" / "Warm" / "Cold"
+      criteria      : list of 6 dicts ordered top->bottom in the UI, each
+                       carrying ``{key, title, detail, state}`` where state
+                       is "hit" / "miss" / "missing".
+
+    All inputs are optional. Missing inputs mark the relevant criterion
+    "missing" with a "Data unavailable" detail instead of crashing.
+    """
+    crits: list[dict] = []
+
+    # 1) Recent barrel (last 3 games).
+    rb = _recent_barrel_count(game_log, n=3)
+    if rb is None:
+        crits.append({"key": "recent_barrel",
+                      "title": "Barrel in Last 3 Games",
+                      "detail": "Data unavailable",
+                      "state": "missing"})
+    elif rb >= 1:
+        plural = "barrel" if rb == 1 else "barrels"
+        crits.append({"key": "recent_barrel",
+                      "title": "Barrel in Last 3 Games",
+                      "detail": f"{rb} {plural} in his last 3 games",
+                      "state": "hit"})
+    else:
+        crits.append({"key": "recent_barrel",
+                      "title": "Barrel in Last 3 Games",
+                      "detail": "0 barrels in his last 3 games",
+                      "state": "miss"})
+
+    # 2) Season barrel% elite.
+    s_brl = _f_or_none(season_barrel_pct)
+    median = _f_or_none(league_barrel_median)
+    if median is None:
+        median = _HR_DUE_LEAGUE_BARREL_MEDIAN
+    if s_brl is None:
+        crits.append({"key": "season_barrel",
+                      "title": "Season Barrel % Elite",
+                      "detail": "Data unavailable",
+                      "state": "missing"})
+    else:
+        threshold = max(10.0, median)
+        detail = f"{s_brl:.1f}% season barrel rate (MLB median {median:.1f}%)"
+        state = "hit" if s_brl >= threshold else "miss"
+        crits.append({"key": "season_barrel",
+                      "title": "Season Barrel % Elite",
+                      "detail": detail,
+                      "state": state})
+
+    # 3) Drought Z+ — BIPs since last HR vs. player's own median gap.
+    bips_since = _bips_since_last_hr(game_log)
+    gap = _hr_gap_stats(game_log)
+    if bips_since is None or gap is None:
+        crits.append({"key": "drought_z",
+                      "title": "Drought Z+",
+                      "detail": "Data unavailable",
+                      "state": "missing"})
+    else:
+        med = gap["median"]
+        sd = gap["sd"]
+        if sd > 0:
+            z = (bips_since - med) / sd
+        else:
+            z = 1.0 if bips_since > med else 0.0
+        detail = (f"BIPs since HR: {bips_since} · median gap: {med:.1f} · "
+                  f"SD: {sd:.1f} · Z: {z:+.2f}")
+        state = "hit" if z >= 0.5 else "miss"
+        crits.append({"key": "drought_z",
+                      "title": "Drought Z+",
+                      "detail": detail,
+                      "state": state})
+
+    # 4) Launch angle in HR window.
+    la_recent = _f_or_none(recent_la)
+    if la_recent is None:
+        la_recent = _recent_la_avg(game_log, n=7)
+    la_season = _f_or_none(season_la)
+    if la_recent is None and la_season is None:
+        crits.append({"key": "la_window",
+                      "title": "LA in HR Window",
+                      "detail": "Data unavailable",
+                      "state": "missing"})
+    else:
+        parts = []
+        if la_recent is not None:
+            parts.append(f"Last-7 LA {la_recent:.1f}°")
+        if la_season is not None:
+            parts.append(f"Season {la_season:.1f}°")
+        detail = " · ".join(parts)
+        # Prefer recent LA when available, else season.
+        la_check = la_recent if la_recent is not None else la_season
+        state = "hit" if _HR_DUE_LA_LOW <= la_check <= _HR_DUE_LA_HIGH else "miss"
+        crits.append({"key": "la_window",
+                      "title": "LA in HR Window",
+                      "detail": detail,
+                      "state": state})
+
+    # 5) HR-Friendly pitcher.
+    p = opp_pitcher_row or None
+    hr9 = None
+    if p is not None:
+        hr9 = _f_or_none(p.get("HR/9"))
+        if hr9 is None:
+            # Derive HR/9 from HR + IP if present (Savant rows expose HR and IP).
+            hr_val = _f_or_none(p.get("HR") or p.get("home_run"))
+            ip = _f_or_none(p.get("IP") or p.get("ip"))
+            if hr_val is not None and ip and ip > 0:
+                hr9 = 9.0 * hr_val / ip
+    lg_hr9 = _f_or_none(league_hr9)
+    if lg_hr9 is None:
+        lg_hr9 = _HR_DUE_LEAGUE_HR9_AVG
+    if hr9 is None:
+        crits.append({"key": "pitcher_hr9",
+                      "title": "HR-Friendly Pitcher",
+                      "detail": "Data unavailable",
+                      "state": "missing"})
+    else:
+        detail = f"Opposing pitcher HR/9: {hr9:.2f} (MLB avg {lg_hr9:.2f})"
+        state = "hit" if hr9 >= lg_hr9 else "miss"
+        crits.append({"key": "pitcher_hr9",
+                      "title": "HR-Friendly Pitcher",
+                      "detail": detail,
+                      "state": state})
+
+    # 6) Park HR factor.
+    pf = _f_or_none(park_factor)
+    if pf is None:
+        crits.append({"key": "park_hr",
+                      "title": "HR Park",
+                      "detail": "Data unavailable",
+                      "state": "missing"})
+    else:
+        delta = pf - 100.0
+        sign = "+" if delta >= 0 else ""
+        detail = f"Park HR factor: {sign}{delta:.0f}% HRs today"
+        state = "hit" if pf > 100.0 else "miss"
+        crits.append({"key": "park_hr",
+                      "title": "HR Park",
+                      "detail": detail,
+                      "state": state})
+
+    score = sum(1 for c in crits if c["state"] == "hit")
+    if score >= 5:
+        label = "Due \U0001f525"
+    elif score >= 3:
+        label = "Warm"
+    else:
+        label = "Cold"
+    return {"score": score, "total": 6, "label": label, "criteria": crits}

@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:33:22Z",
+  "last_updated": "2026-05-18T10:33:42Z",
   "picks": [
     {
       "rank": 1,
@@ -46,6 +46,14 @@
       "name": "Michael Conforto",
       "team": "",
       "player_id": 624424,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 7,
+      "name": "Juan Soto",
+      "team": "",
+      "player_id": 665742,
       "note": "",
       "confidence": "🔥 Lock"
     }

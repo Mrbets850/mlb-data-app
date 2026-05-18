@@ -4992,8 +4992,11 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
         park_factor_val = DEFAULT_PARK_FACTORS.get(home_abbr_for_park)
     except Exception:
         park_factor_val = None
-    # Pitcher HR/9 — prefer the pitcher row's value, otherwise let the helper
-    # derive from HR / IP if those are present.
+    # Opposing pitcher fields — the helper reads Barrel% first (primary HR
+    # signal) and falls back to HR/9 if barrel data is absent. Forward the
+    # pitcher row as-is so the helper can probe its preferred set of column
+    # names (Barrel%, Brl/BIP%, barrel_batted_rate, etc.), and explicitly
+    # surface HR/9 derived from HR/IP when it isn't precomputed.
     p_hr9 = None
     if p_dict is not None:
         for key in ("HR/9", "hr9", "homeRunsPer9"):

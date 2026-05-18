@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:33:00Z",
+  "last_updated": "2026-05-18T10:33:22Z",
   "picks": [
     {
       "rank": 1,
@@ -38,6 +38,14 @@
       "name": "Yordan Alvarez",
       "team": "",
       "player_id": 670541,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 6,
+      "name": "Michael Conforto",
+      "team": "",
+      "player_id": 624424,
       "note": "",
       "confidence": "🔥 Lock"
     }

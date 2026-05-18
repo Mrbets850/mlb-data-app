@@ -28,6 +28,7 @@ from services.player_detail import (
     format_game_log_rows,
     headshot_url,
     heatmap_style_for,
+    short_opp_abbr,
     split_label_to_key,
     team_logo_url,
 )
@@ -289,6 +290,43 @@ class TestTeamLogoUrl(unittest.TestCase):
         self.assertEqual(team_logo_url("OAK"), team_logo_url("ATH"))
         # KCR -> KC
         self.assertEqual(team_logo_url("KCR"), team_logo_url("KC"))
+
+
+class TestShortOppAbbr(unittest.TestCase):
+    """Mobile bar-chip fallback when a team logo fails or is missing.
+
+    The chip must never wrap, so the helper trims long abbreviations and
+    normalizes the common long aliases (WSN -> WSH, CHW -> CWS, etc.).
+    Bad inputs return ``""`` so the caller can drop the chip cleanly.
+    """
+
+    def test_empty_inputs_return_empty(self):
+        self.assertEqual(short_opp_abbr(None), "")
+        self.assertEqual(short_opp_abbr(""), "")
+        self.assertEqual(short_opp_abbr("   "), "")
+
+    def test_canonical_passthrough(self):
+        self.assertEqual(short_opp_abbr("LAD"), "LAD")
+        self.assertEqual(short_opp_abbr("nyy"), "NYY")
+        self.assertEqual(short_opp_abbr(" bos "), "BOS")
+
+    def test_normalizes_long_aliases(self):
+        self.assertEqual(short_opp_abbr("WSN"), "WSH")
+        self.assertEqual(short_opp_abbr("CHW"), "CWS")
+        self.assertEqual(short_opp_abbr("KCR"), "KC")
+        self.assertEqual(short_opp_abbr("SDP"), "SD")
+        self.assertEqual(short_opp_abbr("SFG"), "SF")
+        self.assertEqual(short_opp_abbr("TBR"), "TB")
+        self.assertEqual(short_opp_abbr("ATH"), "OAK")
+
+    def test_trims_to_max_len(self):
+        # Default cap is 3 — any longer string must be truncated so the
+        # chip stays the width of a single logo on phone screens.
+        self.assertEqual(short_opp_abbr("LONGNAME"), "LON")
+        self.assertEqual(short_opp_abbr("LONGNAME", max_len=2), "LO")
+        # max_len floor is 1, never 0/negative.
+        self.assertEqual(short_opp_abbr("LAD", max_len=0), "L")
+        self.assertEqual(short_opp_abbr("LAD", max_len=-1), "L")
 
 
 class TestSplitLabelToKey(unittest.TestCase):

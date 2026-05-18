@@ -4818,6 +4818,7 @@ from services.player_detail import (
     build_split_windows as _pd_build_split_windows,
     compute_pitcher_rating as _pd_compute_pitcher_rating,
     build_bvp_rows as _pd_build_bvp_rows,
+    compute_player_grade as _pd_compute_player_grade,
     format_game_log_rows as _pd_format_game_log_rows,
     headshot_url as _pd_headshot_url,
     heatmap_style_for as _pd_heatmap_style_for,
@@ -5080,9 +5081,6 @@ div[role="dialog"] button[aria-label="Close"] {
    --------------------------------------------------------------- */
 .pdc-root { color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 .pdc-root * { box-sizing: border-box; }
-.pdc-tabs { display:flex; gap:24px; justify-content:center; margin: 4px 0 12px 0; }
-.pdc-tab { font-size:.72rem; font-weight:800; color:#cbd5e1; text-transform:uppercase; letter-spacing:.08em; }
-.pdc-tab.is-active { color:#f8fafc; border-bottom: 2px solid #38bdf8; padding-bottom: 4px; }
 .pdc-card { background: linear-gradient(180deg, #111827 0%, #0b1220 100%); border-radius: 18px;
   padding: 14px 16px; margin: 10px 0; border: 1px solid #1e293b; box-shadow: 0 4px 18px rgba(0,0,0,.35);
   color: #f8fafc; }
@@ -5109,8 +5107,27 @@ div[role="dialog"] button[aria-label="Close"] {
   box-shadow: 0 2px 6px rgba(0,0,0,.45);
 }
 .pdc-header-body { flex: 1 1 auto; min-width: 0; }
+.pdc-name-row { display:flex; align-items:center; gap: 8px; flex-wrap: wrap; }
 .pdc-name { font-size: 1.25rem; font-weight: 900; color:#f8fafc; }
 .pdc-meta { font-size: .78rem; color:#cbd5e1; font-weight: 700; margin-top: 2px; }
+/* Composite slate grade badge — A best, D worst. Colors mirror the heat-map
+   palette but sit on a distinct rounded pill so users read it as a verdict,
+   not a metric value. */
+.pdc-grade {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  box-shadow: 0 1px 2px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.08);
+}
+.pdc-grade-A { background:#15803d; color:#ecfdf5; }
+.pdc-grade-B { background:#0369a1; color:#e0f2fe; }
+.pdc-grade-C { background:#ca8a04; color:#0f172a; }
+.pdc-grade-D { background:#b91c1c; color:#fef2f2; }
 .pdc-next { display:flex; align-items:center; justify-content:space-between; padding: 10px 12px;
   background: rgba(56,189,248,.12); border:1px solid rgba(56,189,248,.35); border-radius: 12px;
   margin-top: 10px; }
@@ -5444,20 +5461,41 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         if has_spot else ""
     )
 
+    # Composite letter grade (A-D) shown next to the player's name. Inputs
+    # come from data the modal already has on hand: matchup score, opposing
+    # pitcher rating, plus recent-form metrics. compute_player_grade returns
+    # ``available: False`` when nothing is present so we hide the badge in
+    # that case rather than showing a fake "C".
+    grade = _pd_compute_player_grade(
+        matchup=tile.get("Matchup"),
+        pitcher_score=rating.get("score") if rating.get("available") else None,
+        ops=tile.get("OPS"),
+        iso=tile.get("ISO"),
+        hr_pct=tile.get("HR%"),
+        barrel_pct=tile.get("Brl/BIP%") or tile.get("Barrel%"),
+        xwoba=tile.get("xwOBA"),
+    )
+    if grade.get("available"):
+        grade_badge_html = (
+            f'<span class="pdc-grade {grade["css_class"]}" '
+            f'title="Composite slate grade (A best, D worst)">'
+            f'Grade {grade["grade"]}</span>'
+        )
+    else:
+        grade_badge_html = ""
+
     header_card = (
         f'<div class="pdc-card">'
-        f'<div class="pdc-tabs">'
-        f'<div class="pdc-tab">Team</div>'
-        f'<div class="pdc-tab">Roster</div>'
-        f'<div class="pdc-tab is-active">Player</div>'
-        f'</div>'
         f'<div class="pdc-header-row">'
         f'  <div class="pdc-avatar-wrap">'
         f'    <div class="pdc-avatar">{avatar_inner}</div>'
         f'    {num_chip}'
         f'  </div>'
         f'  <div class="pdc-header-body">'
-        f'    <div class="pdc-name">{h["name"]}</div>'
+        f'    <div class="pdc-name-row">'
+        f'      <span class="pdc-name">{h["name"]}</span>'
+        f'      {grade_badge_html}'
+        f'    </div>'
         f'    <div class="pdc-meta">{meta}</div>'
         f'    {likely_html}'
         f'  </div>'

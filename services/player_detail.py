@@ -371,6 +371,120 @@ def compute_pitcher_rating(pitcher_row: dict | None) -> dict:
     return {"score": score, "tier": tier, "bullets": bullets[:4], "available": True}
 
 
+# --- Player grade (A-D) -----------------------------------------------------
+#
+# A composite letter grade shown next to the player's name in the detail
+# header. Driven by inputs we already have on the slate row + matchup:
+#   - Matchup score (the tile metric — power-weighted composite, ~50-200 scale)
+#   - Pitcher vulnerability score (0-100; higher = juicier for the hitter)
+#   - Recent power proxies: OPS, ISO, HR%, Barrel%
+# Each signal contributes a sub-score on the same 0-100 scale; missing inputs
+# are simply skipped (the average is taken over present signals). Conservative
+# by design — when we have no real signal at all, we return "C" rather than
+# faking an opinion.
+#
+# Cut points were chosen so a typical slate produces a believable spread:
+#   A >= 78, B >= 62, C >= 45, else D.
+
+_GRADE_BAND_STYLES: dict[str, tuple[str, str]] = {
+    # grade -> (background, text)
+    "A": ("#15803d", "#ecfdf5"),  # green
+    "B": ("#0369a1", "#e0f2fe"),  # blue
+    "C": ("#ca8a04", "#0f172a"),  # amber/yellow
+    "D": ("#b91c1c", "#fef2f2"),  # red
+}
+
+
+def _scale(value: float | None, low: float, high: float) -> float | None:
+    """Linearly scale ``value`` from [low, high] into [0, 100], clamped.
+
+    Returns None when ``value`` is missing so the caller can skip it from
+    the average instead of dragging the composite toward 0.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if f != f:
+        return None
+    if high == low:
+        return 50.0
+    pct = 100.0 * (f - low) / (high - low)
+    return max(0.0, min(100.0, pct))
+
+
+def compute_player_grade(*, matchup: Any = None, pitcher_score: Any = None,
+                         ops: Any = None, iso: Any = None,
+                         hr_pct: Any = None, barrel_pct: Any = None,
+                         xwoba: Any = None) -> dict:
+    """Return a letter grade A-D for one batter on the current slate.
+
+    All inputs are optional — the composite averages whatever signals are
+    available. With zero signals we return a neutral "C" so the badge still
+    renders, but ``available`` is False so the caller can suppress it.
+
+    Returns ``{grade, score, available, background, color, css_class}``.
+
+    Thresholds (composite, 0-100):
+      A >= 72  · top of slate, strong matchup + strong recent form
+      B >= 58  · above average
+      C >= 42  · league-ish
+      D <  42  · weak matchup, weak form, or both
+    """
+    components: list[float] = []
+
+    # Each scale is anchored so a league-average input maps to ~50, an elite
+    # input toward 100, and a weak input toward 0. Anchors are calibrated
+    # against typical MLB slate distributions so composites cluster sensibly.
+    s_match = _scale(matchup, low=80.0, high=180.0)
+    if s_match is not None:
+        components.append(s_match)
+    s_pitch = _scale(pitcher_score, low=20.0, high=85.0)
+    if s_pitch is not None:
+        components.append(s_pitch)
+    s_ops = _scale(ops, low=0.560, high=0.880)
+    if s_ops is not None:
+        components.append(s_ops)
+    s_iso = _scale(iso, low=0.090, high=0.250)
+    if s_iso is not None:
+        components.append(s_iso)
+    s_hr = _scale(hr_pct, low=1.0, high=6.5)
+    if s_hr is not None:
+        components.append(s_hr)
+    s_brl = _scale(barrel_pct, low=4.0, high=12.0)
+    if s_brl is not None:
+        components.append(s_brl)
+    s_xwoba = _scale(xwoba, low=0.280, high=0.380)
+    if s_xwoba is not None:
+        components.append(s_xwoba)
+
+    if not components:
+        bg, fg = _GRADE_BAND_STYLES["C"]
+        return {"grade": "C", "score": 50, "available": False,
+                "background": bg, "color": fg, "css_class": "pdc-grade-C"}
+
+    score = sum(components) / len(components)
+    if score >= 72:
+        grade = "A"
+    elif score >= 58:
+        grade = "B"
+    elif score >= 42:
+        grade = "C"
+    else:
+        grade = "D"
+    bg, fg = _GRADE_BAND_STYLES[grade]
+    return {
+        "grade": grade,
+        "score": int(round(score)),
+        "available": True,
+        "background": bg,
+        "color": fg,
+        "css_class": f"pdc-grade-{grade}",
+    }
+
+
 # --- Batter vs Pitcher matchup table ---------------------------------------
 
 def build_bvp_rows(*, batter_row: dict | None, pitcher_row: dict | None,
@@ -402,13 +516,25 @@ def build_bvp_rows(*, batter_row: dict | None, pitcher_row: dict | None,
             "actual": actual,
         }
 
-    rows.append(_row_from("L3 SZN vs SP (proxy)", splits.get("L10"), actual=False))
-    rows.append(_row_from("L3 SZN vs team (proxy)", splits.get("L20"), actual=False))
+    # Plain-language labels so a casual user can read the table without
+    # decoding "L3 SZN" / "vs SP" / "vs S...". The first two rows are
+    # proxies (we don't pull true head-to-head per slate) and carry the
+    # "proxy" badge from the UI.
+    rows.append(_row_from("Recent form (last 10 games)",
+                          splits.get("L10"), actual=False))
+    rows.append(_row_from("Extended form (last 20 games)",
+                          splits.get("L20"), actual=False))
 
-    hand_label = "RHP" if (pitch_hand or "").upper().startswith("R") else \
-                 ("LHP" if (pitch_hand or "").upper().startswith("L") else "Pitcher hand")
-    rows.append(_row_from(f"’25-’26 vs {hand_label}", splits.get("TwoYear"), actual=True))
-    rows.append(_row_from("’25-’26 All Games", splits.get("TwoYear"), actual=True))
+    if (pitch_hand or "").upper().startswith("R"):
+        hand_label = "vs right-handed pitchers"
+    elif (pitch_hand or "").upper().startswith("L"):
+        hand_label = "vs left-handed pitchers"
+    else:
+        hand_label = "vs same-handed pitchers"
+    rows.append(_row_from(f"2025-26 {hand_label}",
+                          splits.get("TwoYear"), actual=True))
+    rows.append(_row_from("2025-26 all games",
+                          splits.get("TwoYear"), actual=True))
     return rows
 
 

@@ -23,6 +23,7 @@ from services.player_detail import (
     classify_metric,
     classify_pitcher_tier,
     compute_pitcher_rating,
+    compute_player_grade,
     fetch_batter_game_log,
     filter_log_for_split,
     format_game_log_rows,
@@ -210,15 +211,28 @@ class TestBuildBvpRows(unittest.TestCase):
         rows = build_bvp_rows(batter_row=None, pitcher_row=None,
                               season_splits=splits, bat_side="R", pitch_hand="R")
         self.assertEqual(len(rows), 4)
-        # L3 SZN rows are flagged as proxies; '25-'26 rows are actual.
-        proxy_rows = [r for r in rows if "L3 SZN" in r["label"]]
-        actual_rows = [r for r in rows if "L3 SZN" not in r["label"]]
+        # Recent-form rows are flagged as proxies; 2025-26 rows are actual.
+        proxy_rows = [r for r in rows if "form" in r["label"].lower()]
+        actual_rows = [r for r in rows if "2025-26" in r["label"]]
+        self.assertEqual(len(proxy_rows), 2)
+        self.assertEqual(len(actual_rows), 2)
         for r in proxy_rows:
             self.assertFalse(r["actual"])
         for r in actual_rows:
             self.assertTrue(r["actual"])
-        # Right-hander pitcher -> RHP label.
-        self.assertTrue(any("RHP" in r["label"] for r in rows))
+        # Right-hander pitcher -> plain-language "right-handed" label.
+        self.assertTrue(any("right-handed" in r["label"] for r in rows))
+        # No cryptic abbreviations like "L3 SZN" or "vs SP" or truncated "vs S..." leak through.
+        for r in rows:
+            self.assertNotIn("L3 SZN", r["label"])
+            self.assertNotIn("vs SP", r["label"])
+            self.assertNotIn("vs S...", r["label"])
+
+    def test_left_handed_pitcher_label(self):
+        splits = {"L10": {}, "L20": {}, "TwoYear": {}}
+        rows = build_bvp_rows(batter_row=None, pitcher_row=None,
+                              season_splits=splits, bat_side="R", pitch_hand="L")
+        self.assertTrue(any("left-handed" in r["label"] for r in rows))
 
 
 class TestFormatGameLogRows(unittest.TestCase):
@@ -509,6 +523,99 @@ class TestClassifyPitcherTier(unittest.TestCase):
         self.assertEqual(classify_pitcher_tier(None), "neutral")
         self.assertEqual(classify_pitcher_tier(""), "neutral")
         self.assertEqual(classify_pitcher_tier("WhoKnows"), "neutral")
+
+
+class TestComputePlayerGrade(unittest.TestCase):
+    """Letter grade rendered next to the player's name in the modal header.
+
+    A best, D worst. Each metric contributes a 0-100 sub-score; the composite
+    is averaged across whatever inputs are present. With no inputs we get a
+    neutral C with ``available=False`` so the UI can hide the badge.
+    """
+
+    def test_no_inputs_returns_neutral_unavailable_grade(self):
+        out = compute_player_grade()
+        self.assertEqual(out["grade"], "C")
+        self.assertFalse(out["available"])
+        self.assertEqual(out["css_class"], "pdc-grade-C")
+
+    def test_top_of_slate_grades_a(self):
+        out = compute_player_grade(
+            matchup=170.0,
+            pitcher_score=85,
+            ops=0.950,
+            iso=0.280,
+            hr_pct=6.5,
+            barrel_pct=12.0,
+            xwoba=0.400,
+        )
+        self.assertEqual(out["grade"], "A")
+        self.assertTrue(out["available"])
+        self.assertGreaterEqual(out["score"], 72)
+        self.assertEqual(out["css_class"], "pdc-grade-A")
+
+    def test_above_average_grades_b(self):
+        out = compute_player_grade(
+            matchup=140.0,
+            pitcher_score=65,
+            ops=0.820,
+            iso=0.200,
+            hr_pct=4.5,
+            barrel_pct=9.0,
+            xwoba=0.350,
+        )
+        self.assertEqual(out["grade"], "B")
+        self.assertGreaterEqual(out["score"], 58)
+        self.assertLess(out["score"], 72)
+
+    def test_league_ish_grades_c(self):
+        out = compute_player_grade(
+            matchup=120.0,
+            pitcher_score=55,
+            ops=0.730,
+            iso=0.170,
+            hr_pct=3.0,
+            barrel_pct=7.0,
+            xwoba=0.330,
+        )
+        self.assertEqual(out["grade"], "C")
+        self.assertGreaterEqual(out["score"], 42)
+        self.assertLess(out["score"], 58)
+
+    def test_weak_matchup_grades_d(self):
+        out = compute_player_grade(
+            matchup=85.0,
+            pitcher_score=22,
+            ops=0.580,
+            iso=0.090,
+            hr_pct=1.0,
+            barrel_pct=4.0,
+            xwoba=0.280,
+        )
+        self.assertEqual(out["grade"], "D")
+        self.assertLess(out["score"], 42)
+        self.assertEqual(out["css_class"], "pdc-grade-D")
+
+    def test_partial_inputs_still_grade(self):
+        # Only matchup + pitcher available — should still produce a grade.
+        out = compute_player_grade(matchup=160.0, pitcher_score=80)
+        self.assertTrue(out["available"])
+        self.assertIn(out["grade"], {"A", "B"})
+
+    def test_returns_style_fields(self):
+        out = compute_player_grade(matchup=150.0, pitcher_score=70, ops=0.850)
+        self.assertTrue(out["background"].startswith("#"))
+        self.assertTrue(out["color"].startswith("#"))
+        self.assertTrue(out["css_class"].startswith("pdc-grade-"))
+
+    def test_ignores_non_numeric_inputs(self):
+        # Strings, None, NaN-like values must be tolerated.
+        out = compute_player_grade(
+            matchup=None, pitcher_score="n/a", ops=float("nan"), iso=0.200,
+        )
+        self.assertTrue(out["available"])
+        # Only ISO contributed; should land in the middle bands, not crash.
+        self.assertIn(out["grade"], {"A", "B", "C", "D"})
 
 
 if __name__ == "__main__":

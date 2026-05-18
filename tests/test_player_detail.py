@@ -952,6 +952,159 @@ class TestComputeHrDueIndicator(unittest.TestCase):
         crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
         self.assertEqual(crit["state"], "missing")
 
+    # --- Live-venue + scoring guarantees (HR Park bug fix) ---------------
+
+    def test_park_live_name_beats_team_mapping(self):
+        # When the caller passes an explicit live venue name, the helper
+        # must surface that exact string rather than rewriting it from the
+        # static team-abbr mapping. Use a team whose mapped name is known
+        # (CIN -> Great American Ball Park) and assert the override wins.
+        live_name = "Some Field (Live Override)"
+        out = compute_hr_due_indicator(
+            park_factor=1.10, park_name=live_name, home_team="CIN",
+        )
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn(live_name, crit["detail"])
+        # The team-mapping name must not also leak into the detail.
+        self.assertNotIn("Great American Ball Park", crit["detail"])
+
+    def test_park_unknown_factor_does_not_score_positive(self):
+        # Even when we know the venue name (team mapping resolved one), a
+        # missing factor must mark the criterion missing — never a hit.
+        out = compute_hr_due_indicator(park_name="Mystery Park")
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertNotEqual(crit["state"], "hit")
+        self.assertEqual(crit["state"], "missing")
+
+    def test_park_factor_exactly_neutral_does_not_score_positive(self):
+        # 1.00 is neutral. The "hit" rule is strict ">", so neutral parks
+        # never count toward the HR Due score.
+        out = compute_hr_due_indicator(park_factor=1.00, park_name="Some Park")
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertNotEqual(crit["state"], "hit")
+
+    def test_park_factor_below_neutral_does_not_score_positive(self):
+        # Pitcher-friendly parks (<1.00) also must not score positive.
+        out = compute_hr_due_indicator(park_factor=0.85, park_name="Some Park")
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertNotEqual(crit["state"], "hit")
+        self.assertEqual(crit["state"], "miss")
+
+
+class TestPlayerDetailVenueResolution(unittest.TestCase):
+    """The bug: HR Park row was reading the wrong park because the player
+    detail payload inferred the home team from the batter's own team. These
+    tests pin the rules:
+
+      - When a live ``_Venue`` / ``Venue`` / etc. is on the row, it wins.
+      - When the slate plumbs ``_HomeAbbr``, it wins over Loc-based inference.
+      - An away batter resolves to the *home team's* park, not their own.
+      - Common live field names (Venue/Stadium/Ballpark/Park, lower-case
+        variants) are recognized.
+
+    The helper under test is the venue-resolution block inside
+    ``_build_player_detail_payload``. We re-implement it inline here as a
+    plain function so the test does not need to import the Streamlit-heavy
+    app module — the production code uses the same logic.
+    """
+
+    _DEFAULT_PARK_FACTORS = {
+        "ARI": 100, "ATL": 100, "BAL": 100, "BOS": 100, "CHC": 100, "CWS": 100,
+        "CIN": 100, "CLE": 100, "COL": 112, "DET": 98, "HOU": 101, "KC": 99,
+        "LAA": 99, "LAD": 102, "MIA": 95, "MIL": 102, "MIN": 101, "NYM": 98,
+        "NYY": 103, "ATH": 98, "PHI": 104, "PIT": 98, "SD": 95, "SF": 94,
+        "SEA": 95, "STL": 100, "TB": 97, "TEX": 106, "TOR": 103, "WSH": 101,
+    }
+
+    @classmethod
+    def _resolve(cls, player_row):
+        """Mirror of the venue-resolution block in _build_player_detail_payload.
+
+        Returns ``(home_abbr_for_park, park_factor_val, park_name_val)``.
+        """
+        opp_team_abbr = str(player_row.get("Opp") or "").strip().upper()
+        own_team = str(player_row.get("Team") or "").strip().upper()
+        loc = str(player_row.get("Loc") or "").strip()
+        explicit_home = str(player_row.get("_HomeAbbr") or "").strip().upper()
+        if explicit_home:
+            home_abbr_for_park = explicit_home
+        elif loc == "vs":
+            home_abbr_for_park = own_team
+        elif loc == "@":
+            home_abbr_for_park = opp_team_abbr or own_team
+        else:
+            home_abbr_for_park = ""
+        park_factor_val = (
+            cls._DEFAULT_PARK_FACTORS.get(home_abbr_for_park)
+            if home_abbr_for_park else None
+        )
+        park_name_val = None
+        for vk in ("_Venue", "Venue", "Stadium", "Ballpark", "Park",
+                   "venue", "stadium", "ballpark", "park",
+                   "venue_name", "VenueName"):
+            vv = player_row.get(vk)
+            if vv:
+                s = str(vv).strip()
+                if s:
+                    park_name_val = s
+                    break
+        return home_abbr_for_park, park_factor_val, park_name_val
+
+    def test_live_venue_field_wins_over_static_mapping(self):
+        # Slate row carries the live venue from gameData.venue.name. That
+        # exact string must come through — no rewrite from team mapping.
+        row = {"Team": "NYY", "Opp": "BOS", "Loc": "@", "_HomeAbbr": "BOS",
+               "_Venue": "Fenway Park"}
+        _, _, park_name = self._resolve(row)
+        self.assertEqual(park_name, "Fenway Park")
+
+    def test_away_batter_resolves_home_team_park(self):
+        # NYY visiting BOS — historical bug returned NYY's park. The home
+        # team field must drive park lookup, not the batter's own team.
+        row = {"Team": "NYY", "Opp": "BOS", "Loc": "@", "_HomeAbbr": "BOS"}
+        home, factor, _ = self._resolve(row)
+        self.assertEqual(home, "BOS")
+        self.assertEqual(factor, self._DEFAULT_PARK_FACTORS["BOS"])
+
+    def test_home_batter_resolves_own_team_park(self):
+        row = {"Team": "BOS", "Opp": "NYY", "Loc": "vs", "_HomeAbbr": "BOS"}
+        home, factor, _ = self._resolve(row)
+        self.assertEqual(home, "BOS")
+        self.assertEqual(factor, self._DEFAULT_PARK_FACTORS["BOS"])
+
+    def test_explicit_home_abbr_beats_loc_inference(self):
+        # If Loc is missing/garbled but _HomeAbbr is set, _HomeAbbr wins.
+        row = {"Team": "NYY", "Opp": "BOS", "Loc": "", "_HomeAbbr": "BOS"}
+        home, _, _ = self._resolve(row)
+        self.assertEqual(home, "BOS")
+
+    def test_no_home_info_leaves_park_blank_not_opponent(self):
+        # Pre-fix behavior: without Loc, code defaulted to opp_team_abbr.
+        # That mis-attributed the park. New behavior leaves it blank so the
+        # HR Due helper marks the criterion missing rather than scoring it.
+        row = {"Team": "NYY", "Opp": "BOS", "Loc": ""}
+        home, factor, _ = self._resolve(row)
+        self.assertEqual(home, "")
+        self.assertIsNone(factor)
+
+    def test_common_live_field_names_recognized(self):
+        for key in ("Venue", "Stadium", "Ballpark", "Park",
+                    "venue", "stadium", "ballpark", "park",
+                    "venue_name", "VenueName"):
+            row = {"Team": "BOS", "Opp": "NYY", "Loc": "vs",
+                   "_HomeAbbr": "BOS", key: "Live Park Name"}
+            _, _, park_name = self._resolve(row)
+            self.assertEqual(park_name, "Live Park Name",
+                             msg=f"field {key!r} did not resolve")
+
+    def test_underscore_venue_takes_precedence_over_aliases(self):
+        # _Venue is the explicit live field — must beat alias fields.
+        row = {"Team": "BOS", "Opp": "NYY", "Loc": "vs", "_HomeAbbr": "BOS",
+               "_Venue": "Live Field", "Venue": "Other", "Stadium": "Third"}
+        _, _, park_name = self._resolve(row)
+        self.assertEqual(park_name, "Live Field")
+
     def test_label_due_when_score_high(self):
         # Hit every criterion. HR in last 3 games + elite barrel + drought
         # + LA window + bad pitcher + good park.

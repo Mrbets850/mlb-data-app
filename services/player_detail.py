@@ -1296,22 +1296,23 @@ def compute_hr_due_indicator(*,
         pf = lookup_factor
 
     if pf is None:
-        # Known team but no factor mapping yet: surface as neutral 1.00
-        # rather than "Data unavailable" so the user still sees the venue.
+        # No factor at all (unknown park or missing mapping): mark missing so
+        # we never accidentally count this criterion as a hit. We still show
+        # the venue name when we resolved one, so the user sees which park we
+        # were trying to score.
         if display_name:
-            detail = f"{display_name} HR factor: 1.00 (neutral 1.00)"
-            crits.append({"key": "park_hr",
-                          "title": "HR Park",
-                          "detail": detail,
-                          "state": "miss"})
+            detail = f"{display_name} HR factor: data unavailable"
         else:
-            crits.append({"key": "park_hr",
-                          "title": "HR Park",
-                          "detail": "Data unavailable",
-                          "state": "missing"})
+            detail = "Data unavailable"
+        crits.append({"key": "park_hr",
+                      "title": "HR Park",
+                      "detail": detail,
+                      "state": "missing"})
     else:
         venue = display_name or "Park"
         detail = f"{venue} HR factor: {pf:.2f} (neutral 1.00)"
+        # Strict ">" rule: 1.00 is neutral, <1.00 is pitcher-friendly. Only
+        # a factor strictly above 1.00 scores positive.
         state = "hit" if pf > 1.0 else "miss"
         crits.append({"key": "park_hr",
                       "title": "HR Park",

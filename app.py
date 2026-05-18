@@ -4201,7 +4201,8 @@ def _likely_label(matchup, ceiling, b_row=None, p_row=None, khr=None, hr_form_pc
 def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_name,
                                 weather, park_factor,
                                 arsenal_b=None, arsenal_p=None, opp_pitcher_id=None,
-                                slate_date=None):
+                                slate_date=None, home_abbr=None, venue=None,
+                                side=None, opp_abbr=None):
     """Build the wide horizontal heat-map stat board for one team's lineup.
 
     Columns mirror the screenshot reference, with sensible fallbacks when a
@@ -4388,6 +4389,14 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "_OppPitcherId": int(opp_pitcher_id) if opp_pitcher_id else None,
             "_OppPitcherName": opp_pitcher_name or "",
             "_SlateDate": slate_iso,
+            # Live slate venue/home — used by the player detail HR Park row.
+            # Without these the modal has to guess from team abbr, which
+            # mis-attributes the park when the batter is away (their own
+            # team is not the home team).
+            "_HomeAbbr": home_abbr or "",
+            "_Venue": venue or "",
+            "Loc": ("vs" if (side == "home" or (home_abbr and str(r.get("team", "")).upper() == str(home_abbr).upper())) else "@") if (side or home_abbr) else "",
+            "Opp": opp_abbr or "",
             "_Form": form_line,
             "_FormL5_AVG": l5.get("avg"),
             "_FormL10_AVG": l10.get("avg"),
@@ -4425,6 +4434,7 @@ _MATCHUP_HIDDEN_COLS = (
     "Spot", "_HR Trend", "_Form", "_FormL5_AVG", "_FormL10_AVG", "_FormL30_AVG",
     "_LastHR", "_HRLast10", "_LastHRDate", "_HRLast10N", "_LikelyReason",
     "_PlayerId", "_BatSide", "_OppPitcherId", "_OppPitcherName", "_SlateDate",
+    "_HomeAbbr", "_Venue", "Loc", "Opp",
 )
 
 
@@ -4987,22 +4997,43 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
     # missing so the card never crashes.
     own_team = str(player_row.get("Team") or "").strip().upper()
     loc = str(player_row.get("Loc") or "").strip()
-    home_abbr_for_park = own_team if loc == "vs" else (opp_team_abbr or own_team)
+    # Resolve the home team for this specific matchup. Prefer the explicit
+    # ``_HomeAbbr`` plumbed in from the slate game row — that is the ground
+    # truth for "whose park is this game played at." Only fall back to a
+    # Loc-based inference (or the opposing-team guess) when the slate field
+    # is absent, because the batter's own team is not always the home team.
+    explicit_home = str(player_row.get("_HomeAbbr") or "").strip().upper()
+    if explicit_home:
+        home_abbr_for_park = explicit_home
+    elif loc == "vs":
+        home_abbr_for_park = own_team
+    elif loc == "@":
+        home_abbr_for_park = opp_team_abbr or own_team
+    else:
+        # No location info at all — leave blank rather than guessing the
+        # opponent's park, which is the bug we were trying to fix.
+        home_abbr_for_park = ""
     try:
-        park_factor_val = DEFAULT_PARK_FACTORS.get(home_abbr_for_park)
+        park_factor_val = DEFAULT_PARK_FACTORS.get(home_abbr_for_park) if home_abbr_for_park else None
     except Exception:
         park_factor_val = None
-    # Prefer an explicit venue/stadium name from the slate row when one is
-    # present; the HR Due helper will otherwise fall back to its team-abbr
-    # -> ballpark mapping. Guard with hasattr so non-dict-like rows don't
-    # crash here.
+    # Prefer an explicit live venue/stadium name from the slate row — the
+    # ``_Venue`` field is plumbed straight from ``game_row["venue"]`` (MLB
+    # StatsAPI ``gameData.venue.name``). Common live field names are also
+    # accepted so upstream feeds that publish under ``Venue``/``Stadium``/
+    # ``Ballpark``/``Park`` (and lower-case variants) still resolve. The HR
+    # Due helper will fall back to its team-abbr -> ballpark mapping only
+    # when none of these are present.
     park_name_val = None
     if hasattr(player_row, "get"):
-        for _vk in ("Venue", "Stadium", "Ballpark", "Park", "venue", "stadium", "ballpark"):
+        for _vk in ("_Venue", "Venue", "Stadium", "Ballpark", "Park",
+                    "venue", "stadium", "ballpark", "park",
+                    "venue_name", "VenueName"):
             _vv = player_row.get(_vk)
             if _vv:
                 park_name_val = str(_vv).strip()
-                break
+                if park_name_val:
+                    break
     # Opposing pitcher fields — the helper reads Barrel% first (primary HR
     # signal) and falls back to HR/9 if barrel data is absent. Forward the
     # pitcher row as-is so the helper can probe its preferred set of column
@@ -14442,6 +14473,10 @@ if _render_matchup:
         arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df,
         opp_pitcher_id=game_row.get("home_probable_id"),
         slate_date=selected_date,
+        home_abbr=game_row.get("home_abbr"),
+        venue=game_row.get("venue"),
+        side="away",
+        opp_abbr=game_row.get("home_abbr"),
     )
     home_board = build_matchup_heatmap_board(
         ctx["home_lineup"], batters_df, pitchers_df,
@@ -14449,6 +14484,10 @@ if _render_matchup:
         arsenal_b=arsenal_batter_df, arsenal_p=arsenal_pitcher_df,
         opp_pitcher_id=game_row.get("away_probable_id"),
         slate_date=selected_date,
+        home_abbr=game_row.get("home_abbr"),
+        venue=game_row.get("venue"),
+        side="home",
+        opp_abbr=game_row.get("away_abbr"),
     )
     # Per-board widget keys so each game's away/home sort controls stay isolated
     # in Streamlit's session_state when the user switches between games.

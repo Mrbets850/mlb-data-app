@@ -14136,6 +14136,21 @@ if _render_matchup:
     if ctx["away_status"] == "Projected" or ctx["home_status"] == "Projected":
         st.caption("⚡ Showing **projected lineups** built from each team's most-used 9 over recent games. Rows auto-update once MLB posts the confirmed lineup.")
 
+    # ----- Pitcher Vulnerability panels (shown above lineups so hitter
+    # heat-maps below can be read against each SP's exploitable profile) -----
+    st.markdown('<div class="section-title" style="margin-top:14px;">🎯 Pitcher Vulnerability</div>', unsafe_allow_html=True)
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        away_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("away_probable_id"))
+        render_pitcher_panel(f"Away SP — {game_row['away_abbr']}", game_row["away_probable"],
+                              ctx["away_pitch_hand"], find_pitcher_row(pitchers_df, game_row["away_probable"]),
+                              pitch_mix_df=away_mix)
+    with pc2:
+        home_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("home_probable_id"))
+        render_pitcher_panel(f"Home SP — {game_row['home_abbr']}", game_row["home_probable"],
+                              ctx["home_pitch_hand"], find_pitcher_row(pitchers_df, game_row["home_probable"]),
+                              pitch_mix_df=home_mix)
+
     # away lineup — full heat-map stat board (one place for all stats)
     away_board = build_matchup_heatmap_board(
         ctx["away_lineup"], batters_df, pitchers_df,
@@ -14186,7 +14201,7 @@ if _render_matchup:
         "(sweet-spot range)."
     )
 
-    # ----- Top 3 Hitters for this game (above Pitcher Vulnerability) -----
+    # ----- Top 3 Hitters for this game (rendered last under the lineups) -----
     combined_for_ranking = pd.concat([away_matchup, home_matchup], ignore_index=True) \
         if (not away_matchup.empty or not home_matchup.empty) else pd.DataFrame()
     if not combined_for_ranking.empty and "Matchup" in combined_for_ranking.columns:
@@ -14318,20 +14333,6 @@ if _render_matchup:
                 f'</div>'
             )
         st.markdown('<div class="top3-row">' + "".join(cards) + '</div>', unsafe_allow_html=True)
-
-    # Pitcher panels under matchup tab
-    st.markdown('<div class="section-title" style="margin-top:14px;">🎯 Pitcher Vulnerability</div>', unsafe_allow_html=True)
-    pc1, pc2 = st.columns(2)
-    with pc1:
-        away_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("away_probable_id"))
-        render_pitcher_panel(f"Away SP — {game_row['away_abbr']}", game_row["away_probable"],
-                              ctx["away_pitch_hand"], find_pitcher_row(pitchers_df, game_row["away_probable"]),
-                              pitch_mix_df=away_mix)
-    with pc2:
-        home_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("home_probable_id"))
-        render_pitcher_panel(f"Home SP — {game_row['home_abbr']}", game_row["home_probable"],
-                              ctx["home_pitch_hand"], find_pitcher_row(pitchers_df, game_row["home_probable"]),
-                              pitch_mix_df=home_mix)
 
 # ============== Hot / Cold Batters tabs (slate-wide) ==============
 @st.cache_data(ttl=600, show_spinner=False)

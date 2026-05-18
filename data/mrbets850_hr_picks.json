@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:36:51Z",
+  "last_updated": "2026-05-18T10:37:10Z",
   "picks": [
     {
       "rank": 1,
@@ -104,6 +104,14 @@
       "player_id": 668901,
       "note": "",
       "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 14,
+      "name": "Nathaniel Lowe",
+      "team": "",
+      "player_id": 663993,
+      "note": "",
+      "confidence": "💎 Strong"
     }
   ]
 }

@@ -7170,6 +7170,18 @@ MOBILE_CARDS_CSS = (
     "  .mc-desktop { display:none !important; }"
     "  .mc-mobile  { display:block !important; }"
     "}"
+    # Modern-minimal mode: render the dark player-card grid on every
+    # viewport, replacing the wide white desktop table entirely. Used by
+    # the Apps & Generators leaderboards (Hot / Cold / HR Milestones /
+    # Day vs Night HR) where the desktop dataframe was redundant clutter.
+    ".mc-always { display:block !important; }"
+    ".mc-always .mc-grid { grid-template-columns: 1fr; }"
+    "@media (min-width: 720px) {"
+    "  .mc-always .mc-grid { grid-template-columns: repeat(2, 1fr); }"
+    "}"
+    "@media (min-width: 1080px) {"
+    "  .mc-always .mc-grid { grid-template-columns: repeat(3, 1fr); }"
+    "}"
     ".mc-grid { display:grid; grid-template-columns: 1fr; gap: 12px; "
     "  margin: 6px 0 12px 0; }"
     "@media (min-width: 480px) and (max-width: 640px) {"
@@ -14035,7 +14047,7 @@ _slate_df = _build_slate_dataframe(schedule_df, batters_df, pitchers_df, _slate_
 
 def _df_mobile_cards_html(df, *, name_col=None, sub_col=None, score_col=None,
                           score_label="Score", chip_cols=None, foot_cols=None,
-                          rank_col="#", max_chips=8):
+                          rank_col="#", max_chips=8, always_show=False):
     """Generic dataframe -> mobile-card-grid renderer.
 
     - name_col: header of the card (player / batter / matchup)
@@ -14117,27 +14129,36 @@ def _df_mobile_cards_html(df, *, name_col=None, sub_col=None, score_col=None,
             f'{foot_html}'
             '</div>'
         )
+    wrapper_cls = "mc-mobile mc-always" if always_show else "mc-mobile"
     return (
-        '<div class="mc-mobile"><div class="mc-grid">'
+        f'<div class="{wrapper_cls}"><div class="mc-grid">'
         + "".join(cards) +
         '</div></div>'
     )
 
 
-def _df_with_cards(df, **kwargs):
-    """Render an `st.dataframe` wrapped in .mc-desktop + a mobile cards grid."""
+def _df_with_cards(df, *, cards_only=False, **kwargs):
+    """Render a player-card grid for `df`.
+
+    By default (cards_only=False) emits an `st.dataframe` on desktop and a
+    card grid on mobile (the legacy hybrid). When cards_only=True the
+    desktop table is omitted and the card grid is shown on every viewport
+    — used by the Apps & Generators sections (Hot/Cold Batters, HR
+    Milestones, Day vs Night HR) where the wide white table was clutter.
+    """
     if df is None or df.empty:
         return
-    st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
-    st.dataframe(
-        df,
-        width='stretch',
-        hide_index=True,
-        height=min(720, 60 + 36 * len(df)),
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
+    if not cards_only:
+        st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
+        st.dataframe(
+            df,
+            width='stretch',
+            hide_index=True,
+            height=min(720, 60 + 36 * len(df)),
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
     st.markdown(
-        MOBILE_CARDS_CSS + _df_mobile_cards_html(df, **kwargs),
+        MOBILE_CARDS_CSS + _df_mobile_cards_html(df, always_show=cards_only, **kwargs),
         unsafe_allow_html=True,
     )
 
@@ -14159,17 +14180,10 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
     out = ranked[show_cols]
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
 
-    # Desktop: classic dataframe (preserved). Mobile: card grid below.
-    st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
-    st.dataframe(
-        style_matchup_table(out),
-        width='stretch',
-        hide_index=True,
-        height=min(640, 60 + 38 * len(out)),
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Mobile: dark cards in Slate-Pitchers style.
+    # Modern-minimal: dark player cards only. The wide white desktop
+    # dataframe was visual clutter ("ugly column graphs") so it's been
+    # removed in favor of the same Slate-Pitchers-style card grid we
+    # already render on phones, now also shown on desktop.
     mobile_cards = []
     for _, r in ranked.iterrows():
         match_score = r.get("Matchup")
@@ -14233,7 +14247,7 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
         ))
     st.markdown(
         MOBILE_CARDS_CSS +
-        '<div class="mc-mobile"><div class="mc-grid">'
+        '<div class="mc-mobile mc-always"><div class="mc-grid">'
         + "".join(mobile_cards) +
         '</div></div>',
         unsafe_allow_html=True,
@@ -14339,16 +14353,8 @@ if _render_hr_milestones:
         # Apply the cap and rebuild the rank column from 1.
         slate_hr = slate_hr.head(int(_hrm_limit)).reset_index(drop=True)
         slate_hr.insert(0, "#", range(1, len(slate_hr) + 1))
-        st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
-        st.dataframe(
-            slate_hr,
-            width='stretch',
-            hide_index=True,
-            height=min(640, 60 + 36 * len(slate_hr)),
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
 
-        # Mobile HR milestone cards.
+        # Modern-minimal: dark player cards only (no wide white table).
         hrm_cards = []
         for _, r in slate_hr.iterrows():
             season_hr = r.get("Season HR")
@@ -14402,7 +14408,7 @@ if _render_hr_milestones:
             ))
         st.markdown(
             MOBILE_CARDS_CSS +
-            '<div class="mc-mobile"><div class="mc-grid">'
+            '<div class="mc-mobile mc-always"><div class="mc-grid">'
             + "".join(hrm_cards) +
             '</div></div>',
             unsafe_allow_html=True,
@@ -14560,16 +14566,7 @@ if _render_hr_milestones:
                 f'</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown('<div class="mc-desktop">', unsafe_allow_html=True)
-            st.dataframe(
-                out_hr,
-                width='stretch',
-                hide_index=True,
-                height=min(640, 60 + 34 * len(out_hr)),
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            # Mobile HR-by-date cards.
+            # Modern-minimal: dark player cards only (no wide white table).
             hrd_cards = []
             for _, hrr in out_hr.iterrows():
                 # Distance/EV come in as already-formatted strings ("123" / "—")
@@ -14613,7 +14610,7 @@ if _render_hr_milestones:
                 ))
             st.markdown(
                 MOBILE_CARDS_CSS +
-                '<div class="mc-mobile"><div class="mc-grid">'
+                '<div class="mc-mobile mc-always"><div class="mc-grid">'
                 + "".join(hrd_cards) +
                 '</div></div>',
                 unsafe_allow_html=True,
@@ -14844,6 +14841,7 @@ if _render_day_night:
             else:
                 _df_with_cards(
                     table,
+                    cards_only=True,
                     name_col="Player", sub_col="Team",
                     score_col="Day HR", score_label="Day HR",
                     chip_cols=["Day HR/PA", "Day PA", "OPS", "AVG", "HR", "PA"],
@@ -14864,6 +14862,7 @@ if _render_day_night:
             else:
                 _df_with_cards(
                     table,
+                    cards_only=True,
                     name_col="Player", sub_col="Team",
                     score_col="Night HR", score_label="Night HR",
                     chip_cols=["Night HR/PA", "Night PA", "OPS", "AVG", "HR", "PA"],
@@ -14892,6 +14891,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         d_tbl,
+                        cards_only=True,
                         name_col="Player", sub_col="Team",
                         score_col="Day HR", score_label="Day HR",
                         chip_cols=["Day HR/PA", "Day PA", "OPS", "AVG"],
@@ -14908,6 +14908,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         n_tbl,
+                        cards_only=True,
                         name_col="Player", sub_col="Team",
                         score_col="Night HR", score_label="Night HR",
                         chip_cols=["Night HR/PA", "Night PA", "OPS", "AVG"],
@@ -15228,6 +15229,7 @@ if _render_day_night:
                         )
                         _df_with_cards(
                             disp,
+                            cards_only=True,
                             name_col="Player", sub_col="Team",
                             score_col="Target Score", score_label="Target",
                             chip_cols=["HR/PA", "PA", "HR", "OPS", "Bucket", "Confidence"],
@@ -15278,6 +15280,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         t_day,
+                        cards_only=True,
                         name_col="Player", sub_col="Team",
                         score_col="Edge (Day − Night)", score_label="Edge",
                         chip_cols=["Day HR", "Day PA", "Day HR/PA",
@@ -15294,6 +15297,7 @@ if _render_day_night:
                 else:
                     _df_with_cards(
                         t_night,
+                        cards_only=True,
                         name_col="Player", sub_col="Team",
                         score_col="Edge (Day − Night)", score_label="Edge",
                         chip_cols=["Night HR", "Night PA", "Night HR/PA",

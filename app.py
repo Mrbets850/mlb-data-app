@@ -5247,29 +5247,41 @@ _MATCHUP_CTA_CSS = (
     '  margin-bottom: 16px !important; }'
     '.mhm-card-host + div[data-testid="stButton"] button { '
     '  width: 100%; min-height: 54px; '
-    '  background: linear-gradient(180deg, #0ea5e9 0%, #0369a1 100%); '
-    '  color: #f8fafc; '
-    '  border: 1px solid #1e293b; border-top: 1px dashed #38bdf8; '
+    # Gold pill — replaces the previous blue/purple gradient at the user's
+    # request. Two-stop amber→gold gives the button a polished metallic
+    # feel; the dark amber border anchors it against the card's dark body.
+    '  background: linear-gradient(180deg, #fde047 0%, #ca8a04 100%); '
+    '  color: #0b0b0b !important; '
+    '  border: 1px solid #a16207; border-top: 1px dashed #92400e; '
     '  border-radius: 0 0 14px 14px; '
     '  padding: 12px 14px; '
-    '  font-weight: 900; font-size: .9rem; line-height: 1.2; '
-    '  letter-spacing: .02em; text-align: center; '
-    '  box-shadow: 0 6px 16px rgba(2,6,23,.35), inset 0 1px 0 rgba(255,255,255,.18); '
+    '  font-weight: 900 !important; font-size: .98rem; line-height: 1.2; '
+    '  letter-spacing: .06em; text-align: center; text-transform: uppercase; '
+    '  text-shadow: none; '
+    '  box-shadow: 0 6px 16px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.55); '
     '  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease; '
-    '  white-space: pre-line; '
+    '  white-space: nowrap; '
     '} '
     '.mhm-card-host + div[data-testid="stButton"] button:hover { '
-    '  filter: brightness(1.08); '
-    '  box-shadow: 0 8px 22px rgba(14,165,233,.55), inset 0 1px 0 rgba(255,255,255,.25); '
-    '  border-color: #7dd3fc; } '
+    '  filter: brightness(1.06); '
+    '  box-shadow: 0 8px 22px rgba(202,138,4,.55), inset 0 1px 0 rgba(255,255,255,.65); '
+    '  border-color: #fbbf24; } '
     '.mhm-card-host + div[data-testid="stButton"] button:active { '
     '  transform: translateY(1px); filter: brightness(.95); }'
-    '.mhm-card-host + div[data-testid="stButton"] button p { '
-    '  margin: 0 !important; color: inherit !important; font-weight: 900 !important; '
-    '  white-space: pre-line !important; }'
+    # Streamlit wraps the button label in a <p>. Force the inner text to
+    # black + bold so the gold pill always reads as bold black letters
+    # regardless of theme overrides.
+    '.mhm-card-host + div[data-testid="stButton"] button p, '
+    '.mhm-card-host + div[data-testid="stButton"] button span, '
+    '.mhm-card-host + div[data-testid="stButton"] button div { '
+    '  margin: 0 !important; color: #0b0b0b !important; '
+    '  font-weight: 900 !important; letter-spacing: .06em !important; '
+    '  text-transform: uppercase !important; '
+    '  white-space: nowrap !important; }'
     '@media (max-width: 640px) { '
     '  .mhm-card-host + div[data-testid="stButton"] button { '
-    '    min-height: 60px; font-size: .92rem; padding: 14px 12px; } }'
+    '    min-height: 56px; font-size: .96rem; padding: 14px 12px; '
+    '    letter-spacing: .04em; } }'
     '</style></div>'
 )
 
@@ -5280,9 +5292,10 @@ def _render_interactive_player_cards(sorted_df, key_prefix, pitchers_df, slate_d
     green/red/yellow metric tiles + LIKELY tile) with a Streamlit CTA button
     fused to its footer via the shared `.mhm-card-host + stButton` CSS.
 
-    The CTA button label leads with the LIKELY prediction so the prediction
-    itself is the tap target, then the player name. The button is the card's
-    bottom edge — not a separate stacked list above or below the grid.
+    The CTA label is a single, uniform "OPEN MATCHUP CARD" pill — the LIKELY
+    prediction stays in the card body above where it always lived, but is no
+    longer crammed into the pill text. The pill is the card's bottom edge —
+    not a separate stacked list above or below the grid.
     """
     if sorted_df is None or sorted_df.empty:
         return
@@ -5294,12 +5307,6 @@ def _render_interactive_player_cards(sorted_df, key_prefix, pitchers_df, slate_d
     for idx, (_, row) in enumerate(sorted_df.iterrows()):
         pid = row.get("_PlayerId")
         name = row.get("Hitter", "")
-        spot = row.get("Spot", "")
-        spot_prefix = f"#{int(spot)} " if pd.notna(spot) and spot != 99 else ""
-        likely_lbl = row.get("Likely", "")
-        if likely_lbl is None or (isinstance(likely_lbl, float) and pd.isna(likely_lbl)):
-            likely_lbl = ""
-        likely_lbl = str(likely_lbl).strip()
 
         # The card HTML and the CTA marker must be a single markdown block so
         # Streamlit doesn't drop sibling-DOM nodes between them (which would
@@ -5310,11 +5317,7 @@ def _render_interactive_player_cards(sorted_df, key_prefix, pitchers_df, slate_d
             unsafe_allow_html=True,
         )
 
-        if likely_lbl and likely_lbl != "—":
-            label = f"⭐ LIKELY: {likely_lbl}\n👉 Open {spot_prefix}{name} Matchup Card"
-        else:
-            label = f"👉 Open {spot_prefix}{name} Matchup Card"
-
+        label = "OPEN MATCHUP CARD"
         btn_key = f"pdc_open_{key_prefix}_{idx}_{pid or name}"
         if st.button(label, key=btn_key, use_container_width=True):
             payload_key = f"_pdc_payload_{key_prefix}_{idx}"

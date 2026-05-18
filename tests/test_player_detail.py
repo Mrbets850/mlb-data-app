@@ -210,29 +210,44 @@ class TestBuildBvpRows(unittest.TestCase):
         }
         rows = build_bvp_rows(batter_row=None, pitcher_row=None,
                               season_splits=splits, bat_side="R", pitch_hand="R")
-        self.assertEqual(len(rows), 4)
-        # Recent-form rows are flagged as proxies; 2025-26 rows are actual.
-        proxy_rows = [r for r in rows if "form" in r["label"].lower()]
-        actual_rows = [r for r in rows if "2025-26" in r["label"]]
-        self.assertEqual(len(proxy_rows), 2)
-        self.assertEqual(len(actual_rows), 2)
-        for r in proxy_rows:
-            self.assertFalse(r["actual"])
-        for r in actual_rows:
-            self.assertTrue(r["actual"])
-        # Right-hander pitcher -> plain-language "right-handed" label.
-        self.assertTrue(any("right-handed" in r["label"] for r in rows))
-        # No cryptic abbreviations like "L3 SZN" or "vs SP" or truncated "vs S..." leak through.
+        # Trimmed to two rows: "vs SP" (proxy from L10) and "vs Team" (TwoYear).
+        self.assertEqual(len(rows), 2)
+        labels = [r["label"] for r in rows]
+        self.assertIn("vs SP", labels)
+        self.assertIn("vs Team", labels)
+        by_label = {r["label"]: r for r in rows}
+        self.assertFalse(by_label["vs SP"]["actual"])
+        self.assertTrue(by_label["vs Team"]["actual"])
+        # The pre-PR-#60 verbose labels and duplicate 25-26 rows are gone.
         for r in rows:
+            self.assertNotIn("Recent form", r["label"])
+            self.assertNotIn("Extended form", r["label"])
+            self.assertNotIn("2025-26", r["label"])
+            self.assertNotIn("25-26", r["label"])
+            self.assertNotIn("right-handed", r["label"])
+            self.assertNotIn("left-handed", r["label"])
             self.assertNotIn("L3 SZN", r["label"])
-            self.assertNotIn("vs SP", r["label"])
             self.assertNotIn("vs S...", r["label"])
+        # No duplicate label appears twice.
+        self.assertEqual(len(labels), len(set(labels)))
 
-    def test_left_handed_pitcher_label(self):
-        splits = {"L10": {}, "L20": {}, "TwoYear": {}}
+    def test_no_duplicate_two_year_rows(self):
+        # Regression guard: the old layout emitted two rows backed by the
+        # same TwoYear split ("2025-26 vs <hand>" and "2025-26 all games"),
+        # which the user flagged as redundant. The new layout collapses
+        # them into a single "vs Team" row.
+        splits = {
+            "L10": {"PA": 40, "AVG": .278, "H%": 25.0, "SLG": .500,
+                    "HR%": 5.0, "BB%": 10.0, "K%": 22.5},
+            "TwoYear": {"PA": 400, "AVG": .264, "H%": 23.75, "SLG": .472,
+                        "HR%": 4.5, "BB%": 8.75, "K%": 20.0},
+        }
         rows = build_bvp_rows(batter_row=None, pitcher_row=None,
                               season_splits=splits, bat_side="R", pitch_hand="L")
-        self.assertTrue(any("left-handed" in r["label"] for r in rows))
+        # Only one row should reflect the TwoYear aggregate (PA == 400).
+        two_year_rows = [r for r in rows if r.get("PA") == 400]
+        self.assertEqual(len(two_year_rows), 1)
+        self.assertEqual(two_year_rows[0]["label"], "vs Team")
 
 
 class TestFormatGameLogRows(unittest.TestCase):

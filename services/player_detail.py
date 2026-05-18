@@ -516,25 +516,12 @@ def build_bvp_rows(*, batter_row: dict | None, pitcher_row: dict | None,
             "actual": actual,
         }
 
-    # Plain-language labels so a casual user can read the table without
-    # decoding "L3 SZN" / "vs SP" / "vs S...". The first two rows are
-    # proxies (we don't pull true head-to-head per slate) and carry the
-    # "proxy" badge from the UI.
-    rows.append(_row_from("Recent form (last 10 games)",
-                          splits.get("L10"), actual=False))
-    rows.append(_row_from("Extended form (last 20 games)",
-                          splits.get("L20"), actual=False))
-
-    if (pitch_hand or "").upper().startswith("R"):
-        hand_label = "vs right-handed pitchers"
-    elif (pitch_hand or "").upper().startswith("L"):
-        hand_label = "vs left-handed pitchers"
-    else:
-        hand_label = "vs same-handed pitchers"
-    rows.append(_row_from(f"2025-26 {hand_label}",
-                          splits.get("TwoYear"), actual=True))
-    rows.append(_row_from("2025-26 all games",
-                          splits.get("TwoYear"), actual=True))
+    # Two concise rows: `vs SP` is the per-start proxy (recent form is the
+    # closest signal we have without a true head-to-head query), and
+    # `vs Team` is the season-level look against the opposing team's
+    # handedness pool (bullpen + non-SP exposure).
+    rows.append(_row_from("vs SP", splits.get("L10"), actual=False))
+    rows.append(_row_from("vs Team", splits.get("TwoYear"), actual=True))
     return rows
 
 

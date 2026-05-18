@@ -4140,21 +4140,36 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
         df = df.sort_values("Spot").reset_index(drop=True)
     return df
 
+# Columns that are never shown as their own heat-map cell — Spot collapses
+# into the row label; _HR Trend is rendered alongside HR Form for the arrow;
+# the _Form / _LastHR / _HRLast10 / _LikelyReason fields are surfaced inside
+# the Hitter cell or the LIKELY tile.
+_MATCHUP_HIDDEN_COLS = (
+    "Spot", "_HR Trend", "_Form", "_FormL5_AVG", "_FormL10_AVG", "_FormL30_AVG",
+    "_LastHR", "_HRLast10", "_LastHRDate", "_HRLast10N", "_LikelyReason",
+    "_PlayerId", "_BatSide", "_OppPitcherId", "_OppPitcherName", "_SlateDate",
+)
+
+
+def _matchup_display_cols(df):
+    return [c for c in df.columns if c not in _MATCHUP_HIDDEN_COLS]
+
+
 def render_matchup_heatmap_html(df):
     """Render the wide heat-map board as an HTML table that scrolls horizontally
     on mobile + desktop. The first two columns (Spot, Hitter) are sticky so
-    the player stays visible while you swipe through the stat columns."""
+    the player stays visible while you swipe through the stat columns.
+
+    Returns only the desktop table block — the per-player interactive cards
+    are emitted by :func:`render_matchup_board_with_sort` so a real
+    Streamlit button can be fused into each card's footer.
+    """
     if df is None or df.empty:
         return '<div class="mhm-empty">Lineup not posted yet.</div>'
 
     # Numeric columns in display order (everything except identifiers/Likely).
     numeric_cols = [c for c in df.columns if c in HEATMAP_THRESHOLDS]
-    # Spot collapses into row label; _HR Trend is carried alongside HR Form
-    # for arrow rendering; _Form / _Form*_AVG are rendered in the Hitter cell.
-    _hidden = ("Spot", "_HR Trend", "_Form", "_FormL5_AVG", "_FormL10_AVG", "_FormL30_AVG",
-               "_LastHR", "_HRLast10", "_LastHRDate", "_HRLast10N", "_LikelyReason",
-               "_PlayerId", "_BatSide", "_OppPitcherId", "_OppPitcherName", "_SlateDate")
-    display_cols = [c for c in df.columns if c not in _hidden]
+    display_cols = _matchup_display_cols(df)
 
     css = """
 <style>
@@ -4202,21 +4217,27 @@ def render_matchup_heatmap_html(df):
 .mhm-trend-down { color: #b91c1c; }
 .mhm-trend-flat { color: #475569; }
 
-/* Mobile card layout: every stat fits on screen as a small heat-colored tile
-   so the user never has to scroll sideways. The desktop table is hidden and
-   the per-player cards take over below 700px. */
-.mhm-cards { display: none; margin: 6px 0 14px 0; }
-.mhm-card { border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;
-  box-shadow: 0 2px 10px rgba(15,23,42,0.06); padding: 10px 12px; margin-bottom: 10px; }
+/* Per-player interactive card: every stat fits on screen as a small
+   heat-colored tile and the card has a CTA button fused to its footer
+   (rendered by render_matchup_board_with_sort). Shown on every viewport
+   below the desktop table — this is the "whole interactive card" the user
+   taps to open the detail dialog. */
+.mhm-cards { display: block; margin: 10px 0 14px 0; }
+.mhm-card { border: 1px solid #1e293b; border-radius: 14px;
+  background: #ffffff; box-shadow: 0 4px 14px rgba(2,6,23,.35);
+  padding: 10px 12px 0 12px; margin-bottom: 0;
+  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+  border-bottom: none; }
 .mhm-card-header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px;
   padding-bottom: 6px; border-bottom: 1px dashed #e2e8f0; }
-.mhm-card-name { font-weight: 800; color: #0f172a; font-size: 0.92rem; }
-.mhm-card-meta { font-size: 0.65rem; color: #64748b; font-weight: 700; }
-.mhm-card-sub  { font-size: 0.66rem; font-weight: 800; line-height: 1.2; }
+.mhm-card-name { font-weight: 800; color: #0f172a; font-size: 0.96rem; }
+.mhm-card-meta { font-size: 0.66rem; color: #475569; font-weight: 700; }
+.mhm-card-sub  { font-size: 0.68rem; font-weight: 800; line-height: 1.2; }
 .mhm-card-sub.crushes { color: #be185d; }
 .mhm-card-sub.form    { color: #1d4ed8; }
 .mhm-card-sub.hr      { color: #7c2d12; }
-.mhm-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.mhm-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+  padding-bottom: 10px; }
 .mhm-tile { display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: 6px 2px; border-radius: 8px; background: #f1f5f9; min-height: 44px; }
 .mhm-tile-label { font-size: 0.58rem; font-weight: 800; letter-spacing: .03em;
@@ -4227,9 +4248,13 @@ def render_matchup_heatmap_html(df):
 .mhm-tile-likely { grid-column: span 4; background: #f8fafc; padding: 4px; }
 .mhm-tile-likely .mhm-tile-value { font-size: 0.74rem; }
 
+/* Spacer between fused card+button blocks so each card reads as one unit. */
+.mhm-card-spacer { height: 12px; }
+
+/* On wide screens, the desktop heat-map table is still a quick scan above
+   the interactive card grid — both stay visible. */
 @media (max-width: 700px) {
   .mhm-wrap  { display: none; }
-  .mhm-cards { display: block; }
 }
 </style>
 """
@@ -4242,14 +4267,13 @@ def render_matchup_heatmap_html(df):
         label = MATCHUP_HEATMAP_DISPLAY_LABELS.get(c, c)
         header_cells.append(f'<th class="{cls}">{label}</th>')
 
-    # Build body rows (desktop table) AND mobile cards in one pass so the two
-    # layouts stay synchronised — same numbers, same heat colors, same order.
+    # Build desktop-table body rows. The per-player interactive cards (same
+    # numbers, same heat colors) are rendered separately by
+    # render_matchup_player_card_html below so the orchestrator can fuse a
+    # Streamlit button into each card's footer.
     body_rows = []
-    mobile_cards = []
     for _, r in df.iterrows():
         cells = []
-        mobile_tiles = []
-        mobile_header_html = ""
         for c in display_cols:
             v = r.get(c)
             if c == "Hitter":
@@ -4297,61 +4321,27 @@ def render_matchup_heatmap_html(df):
                     f'{hr_html}'
                     f'</td>'
                 )
-                m_crushes = (f'<div class="mhm-card-sub crushes">💥 {crushes_str}</div>'
-                             if crushes_str and crushes_str != "—" else "")
-                m_form = (f'<div class="mhm-card-sub form">📈 {form_line}</div>'
-                          if form_line else "")
-                m_hr = (f'<div class="mhm-card-sub hr">' + " · ".join(hr_lines) + '</div>'
-                        if hr_lines else "")
-                mobile_header_html = (
-                    f'<div class="mhm-card-header">'
-                    f'<div class="mhm-card-name">{spot}. {v}</div>'
-                    f'<div class="mhm-card-meta">{team}</div>'
-                    f'{m_crushes}{m_form}{m_hr}'
-                    f'</div>'
-                )
                 continue
             if c == "Team" or c == "Crushes":
                 # Already rendered alongside Hitter — skip dedicated cell.
                 continue
             if c == "Likely":
-                mlabel = MATCHUP_HEATMAP_MOBILE_LABELS.get(c, c)
                 reason = r.get("_LikelyReason", "")
                 if reason is None or (isinstance(reason, float) and pd.isna(reason)):
                     reason = ""
                 reason = str(reason).strip()
                 if v is None or (isinstance(v, float) and pd.isna(v)) or str(v) == "—":
                     cells.append('<td class="mhm-na">—</td>')
-                    mobile_tiles.append(
-                        f'<div class="mhm-tile mhm-tile-likely is-na">'
-                        f'<div class="mhm-tile-label">{mlabel}</div>'
-                        f'<div class="mhm-tile-value">—</div></div>'
-                    )
                 else:
                     reason_html = f'<div class="mhm-likely-reason">{reason}</div>' if reason else ""
                     cells.append(
                         f'<td><span class="mhm-likely">{v}</span>{reason_html}</td>'
                     )
-                    mobile_reason_html = (
-                        f'<div class="mhm-tile-reason">{reason}</div>' if reason else ""
-                    )
-                    mobile_tiles.append(
-                        f'<div class="mhm-tile mhm-tile-likely">'
-                        f'<div class="mhm-tile-label">{mlabel}</div>'
-                        f'<div class="mhm-tile-value">{v}</div>'
-                        f'{mobile_reason_html}</div>'
-                    )
                 continue
             spec = HEATMAP_THRESHOLDS.get(c)
             fmt = spec[3] if spec else "{}"
-            mlabel = MATCHUP_HEATMAP_MOBILE_LABELS.get(c, c)
             if v is None or (isinstance(v, float) and pd.isna(v)):
                 cells.append('<td class="mhm-na">—</td>')
-                mobile_tiles.append(
-                    f'<div class="mhm-tile is-na">'
-                    f'<div class="mhm-tile-label">{mlabel}</div>'
-                    f'<div class="mhm-tile-value">—</div></div>'
-                )
                 continue
             try:
                 txt = fmt.format(float(v))
@@ -4370,27 +4360,11 @@ def render_matchup_heatmap_html(df):
             rgb, text_color = _heatmap_color_for(c, v)
             if rgb is None:
                 cells.append(f'<td>{txt}</td>')
-                mobile_tiles.append(
-                    f'<div class="mhm-tile">'
-                    f'<div class="mhm-tile-label">{mlabel}</div>'
-                    f'<div class="mhm-tile-value">{txt}</div></div>'
-                )
             else:
                 style = (f'background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]}); '
                          f'color: {text_color}; font-weight: 800;')
                 cells.append(f'<td style="{style}">{txt}</td>')
-                tile_style = (f'background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]});')
-                tile_value_style = f'color: {text_color};'
-                mobile_tiles.append(
-                    f'<div class="mhm-tile" style="{tile_style}">'
-                    f'<div class="mhm-tile-label" style="{tile_value_style} opacity:.85;">{mlabel}</div>'
-                    f'<div class="mhm-tile-value" style="{tile_value_style}">{txt}</div></div>'
-                )
         body_rows.append(f'<tr>{"".join(cells)}</tr>')
-        mobile_cards.append(
-            f'<div class="mhm-card">{mobile_header_html}'
-            f'<div class="mhm-grid">{"".join(mobile_tiles)}</div></div>'
-        )
 
     # Filter out the "Team" and "Crushes" columns from header (both are rendered
     # in the Hitter cell as sub-lines so the table stays mobile-friendly).
@@ -4402,9 +4376,130 @@ def render_matchup_heatmap_html(df):
         f'<thead><tr>{"".join(header_cells_filtered)}</tr></thead>'
         f'<tbody>{"".join(body_rows)}</tbody>'
         f'</table></div>'
-        f'<div class="mhm-cards">{"".join(mobile_cards)}</div>'
     )
     return table_html
+
+
+def render_matchup_player_card_html(row, display_cols):
+    """Render the per-player heat-map card — the "original player card" with
+    the green/red/yellow metric tiles, name/team/pitch notes/L5/L10/30D, and
+    last-HR strip. The card is intentionally left OPEN at the bottom so the
+    orchestrator can drop a Streamlit button immediately below it; CSS in
+    `.mhm-card` + `.mhm-cta-host` removes the gap so the two render as one
+    interactive card.
+    """
+    r = row
+    spot = r.get("Spot", "")
+    hitter_name = r.get("Hitter", "")
+    team = r.get("Team", "")
+    crushes = r.get("Crushes", "")
+    if crushes is None or (isinstance(crushes, float) and pd.isna(crushes)):
+        crushes = ""
+    crushes_str = str(crushes).strip()
+    form_line = r.get("_Form", "")
+    if form_line is None or (isinstance(form_line, float) and pd.isna(form_line)):
+        form_line = ""
+    form_line = str(form_line).strip()
+    last_hr = r.get("_LastHR", "")
+    if last_hr is None or (isinstance(last_hr, float) and pd.isna(last_hr)):
+        last_hr = ""
+    last_hr = str(last_hr).strip()
+    hr_l10 = r.get("_HRLast10", "")
+    if hr_l10 is None or (isinstance(hr_l10, float) and pd.isna(hr_l10)):
+        hr_l10 = ""
+    hr_l10 = str(hr_l10).strip()
+    hr_lines = []
+    if last_hr and last_hr != "—":
+        hr_lines.append(f"💣 Last HR: {last_hr}")
+    if hr_l10 and hr_l10 != "—":
+        hr_lines.append(f"🔟 {hr_l10}")
+
+    m_crushes = (f'<div class="mhm-card-sub crushes">💥 {crushes_str}</div>'
+                 if crushes_str and crushes_str != "—" else "")
+    m_form = (f'<div class="mhm-card-sub form">📈 {form_line}</div>'
+              if form_line else "")
+    m_hr = (f'<div class="mhm-card-sub hr">' + " · ".join(hr_lines) + '</div>'
+            if hr_lines else "")
+    header_html = (
+        f'<div class="mhm-card-header">'
+        f'<div class="mhm-card-name">{spot}. {hitter_name}</div>'
+        f'<div class="mhm-card-meta">{team}</div>'
+        f'{m_crushes}{m_form}{m_hr}'
+        f'</div>'
+    )
+
+    tiles = []
+    for c in display_cols:
+        if c in ("Hitter", "Team", "Crushes"):
+            continue
+        v = r.get(c)
+        if c == "Likely":
+            mlabel = MATCHUP_HEATMAP_MOBILE_LABELS.get(c, c)
+            reason = r.get("_LikelyReason", "")
+            if reason is None or (isinstance(reason, float) and pd.isna(reason)):
+                reason = ""
+            reason = str(reason).strip()
+            if v is None or (isinstance(v, float) and pd.isna(v)) or str(v) == "—":
+                tiles.append(
+                    f'<div class="mhm-tile mhm-tile-likely is-na">'
+                    f'<div class="mhm-tile-label">{mlabel}</div>'
+                    f'<div class="mhm-tile-value">—</div></div>'
+                )
+            else:
+                reason_html = (f'<div class="mhm-tile-reason">{reason}</div>'
+                               if reason else "")
+                tiles.append(
+                    f'<div class="mhm-tile mhm-tile-likely">'
+                    f'<div class="mhm-tile-label">{mlabel}</div>'
+                    f'<div class="mhm-tile-value">{v}</div>'
+                    f'{reason_html}</div>'
+                )
+            continue
+        spec = HEATMAP_THRESHOLDS.get(c)
+        fmt = spec[3] if spec else "{}"
+        mlabel = MATCHUP_HEATMAP_MOBILE_LABELS.get(c, c)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            tiles.append(
+                f'<div class="mhm-tile is-na">'
+                f'<div class="mhm-tile-label">{mlabel}</div>'
+                f'<div class="mhm-tile-value">—</div></div>'
+            )
+            continue
+        try:
+            txt = fmt.format(float(v))
+        except Exception:
+            txt = str(v)
+        if c == "HR Form":
+            trend = r.get("_HR Trend")
+            arrow_map = {"↑": ("mhm-trend-up", "↑"),
+                         "↓": ("mhm-trend-down", "↓"),
+                         "→": ("mhm-trend-flat", "→")}
+            arrow_cls, arrow_glyph = arrow_map.get(
+                trend if isinstance(trend, str) else "",
+                ("mhm-trend-flat", "→"),
+            )
+            txt = f'{txt} <span class="mhm-trend {arrow_cls}">{arrow_glyph}</span>'
+        rgb, text_color = _heatmap_color_for(c, v)
+        if rgb is None:
+            tiles.append(
+                f'<div class="mhm-tile">'
+                f'<div class="mhm-tile-label">{mlabel}</div>'
+                f'<div class="mhm-tile-value">{txt}</div></div>'
+            )
+        else:
+            tile_style = f'background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]});'
+            tile_value_style = f'color: {text_color};'
+            tiles.append(
+                f'<div class="mhm-tile" style="{tile_style}">'
+                f'<div class="mhm-tile-label" style="{tile_value_style} opacity:.85;">{mlabel}</div>'
+                f'<div class="mhm-tile-value" style="{tile_value_style}">{txt}</div></div>'
+            )
+
+    return (
+        f'<div class="mhm-card">{header_html}'
+        f'<div class="mhm-grid">{"".join(tiles)}</div>'
+        f'</div>'
+    )
 
 # Columns the user can sort the heat-map board by, in display order.
 # "Lineup Spot" maps to the default Spot ordering (1-9) — exposed as the first
@@ -4582,13 +4677,83 @@ def _build_player_detail_payload(player_row, pitcher_row_df, slate_date):
 
 _PLAYER_DETAIL_CSS = """
 <style>
+/* ---------------------------------------------------------------
+   Modal-scoped dark surface. The app's Streamlit theme is "light"
+   (light purple background, near-black text). The player detail
+   dialog rendered by st.dialog inherits that light surface, which
+   made the dark-card content look mismatched and the Streamlit
+   chrome (radio chips, helper text) appear as dark-on-dark or
+   washed-out gray. We force the dialog container itself to a
+   premium dark surface and recolor every Streamlit-rendered text
+   node inside it to light slate so the modal reads as one cohesive
+   dark card matching the screenshots.
+   --------------------------------------------------------------- */
+div[data-testid="stDialog"] > div > div,
+div[role="dialog"] {
+  background: #0b1220 !important;
+  color: #f8fafc !important;
+}
+div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] *,
+div[role="dialog"] [data-testid="stMarkdownContainer"] *,
+div[data-testid="stDialog"] label, div[role="dialog"] label,
+div[data-testid="stDialog"] p, div[role="dialog"] p,
+div[data-testid="stDialog"] span, div[role="dialog"] span {
+  color: #f8fafc;
+}
+/* Streamlit modal title bar (the "Player detail" header) */
+div[data-testid="stDialog"] h1, div[role="dialog"] h1,
+div[data-testid="stDialog"] h2, div[role="dialog"] h2,
+div[data-testid="stDialog"] h3, div[role="dialog"] h3,
+div[data-testid="stDialog"] header, div[role="dialog"] header {
+  color: #f8fafc !important;
+}
+/* Radio (chip toggle) above the detail card. Streamlit renders
+   each option as a label inside a div[role=radiogroup]; the
+   default option labels are near-black on the light theme. */
+div[data-testid="stDialog"] div[role="radiogroup"] label,
+div[role="dialog"] div[role="radiogroup"] label,
+div[data-testid="stDialog"] div[role="radiogroup"] label p,
+div[role="dialog"] div[role="radiogroup"] label p {
+  color: #e2e8f0 !important; font-weight: 800;
+}
+div[data-testid="stDialog"] div[role="radiogroup"] label:has(input:checked) p,
+div[role="dialog"] div[role="radiogroup"] label:has(input:checked) p {
+  color: #7dd3fc !important;
+}
+/* Streamlit dataframe / table fallbacks inside the dialog. */
+div[data-testid="stDialog"] [data-testid="stTable"] *,
+div[role="dialog"] [data-testid="stTable"] *,
+div[data-testid="stDialog"] [data-testid="stDataFrame"] *,
+div[role="dialog"] [data-testid="stDataFrame"] * {
+  color: #e2e8f0 !important;
+}
+/* Expander / accordion labels inside the dialog (if used). */
+div[data-testid="stDialog"] details summary,
+div[role="dialog"] details summary,
+div[data-testid="stDialog"] [data-testid="stExpander"] *,
+div[role="dialog"] [data-testid="stExpander"] * {
+  color: #e2e8f0 !important;
+}
+/* Close button (X) — keep it visible on the dark surface. */
+div[data-testid="stDialog"] button[aria-label="Close"],
+div[role="dialog"] button[aria-label="Close"] {
+  color: #f8fafc !important;
+}
+
+/* ---------------------------------------------------------------
+   Player detail card body. All text is white or bright slate on
+   dark cards; muted/helper text uses #cbd5e1 (slate-300) so even
+   the lightest helper line is readable. Sky-blue accent
+   (#38bdf8 / #7dd3fc / #93c5fd) is reserved for labels and chips.
+   --------------------------------------------------------------- */
 .pdc-root { color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 .pdc-root * { box-sizing: border-box; }
 .pdc-tabs { display:flex; gap:24px; justify-content:center; margin: 4px 0 12px 0; }
-.pdc-tab { font-size:.72rem; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.08em; }
+.pdc-tab { font-size:.72rem; font-weight:800; color:#cbd5e1; text-transform:uppercase; letter-spacing:.08em; }
 .pdc-tab.is-active { color:#f8fafc; border-bottom: 2px solid #38bdf8; padding-bottom: 4px; }
 .pdc-card { background: linear-gradient(180deg, #111827 0%, #0b1220 100%); border-radius: 18px;
-  padding: 14px 16px; margin: 10px 0; border: 1px solid #1e293b; box-shadow: 0 4px 18px rgba(0,0,0,.35); }
+  padding: 14px 16px; margin: 10px 0; border: 1px solid #1e293b; box-shadow: 0 4px 18px rgba(0,0,0,.35);
+  color: #f8fafc; }
 .pdc-header-row { display:flex; align-items:center; gap: 14px; }
 .pdc-avatar-wrap { flex: 0 0 72px; position: relative; }
 .pdc-avatar {
@@ -4613,46 +4778,44 @@ _PLAYER_DETAIL_CSS = """
 }
 .pdc-header-body { flex: 1 1 auto; min-width: 0; }
 .pdc-name { font-size: 1.25rem; font-weight: 900; color:#f8fafc; }
-.pdc-meta { font-size: .78rem; color:#94a3b8; font-weight: 700; margin-top: 2px; }
+.pdc-meta { font-size: .78rem; color:#cbd5e1; font-weight: 700; margin-top: 2px; }
 .pdc-next { display:flex; align-items:center; justify-content:space-between; padding: 10px 12px;
-  background: rgba(56,189,248,.08); border:1px solid rgba(56,189,248,.25); border-radius: 12px;
+  background: rgba(56,189,248,.12); border:1px solid rgba(56,189,248,.35); border-radius: 12px;
   margin-top: 10px; }
-.pdc-next-left  { font-size:.85rem; font-weight:800; color:#e2e8f0; }
-.pdc-next-right { font-size:.72rem; font-weight:700; color:#7dd3fc; }
-.pdc-section-title { font-size:.8rem; font-weight:900; color:#38bdf8; text-transform:uppercase;
+.pdc-next-left  { font-size:.85rem; font-weight:800; color:#f8fafc; }
+.pdc-next-right { font-size:.72rem; font-weight:800; color:#7dd3fc; }
+.pdc-section-title { font-size:.8rem; font-weight:900; color:#7dd3fc; text-transform:uppercase;
   letter-spacing:.08em; margin: 12px 0 6px 0; display:flex; align-items:center; gap:8px; }
 .pdc-section-title::before { content:""; width: 4px; height: 14px; background:#38bdf8; border-radius:3px; display:inline-block; }
 .pdc-rating { display:flex; gap: 14px; align-items:stretch; }
 .pdc-rating-score { flex: 0 0 92px; background:#0b1220; border:1px solid #1e293b; border-radius: 14px;
   padding: 12px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
 .pdc-rating-score .num  { font-size: 1.8rem; font-weight:900; line-height:1; }
-.pdc-rating-score .tier { font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; margin-top:6px; color:#94a3b8; }
+.pdc-rating-score .tier { font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; margin-top:6px; color:#e2e8f0; }
 .pdc-rating.tier-Juicy  .num { color:#22c55e; }
 .pdc-rating.tier-Risky  .num { color:#4ade80; }
 .pdc-rating.tier-Average .num { color:#facc15; }
 .pdc-rating.tier-Above-Avg .num { color:#fb923c; }
 .pdc-rating.tier-Elite  .num { color:#ef4444; }
 .pdc-rating-body { flex: 1 1 auto; }
-.pdc-rating-name { font-size:.95rem; font-weight:800; color:#e2e8f0; }
+.pdc-rating-name { font-size:.95rem; font-weight:800; color:#f8fafc; }
 .pdc-rating-bullets { margin: 6px 0 0 0; padding: 0; list-style: none; }
-.pdc-rating-bullets li { font-size:.72rem; color:#cbd5e1; font-weight:700; padding-left: 14px; position:relative; line-height:1.35; }
+.pdc-rating-bullets li { font-size:.74rem; color:#e2e8f0; font-weight:700; padding-left: 14px; position:relative; line-height:1.4; }
 .pdc-rating-bullets li::before { content:"•"; position:absolute; left:0; color:#38bdf8; }
 .pdc-table { width:100%; border-collapse: separate; border-spacing: 0; font-size:.74rem; }
-.pdc-table th { color:#94a3b8; font-weight:800; text-transform:uppercase; letter-spacing:.06em;
-  font-size:.62rem; padding: 6px 6px; text-align:right; border-bottom: 1px solid #1e293b; }
+.pdc-table th { color:#7dd3fc; font-weight:900; text-transform:uppercase; letter-spacing:.06em;
+  font-size:.64rem; padding: 6px 6px; text-align:right; border-bottom: 1px solid #1e293b; }
 .pdc-table th:first-child, .pdc-table td:first-child { text-align:left; }
-.pdc-table td { color:#e2e8f0; padding: 7px 6px; font-weight:700; text-align:right;
+.pdc-table td { color:#f8fafc; padding: 7px 6px; font-weight:700; text-align:right;
   border-bottom: 1px solid rgba(30,41,59,.6); }
 .pdc-table tr:last-child td { border-bottom: none; }
-.pdc-table .row-label { color:#cbd5e1; font-weight:800; }
-.pdc-table .row-label .proxy { color:#64748b; font-size:.58rem; font-weight:700; margin-left:6px;
+.pdc-table .row-label { color:#f8fafc; font-weight:800; }
+.pdc-table .row-label .proxy { color:#bae6fd; font-size:.58rem; font-weight:800; margin-left:6px;
   text-transform:uppercase; letter-spacing:.05em; }
 .pdc-chips { display:flex; gap:6px; overflow-x:auto; padding: 4px 0 8px 0; margin: 0 -2px;
   -webkit-overflow-scrolling: touch; }
 .pdc-chip { flex: 0 0 auto; min-width: 64px; background:#0b1220; border:1px solid #1e293b;
   border-radius: 12px; padding: 8px 10px; text-align:center; }
-/* L5/L10/L20/Season labels: brighter sky-blue so the window label is
-   readable on the dark chip — the prior #64748b ink was nearly invisible. */
 .pdc-chip .lab { font-size:.66rem; font-weight:900; color:#93c5fd;
   text-transform:uppercase; letter-spacing:.06em; }
 .pdc-chip .val { font-size:.98rem; font-weight:900; color:#f8fafc; margin-top: 3px; }
@@ -4662,34 +4825,34 @@ _PLAYER_DETAIL_CSS = """
 .pdc-recent { display:flex; flex-direction:column; gap:8px; }
 .pdc-recent-pills { display:flex; gap:8px; }
 .pdc-pill { background:#0b1220; border:1px solid #1e293b; border-radius: 999px; padding: 4px 10px;
-  font-size:.7rem; font-weight:800; color:#cbd5e1; }
+  font-size:.7rem; font-weight:800; color:#e2e8f0; }
 .pdc-pill .num { color:#7dd3fc; margin-left:4px; }
 .pdc-bars { display:flex; gap:6px; align-items:flex-end; min-height: 64px; padding: 6px 0 0 0; }
 .pdc-bar { flex: 1 1 0; background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
   border-radius: 4px 4px 0 0; min-height: 4px; position:relative; }
 .pdc-bar.empty { background:#1e293b; }
 .pdc-bar .v { position:absolute; top:-14px; left:50%; transform: translateX(-50%);
-  font-size:.58rem; color:#94a3b8; font-weight:800; }
+  font-size:.62rem; color:#f8fafc; font-weight:900; }
 .pdc-log-table { width:100%; border-collapse: separate; border-spacing: 0;
   background:#0b1220; border-radius: 12px; overflow:hidden; border:1px solid #1e293b; }
-.pdc-log-table th { background:#0f172a; color:#94a3b8; font-size:.58rem; font-weight:900;
+.pdc-log-table th { background:#0f172a; color:#7dd3fc; font-size:.6rem; font-weight:900;
   text-transform:uppercase; letter-spacing:.06em; padding: 8px 6px; text-align:right;
   border-bottom: 1px solid #1e293b; }
 .pdc-log-table th:first-child, .pdc-log-table td:first-child { text-align:left; }
-.pdc-log-table td { color:#e2e8f0; font-size:.74rem; font-weight:700; padding: 7px 6px;
+.pdc-log-table td { color:#f8fafc; font-size:.74rem; font-weight:700; padding: 7px 6px;
   text-align:right; border-bottom: 1px solid rgba(30,41,59,.6); }
 .pdc-log-table tr:last-child td { border-bottom: none; }
-.pdc-log-opp { color:#94a3b8; font-size:.62rem; font-weight:700; }
-.pdc-empty { color:#64748b; font-size:.78rem; font-weight:700; font-style: italic; padding: 8px 4px; }
+.pdc-log-opp { color:#bae6fd; font-size:.62rem; font-weight:700; }
+.pdc-empty { color:#cbd5e1; font-size:.82rem; font-weight:700; font-style: italic; padding: 8px 4px; }
 .pdc-recap { display:grid; grid-template-columns: repeat(4, 1fr); gap:6px; }
 .pdc-recap-tile { background:#0b1220; border:1px solid #1e293b; border-radius: 10px;
   padding: 6px 4px; text-align:center; }
 .pdc-recap-tile .lab { font-size:.62rem; font-weight:900; color:#93c5fd;
   text-transform:uppercase; letter-spacing:.06em; }
 .pdc-recap-tile .val { font-size:.9rem; font-weight:900; color:#f8fafc; margin-top:2px; }
-.pdc-likely { padding: 4px 10px; border-radius: 999px; background: rgba(56,189,248,.15);
-  color:#7dd3fc; font-weight: 800; font-size:.72rem; display:inline-block; margin-top:6px; }
-.pdc-likely-reason { color:#94a3b8; font-size:.66rem; font-weight:700; margin-top:4px; line-height:1.3; }
+.pdc-likely { padding: 4px 10px; border-radius: 999px; background: rgba(56,189,248,.22);
+  color:#bae6fd; font-weight: 800; font-size:.74rem; display:inline-block; margin-top:6px; }
+.pdc-likely-reason { color:#cbd5e1; font-size:.7rem; font-weight:700; margin-top:4px; line-height:1.35; }
 </style>
 """
 
@@ -4996,109 +5159,107 @@ def _open_player_detail_dialog(payload_key: str):
     st.markdown(_render_player_detail_html(payload, active), unsafe_allow_html=True)
 
 
-def _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date):
-    """Emit one button per row in the sorted board so the user can open the
-    detail dialog by tapping a hitter. Buttons are spread across responsive
-    columns so they map 1:1 to the cards above.
+_MATCHUP_CTA_CSS = (
+    '<div class="mhm-cta-host">'
+    '<style>'
+    # Each Streamlit button that immediately follows a .mhm-card-host wrapper
+    # is rendered as that card's footer: flush against the card, no border
+    # radius on top, soft gradient pulled from the dark premium theme so the
+    # whole thing (header + tiles + CTA) reads as one interactive card.
+    '.mhm-card-host { margin-bottom: 0; }'
+    '.mhm-card-host + div[data-testid="stButton"] { margin-top: 0 !important; '
+    '  margin-bottom: 16px !important; }'
+    '.mhm-card-host + div[data-testid="stButton"] button { '
+    '  width: 100%; min-height: 54px; '
+    '  background: linear-gradient(180deg, #0ea5e9 0%, #0369a1 100%); '
+    '  color: #f8fafc; '
+    '  border: 1px solid #1e293b; border-top: 1px dashed #38bdf8; '
+    '  border-radius: 0 0 14px 14px; '
+    '  padding: 12px 14px; '
+    '  font-weight: 900; font-size: .9rem; line-height: 1.2; '
+    '  letter-spacing: .02em; text-align: center; '
+    '  box-shadow: 0 6px 16px rgba(2,6,23,.35), inset 0 1px 0 rgba(255,255,255,.18); '
+    '  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease; '
+    '  white-space: pre-line; '
+    '} '
+    '.mhm-card-host + div[data-testid="stButton"] button:hover { '
+    '  filter: brightness(1.08); '
+    '  box-shadow: 0 8px 22px rgba(14,165,233,.55), inset 0 1px 0 rgba(255,255,255,.25); '
+    '  border-color: #7dd3fc; } '
+    '.mhm-card-host + div[data-testid="stButton"] button:active { '
+    '  transform: translateY(1px); filter: brightness(.95); }'
+    '.mhm-card-host + div[data-testid="stButton"] button p { '
+    '  margin: 0 !important; color: inherit !important; font-weight: 900 !important; '
+    '  white-space: pre-line !important; }'
+    '@media (max-width: 640px) { '
+    '  .mhm-card-host + div[data-testid="stButton"] button { '
+    '    min-height: 60px; font-size: .92rem; padding: 14px 12px; } }'
+    '</style></div>'
+)
 
-    Each button now leads with the player's LIKELY prediction so the strip
-    visually replaces the small "Likely" pill the user was looking at on the
-    heat-map row. The LIKELY column in the heat-map itself is preserved.
+
+def _render_interactive_player_cards(sorted_df, key_prefix, pitchers_df, slate_date):
+    """Render each row of the sorted board as a single interactive card:
+    the original heat-map card (name/team/pitch notes/L5/L10/30D/last-HR +
+    green/red/yellow metric tiles + LIKELY tile) with a Streamlit CTA button
+    fused to its footer via the shared `.mhm-card-host + stButton` CSS.
+
+    The CTA button label leads with the LIKELY prediction so the prediction
+    itself is the tap target, then the player name. The button is the card's
+    bottom edge — not a separate stacked list above or below the grid.
     """
     if sorted_df is None or sorted_df.empty:
         return
 
-    # Prominent, mobile-first "LIKELY · View {Player} Card" tap targets.
-    # Sky-blue gradient + 56px min-height = clearly clickable on phones.
-    # On the dark premium background, the gold inner LIKELY chip makes the
-    # prediction unmistakable before you tap.
-    st.markdown(
-        '<div class="pdc-trigger-css">'
-        '<style>'
-        '.pdc-trigger-css + div div[data-testid="stButton"] button { '
-        '  width: 100%; min-height: 56px; '
-        '  background: linear-gradient(180deg, #0ea5e9 0%, #0369a1 100%); '
-        '  color: #f8fafc; border: 1px solid #38bdf8; '
-        '  border-radius: 14px; padding: 10px 12px; '
-        '  font-weight: 900; font-size: .82rem; line-height: 1.2; '
-        '  letter-spacing: .02em; text-align: center; '
-        '  box-shadow: 0 4px 14px rgba(14,165,233,.35), inset 0 1px 0 rgba(255,255,255,.18); '
-        '  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease; '
-        '  white-space: pre-line; '
-        '} '
-        '.pdc-trigger-css + div div[data-testid="stButton"] button:hover { '
-        '  filter: brightness(1.08); '
-        '  box-shadow: 0 6px 18px rgba(14,165,233,.55), inset 0 1px 0 rgba(255,255,255,.25); '
-        '  transform: translateY(-1px); border-color: #7dd3fc; } '
-        '.pdc-trigger-css + div div[data-testid="stButton"] button:active { '
-        '  transform: translateY(0); filter: brightness(.95); }'
-        '.pdc-trigger-css + div div[data-testid="stButton"] button p { '
-        '  margin: 0 !important; color: inherit !important; font-weight: 900 !important; '
-        '  white-space: pre-line !important; }'
-        '@media (max-width: 640px) { '
-        '  .pdc-trigger-css + div div[data-testid="stButton"] button { '
-        '    min-height: 64px; font-size: .9rem; padding: 12px 10px; } }'
-        '</style></div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(_MATCHUP_CTA_CSS, unsafe_allow_html=True)
 
-    st.markdown(
-        '<div style="font-size:.78rem; font-weight:900; color:#facc15; '
-        'text-transform:uppercase; letter-spacing:.08em; margin: 4px 0 6px 2px; '
-        'text-shadow: 0 1px 0 rgba(0,0,0,.4);">'
-        '⭐ LIKELY Predictions &mdash; Tap a player to open their full card</div>',
-        unsafe_allow_html=True,
-    )
+    display_cols = _matchup_display_cols(sorted_df)
 
-    n = len(sorted_df)
-    # Two buttons per row on phones gives a much wider, more obvious tap
-    # target than three. Three per row only when the slate has many hitters
-    # (avoids a tall ribbon of buttons on desktop).
-    per_row = 2 if n <= 12 else 3
-    rows = (n + per_row - 1) // per_row
-    idx = 0
-    for _ in range(rows):
-        cols = st.columns(per_row)
-        for col in cols:
-            if idx >= n:
-                break
-            row = sorted_df.iloc[idx]
-            pid = row.get("_PlayerId")
-            name = row.get("Hitter", "")
-            spot = row.get("Spot", "")
-            spot_prefix = f"#{int(spot)} " if pd.notna(spot) and spot != 99 else ""
-            likely_lbl = row.get("Likely", "")
-            if likely_lbl is None or (isinstance(likely_lbl, float) and pd.isna(likely_lbl)):
-                likely_lbl = ""
-            likely_lbl = str(likely_lbl).strip()
-            # Three-line CTA: LIKELY prediction first (this is the strip the
-            # user wants emphasized), then the player, then the action.
-            if likely_lbl and likely_lbl != "—":
-                label = f"LIKELY: {likely_lbl}\n{spot_prefix}{name}\n👉 View Player Card"
-            else:
-                label = f"{spot_prefix}{name}\n👉 View Player Card"
-            btn_key = f"pdc_open_{key_prefix}_{idx}_{pid or name}"
-            if col.button(label, key=btn_key, use_container_width=True):
-                payload_key = f"_pdc_payload_{key_prefix}_{idx}"
-                st.session_state[payload_key] = _build_player_detail_payload(
-                    row.to_dict(), pitchers_df, slate_date,
-                )
-                st.session_state["_pdc_active_key"] = payload_key
-                _open_player_detail_dialog(payload_key)
-            idx += 1
+    for idx, (_, row) in enumerate(sorted_df.iterrows()):
+        pid = row.get("_PlayerId")
+        name = row.get("Hitter", "")
+        spot = row.get("Spot", "")
+        spot_prefix = f"#{int(spot)} " if pd.notna(spot) and spot != 99 else ""
+        likely_lbl = row.get("Likely", "")
+        if likely_lbl is None or (isinstance(likely_lbl, float) and pd.isna(likely_lbl)):
+            likely_lbl = ""
+        likely_lbl = str(likely_lbl).strip()
+
+        # The card HTML and the CTA marker must be a single markdown block so
+        # Streamlit doesn't drop sibling-DOM nodes between them (which would
+        # break the `.mhm-card-host + stButton` adjacency selector).
+        card_html = render_matchup_player_card_html(row, display_cols)
+        st.markdown(
+            f'<div class="mhm-card-host">{card_html}</div>',
+            unsafe_allow_html=True,
+        )
+
+        if likely_lbl and likely_lbl != "—":
+            label = f"⭐ LIKELY: {likely_lbl}\n👉 Open {spot_prefix}{name} Matchup Card"
+        else:
+            label = f"👉 Open {spot_prefix}{name} Matchup Card"
+
+        btn_key = f"pdc_open_{key_prefix}_{idx}_{pid or name}"
+        if st.button(label, key=btn_key, use_container_width=True):
+            payload_key = f"_pdc_payload_{key_prefix}_{idx}"
+            st.session_state[payload_key] = _build_player_detail_payload(
+                row.to_dict(), pitchers_df, slate_date,
+            )
+            st.session_state["_pdc_active_key"] = payload_key
+            _open_player_detail_dialog(payload_key)
 
 
 def render_matchup_board_with_sort(board_df, key_prefix, label, *,
                                    pitchers_df=None, slate_date=None):
     """Render sort controls (column + direction) above a matchup heat-map
-    board, then render the sorted board as colored HTML. `key_prefix` must be
-    unique per board on the page so Streamlit widget state stays isolated
-    (e.g. "away_NYY_BOS" vs "home_NYY_BOS").
+    board, then render the sorted board. `key_prefix` must be unique per
+    board on the page so Streamlit widget state stays isolated (e.g.
+    "away_NYY_BOS" vs "home_NYY_BOS").
 
-    When ``pitchers_df`` is supplied, per-player "open detail" buttons are
-    rendered below the board so each hitter can be tapped for a full detail
-    dialog (Batter vs Pitcher, Opposing Pitcher Ratings, splits chips, game
-    log).
+    The board is shown two ways: a scrollable desktop heat-map table for
+    quick scanning, and (when ``pitchers_df`` is supplied) a grid of
+    interactive per-player cards where each original heat-map card has a
+    "View Matchup Card" button fused to its footer.
     """
     if board_df is None or board_df.empty:
         st.markdown(render_matchup_heatmap_html(board_df), unsafe_allow_html=True)
@@ -5125,13 +5286,11 @@ def render_matchup_board_with_sort(board_df, key_prefix, label, *,
         )
     descending = direction.startswith("High")
     sorted_df = sort_matchup_board(board_df, sort_col, descending)
-    # Render the LIKELY-prediction button strip ABOVE the heat-map so the
-    # interactive player-card CTA sits in the same vertical band as the
-    # "LIKELY" pill the user sees on each row — this is what makes the
-    # heat map feel tappable instead of read-only.
-    if pitchers_df is not None:
-        _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date)
+    # Desktop heat-map table for quick scanning (hidden on phones).
     st.markdown(render_matchup_heatmap_html(sorted_df), unsafe_allow_html=True)
+    # Interactive per-player cards with the CTA fused to each card's footer.
+    if pitchers_df is not None:
+        _render_interactive_player_cards(sorted_df, key_prefix, pitchers_df, slate_date)
 
 # ===========================================================================
 # Slate pitchers (Baseball Savant CSV joined by player_id +

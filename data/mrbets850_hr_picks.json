@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:38:28Z",
+  "last_updated": "2026-05-18T10:38:46Z",
   "picks": [
     {
       "rank": 1,
@@ -123,6 +123,14 @@
     },
     {
       "rank": 16,
+      "name": "Xavier Edwards",
+      "team": "",
+      "player_id": 669364,
+      "note": "",
+      "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 17,
       "name": "Junior Caminero",
       "team": "",
       "player_id": 691406,

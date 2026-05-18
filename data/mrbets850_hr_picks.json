@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:35:19Z",
+  "last_updated": "2026-05-18T10:35:55Z",
   "picks": [
     {
       "rank": 1,
@@ -79,6 +79,14 @@
       "team": "",
       "player_id": 592450,
       "note": "Lean because vs pitcher high walk rate",
+      "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 11,
+      "name": "Rafael Devers",
+      "team": "",
+      "player_id": 646240,
+      "note": "",
       "confidence": "🎯 Lean"
     }
   ]

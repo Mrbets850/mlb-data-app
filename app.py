@@ -4837,16 +4837,41 @@ div[role="dialog"] button[aria-label="Close"] {
 .pdc-rating-bullets { margin: 6px 0 0 0; padding: 0; list-style: none; }
 .pdc-rating-bullets li { font-size:.74rem; color:#e2e8f0; font-weight:700; padding-left: 14px; position:relative; line-height:1.4; }
 .pdc-rating-bullets li::before { content:"•"; position:absolute; left:0; color:#38bdf8; }
-.pdc-table { width:100%; border-collapse: separate; border-spacing: 0; font-size:.74rem; }
-.pdc-table th { color:#7dd3fc; font-weight:900; text-transform:uppercase; letter-spacing:.06em;
-  font-size:.64rem; padding: 6px 6px; text-align:right; border-bottom: 1px solid #1e293b; }
+/* Horizontal scroll wrapper for the BvP table — keeps every column
+   reachable on narrow phones while the parent .pdc-card itself stays
+   overflow-hidden so the modal corners don't break. table-layout:fixed
+   gives every numeric column an equal share with min-content fallback so
+   the last column (BB%) never gets clipped or pushed off-screen. */
+.pdc-table-wrap {
+  width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;
+  margin: 0 -4px; padding: 0 4px;
+}
+.pdc-table {
+  width:100%; min-width: 320px;
+  border-collapse: separate; border-spacing: 0;
+  font-size:.74rem; table-layout: fixed;
+}
+.pdc-table col.col-split { width: 30%; }
+.pdc-table col.col-num   { width: 14%; }
+.pdc-table th { color:#7dd3fc; font-weight:900; text-transform:uppercase; letter-spacing:.04em;
+  font-size:.62rem; padding: 6px 4px; text-align:right; border-bottom: 1px solid #1e293b;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pdc-table th:first-child, .pdc-table td:first-child { text-align:left; }
-.pdc-table td { color:#f8fafc; padding: 7px 6px; font-weight:700; text-align:right;
-  border-bottom: 1px solid rgba(30,41,59,.6); }
+.pdc-table td { color:#f8fafc; padding: 7px 4px; font-weight:700; text-align:right;
+  border-bottom: 1px solid rgba(30,41,59,.6);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pdc-table tr:last-child td { border-bottom: none; }
-.pdc-table .row-label { color:#f8fafc; font-weight:800; }
-.pdc-table .row-label .proxy { color:#bae6fd; font-size:.58rem; font-weight:800; margin-left:6px;
-  text-transform:uppercase; letter-spacing:.05em; }
+.pdc-table .row-label { color:#f8fafc; font-weight:800; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; }
+.pdc-table .row-label .proxy { color:#bae6fd; font-size:.56rem; font-weight:800; margin-left:4px;
+  text-transform:uppercase; letter-spacing:.04em; }
+@media (max-width: 640px) {
+  .pdc-table { font-size:.68rem; }
+  .pdc-table th { font-size:.58rem; padding: 6px 3px; letter-spacing:.02em; }
+  .pdc-table td { padding: 6px 3px; }
+  .pdc-table col.col-split { width: 26%; }
+  .pdc-table col.col-num   { width: 14.8%; }
+}
 .pdc-chips { display:flex; gap:6px; overflow-x:auto; padding: 4px 0 8px 0; margin: 0 -2px;
   -webkit-overflow-scrolling: touch; }
 .pdc-chip { flex: 0 0 auto; min-width: 64px; background:#0b1220; border:1px solid #1e293b;
@@ -5201,12 +5226,19 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     bvp_html = (
         '<div class="pdc-section-title">Batter vs Pitcher Matchup</div>'
         '<div class="pdc-card">'
+        '<div class="pdc-table-wrap">'
         '<table class="pdc-table">'
+        '<colgroup>'
+        '<col class="col-split"/>'
+        '<col class="col-num"/><col class="col-num"/><col class="col-num"/>'
+        '<col class="col-num"/><col class="col-num"/>'
+        '</colgroup>'
         '<thead><tr>'
         '<th>Split</th><th>PA</th><th>H%</th><th>SLG</th><th>HR%</th><th>BB%</th>'
         '</tr></thead>'
         f'<tbody>{"".join(bvp_body)}</tbody>'
         '</table>'
+        '</div>'
         '</div>'
     )
 
@@ -5455,68 +5487,115 @@ def _open_player_detail_dialog(payload_key: str):
 _MATCHUP_CTA_CSS = (
     '<div class="mhm-cta-host">'
     # Open Sans is free and hosted on Google Fonts; the font file is fetched
-    # once by the browser and cached. Without the import Streamlit's theme
-    # was falling back to the system stack which kept the CTA looking light /
-    # purple-tinted, so the import + explicit family fixes it everywhere.
+    # once by the browser and cached. We use it for the visible gold pill so
+    # the typography stays consistent across themes/devices.
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
     '<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@700;800;900&display=swap" rel="stylesheet">'
     '<style>'
-    # Each Streamlit button that immediately follows a .mhm-card-host wrapper
-    # is rendered as that card's footer: flush against the card, no border
-    # radius on top, soft gradient pulled from the dark premium theme so the
-    # whole thing (header + tiles + CTA) reads as one interactive card.
+    # ---- Visible gold CTA pill (pure HTML, rendered inside the card host) ---
+    # This is the element the user actually sees. Because it is our own HTML
+    # (not a Streamlit-painted button), no theme primary-color rule can turn
+    # it purple. It carries pointer-events:none so the transparent Streamlit
+    # button stacked on top still receives the click.
     '.mhm-card-host { margin-bottom: 0; }'
-    '.mhm-card-host + div[data-testid="stButton"] { margin-top: 0 !important; '
-    '  margin-bottom: 16px !important; }'
-    # Heavy-handed selector chain — Streamlit's default theme paints buttons
-    # with its primary color (which on the user's theme rendered as a
-    # purple/blue gradient). We target every nesting Streamlit might emit
-    # (button, kind="secondary", baseButton, etc.) and force the gold pill.
-    '.mhm-card-host + div[data-testid="stButton"] button, '
-    '.mhm-card-host + div[data-testid="stButton"] button[kind], '
-    '.mhm-card-host + div[data-testid="stButton"] button[data-testid], '
-    '.mhm-card-host + div[data-testid="stButton"] > button { '
-    '  width: 100%; min-height: 54px; '
-    '  background: linear-gradient(180deg, #fde047 0%, #ca8a04 100%) !important; '
-    '  background-color: #f7c948 !important; '
-    '  color: #0b0b0b !important; '
-    '  border: 1px solid #a16207 !important; '
-    '  border-top: 1px dashed #92400e !important; '
-    '  border-radius: 0 0 14px 14px !important; '
-    '  padding: 12px 14px !important; '
-    '  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", '
-    '    Roboto, sans-serif !important; '
-    '  font-weight: 900 !important; font-size: 1rem !important; line-height: 1.2 !important; '
-    '  letter-spacing: .08em !important; text-align: center !important; '
-    '  text-transform: uppercase !important; text-shadow: none !important; '
-    '  box-shadow: 0 6px 16px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.55) !important; '
-    '  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease; '
-    '  white-space: nowrap; '
-    '} '
-    '.mhm-card-host + div[data-testid="stButton"] button:hover { '
-    '  filter: brightness(1.06); '
-    '  box-shadow: 0 8px 22px rgba(202,138,4,.55), inset 0 1px 0 rgba(255,255,255,.65) !important; '
-    '  border-color: #fbbf24 !important; } '
-    '.mhm-card-host + div[data-testid="stButton"] button:active { '
-    '  transform: translateY(1px); filter: brightness(.95); }'
-    # Streamlit wraps the button label in <p>/<span>/<div>; force EVERY
-    # descendant text node to bold black Open Sans so theme overrides
-    # (which previously left the text purple/thin) cannot win.
-    '.mhm-card-host + div[data-testid="stButton"] button *, '
-    '.mhm-card-host + div[data-testid="stButton"] button p, '
-    '.mhm-card-host + div[data-testid="stButton"] button span, '
-    '.mhm-card-host + div[data-testid="stButton"] button div { '
-    '  margin: 0 !important; color: #0b0b0b !important; '
-    '  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", '
-    '    Roboto, sans-serif !important; '
-    '  font-weight: 900 !important; letter-spacing: .08em !important; '
-    '  text-transform: uppercase !important; '
-    '  white-space: nowrap !important; }'
-    '@media (max-width: 640px) { '
-    '  .mhm-card-host + div[data-testid="stButton"] button { '
-    '    min-height: 56px; font-size: .98rem !important; padding: 14px 12px !important; '
-    '    letter-spacing: .06em !important; } }'
+    '.mhm-cta-pill {'
+    '  display:flex; align-items:center; justify-content:center;'
+    '  width:100%; min-height:54px; padding:12px 14px; margin-top:-1px;'
+    '  background: linear-gradient(180deg, #fde047 0%, #ca8a04 100%);'
+    '  background-color:#f7c948;'
+    '  color:#0b0b0b !important;'
+    '  border:1px solid #a16207; border-top:1px dashed #92400e;'
+    '  border-radius:0 0 14px 14px;'
+    '  font-family:"Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'
+    '  font-weight:900; font-size:1rem; line-height:1.2;'
+    '  letter-spacing:.08em; text-transform:uppercase; text-align:center;'
+    '  box-shadow: 0 6px 16px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.55);'
+    '  white-space:nowrap; user-select:none; pointer-events:none;'
+    '}'
+    '.mhm-cta-pill, .mhm-cta-pill * { color:#0b0b0b !important; }'
+    '@media (max-width:640px) {'
+    '  .mhm-cta-pill { min-height:56px; font-size:.98rem; padding:14px 12px; letter-spacing:.06em; }'
+    '}'
+    # ---- Hidden / transparent Streamlit click target ------------------------
+    # The .mhm-cta-click marker div is rendered inside one Streamlit element
+    # container; the st.button below it lives in the very next element
+    # container in the same vertical block. We use :has() on the container
+    # so we don't depend on the marker and button being direct DOM siblings
+    # (Streamlit wraps each in its own element-container <div>), which is
+    # what made the previous .mhm-card-host + div[data-testid="stButton"]
+    # selector unreliable across Streamlit versions/themes.
+    #
+    # Selector chain (any of these matches the element container holding the
+    # st.button that follows the marker):
+    #   * an element-container that :has(.mhm-cta-click), then its next
+    #     sibling element-container that :has(div[data-testid="stButton"]).
+    #   * a fallback for the simple sibling case.
+    '.mhm-cta-click { display:block; height:0; margin:0 !important; padding:0 !important; }'
+    # Pull the button container up to overlay the gold pill above it. We
+    # match the element-container that immediately follows the one carrying
+    # .mhm-cta-click. This works regardless of inner wrapper depth.
+    'div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
+    '  div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) {'
+    '  margin-top:-54px !important; margin-bottom:16px !important;'
+    '  position:relative; z-index:5;'
+    '}'
+    'div[data-testid="element-container"]:has(.mhm-cta-click) + '
+    '  div[data-testid="element-container"]:has(div[data-testid="stButton"]) {'
+    '  margin-top:-54px !important; margin-bottom:16px !important;'
+    '  position:relative; z-index:5;'
+    '}'
+    # Fallback when Streamlit places the marker and button as direct siblings.
+    '.mhm-cta-click + div[data-testid="stButton"] {'
+    '  margin-top:-54px !important; margin-bottom:16px !important;'
+    '  position:relative; z-index:5;'
+    '}'
+    '@media (max-width:640px) {'
+    '  div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
+    '    div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]),'
+    '  div[data-testid="element-container"]:has(.mhm-cta-click) + '
+    '    div[data-testid="element-container"]:has(div[data-testid="stButton"]),'
+    '  .mhm-cta-click + div[data-testid="stButton"] {'
+    '    margin-top:-56px !important;'
+    '  }'
+    '}'
+    # The actual Streamlit button: transparent chrome and transparent text.
+    # We target ANY button inside an element-container that follows one
+    # containing .mhm-cta-click, so the selector keeps working even if
+    # Streamlit changes its inner wrapper markup.
+    'div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
+    '  div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button,'
+    'div[data-testid="element-container"]:has(.mhm-cta-click) + '
+    '  div[data-testid="element-container"]:has(div[data-testid="stButton"]) button,'
+    '.mhm-cta-click + div[data-testid="stButton"] button {'
+    '  width:100% !important; min-height:54px !important;'
+    '  background: transparent !important; background-color: transparent !important;'
+    '  background-image: none !important;'
+    '  color: transparent !important;'
+    '  border: 0 !important; border-radius: 0 0 14px 14px !important;'
+    '  box-shadow: none !important;'
+    '  padding: 12px 14px !important;'
+    '  cursor: pointer !important;'
+    '  text-shadow: none !important;'
+    '  outline: none !important;'
+    '}'
+    'div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
+    '  div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button *,'
+    'div[data-testid="element-container"]:has(.mhm-cta-click) + '
+    '  div[data-testid="element-container"]:has(div[data-testid="stButton"]) button *,'
+    '.mhm-cta-click + div[data-testid="stButton"] button * {'
+    '  color: transparent !important; background: transparent !important;'
+    '  text-shadow: none !important;'
+    '}'
+    '@media (max-width:640px) {'
+    '  div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
+    '    div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button,'
+    '  div[data-testid="element-container"]:has(.mhm-cta-click) + '
+    '    div[data-testid="element-container"]:has(div[data-testid="stButton"]) button,'
+    '  .mhm-cta-click + div[data-testid="stButton"] button {'
+    '    min-height:56px !important;'
+    '  }'
+    '}'
     '</style></div>'
 )
 
@@ -5543,15 +5622,24 @@ def _render_interactive_player_cards(sorted_df, key_prefix, pitchers_df, slate_d
         pid = row.get("_PlayerId")
         name = row.get("Hitter", "")
 
-        # The card HTML and the CTA marker must be a single markdown block so
-        # Streamlit doesn't drop sibling-DOM nodes between them (which would
-        # break the `.mhm-card-host + stButton` adjacency selector).
+        # Render the heat-map card AND the visible gold CTA pill as one HTML
+        # block. The pill is pure HTML — never a Streamlit-themed button — so
+        # it cannot render purple/blue regardless of the active theme. The
+        # actual click target is the transparent Streamlit button rendered
+        # immediately below; CSS pulls it up via negative margin to overlay
+        # the pill so the user clicks the gold pill they see.
         card_html = render_matchup_player_card_html(row, display_cols)
         st.markdown(
-            f'<div class="mhm-card-host">{card_html}</div>',
+            f'<div class="mhm-card-host">{card_html}'
+            f'<div class="mhm-cta-pill">OPEN MATCHUP CARD</div>'
+            f'</div>'
+            f'<div class="mhm-cta-click"></div>',
             unsafe_allow_html=True,
         )
 
+        # Invisible click target sized to match the gold pill. The label is
+        # still set to "OPEN MATCHUP CARD" for screen readers / accessibility,
+        # but it is rendered transparent by the CSS in _MATCHUP_CTA_CSS.
         label = "OPEN MATCHUP CARD"
         btn_key = f"pdc_open_{key_prefix}_{idx}_{pid or name}"
         if st.button(label, key=btn_key, use_container_width=True):

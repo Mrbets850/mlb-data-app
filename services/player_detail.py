@@ -351,6 +351,148 @@ def build_bvp_rows(*, batter_row: dict | None, pitcher_row: dict | None,
 
 # --- Game log formatting ----------------------------------------------------
 
+# --- Heat-map classification for the detail dialog --------------------------
+#
+# The interactive detail modal surfaces percentages, rates, and rating values.
+# To match the look of the original heat-map cards, every metric cell gets a
+# semantic band (good / okay / bad / neutral) plus the CSS color triplet used
+# to paint the cell. Pure functions — no Streamlit, no formatting — so the
+# tests can pin thresholds and orientation without standing up the dialog.
+#
+# Thresholds align with baseball-betting intuition:
+#   - hit rate, OBP, SLG, OPS, AVG: higher is better
+#   - HR%, ISO, Barrel%, HR/FB%, xwOBA, hard-hit%: higher is better
+#   - BB%: higher is better (walks help OPS, but only mildly)
+#   - K%: lower is better (REVERSED orientation)
+#   - pitcher rating score (Vulnerability): higher == juicier for the hitter
+#
+# Edge inputs (None, NaN, non-numeric) return ``neutral`` so the cell stays
+# styled-but-readable rather than collapsing the layout.
+
+# Each spec: (good_at_or_above, okay_at_or_above, reverse).
+# - reverse=False: >= good is "good", >= okay is "okay", below okay is "bad"
+# - reverse=True : <= good is "good", <= okay is "okay", above okay is "bad"
+_METRIC_THRESHOLDS: dict[str, tuple[float, float, bool]] = {
+    # Hitting rates (percent units: 0–100)
+    "H%":   (28.0, 22.0, False),
+    "HR%":  (4.5,  2.5,  False),
+    "BB%":  (10.0, 7.0,  False),
+    "K%":   (18.0, 24.0, True),
+    # Slash-line stats (decimal units, e.g. .500 SLG)
+    "AVG":  (0.280, 0.240, False),
+    "OBP":  (0.350, 0.310, False),
+    "SLG":  (0.470, 0.400, False),
+    "OPS":  (0.820, 0.720, False),
+    "ISO":  (0.200, 0.150, False),
+    "xwOBA": (0.360, 0.320, False),
+    # Statcast-ish quality metrics (percent units)
+    "Brl/BIP%": (10.0, 7.0, False),
+    "Barrel%":  (10.0, 7.0, False),
+    "HR/FB%":   (16.0, 11.0, False),
+    "HH%":      (42.0, 36.0, False),
+    "HardHit%": (42.0, 36.0, False),
+    "SweetSpot%": (36.0, 32.0, False),
+    "PullAir%": (22.0, 15.0, False),
+    # Matchup / rating score (0–100 vulnerability scale — higher == better for hitter)
+    "PitcherScore": (70.0, 50.0, False),
+    "Matchup":      (140.0, 115.0, False),
+}
+
+# Visual palette — kept in sync with the dark-card theme. Backgrounds carry
+# enough saturation to read as semantic without drowning the foreground text.
+# The text color is chosen for luminance contrast against each background.
+_BAND_STYLES: dict[str, tuple[str, str]] = {
+    # band -> (background CSS color, text CSS color)
+    "good":    ("#15803d", "#ecfdf5"),  # dark green / mint
+    "okay":    ("#ca8a04", "#0f172a"),  # amber / near-black (yellow needs dark text)
+    "bad":     ("#b91c1c", "#fef2f2"),  # dark red / soft white
+    "neutral": ("",        ""),         # no override — inherits parent
+}
+
+
+def _coerce_float(value: Any) -> float | None:
+    """Return ``value`` as a float, or None if missing/NaN/non-numeric.
+
+    Tolerates pandas NaN without importing pandas.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if f != f:  # NaN
+        return None
+    return f
+
+
+def classify_metric(metric: str, value: Any) -> str:
+    """Return one of ``'good' | 'okay' | 'bad' | 'neutral'`` for a metric value.
+
+    Unknown metrics and missing values return ``'neutral'`` so callers don't
+    paint a cell they shouldn't. Metric orientation (higher better vs lower
+    better) is encoded in :data:`_METRIC_THRESHOLDS`.
+    """
+    f = _coerce_float(value)
+    if f is None:
+        return "neutral"
+    spec = _METRIC_THRESHOLDS.get(metric)
+    if spec is None:
+        return "neutral"
+    good_at, okay_at, reverse = spec
+    if reverse:
+        if f <= good_at:
+            return "good"
+        if f <= okay_at:
+            return "okay"
+        return "bad"
+    if f >= good_at:
+        return "good"
+    if f >= okay_at:
+        return "okay"
+    return "bad"
+
+
+def heatmap_style_for(metric: str, value: Any) -> dict[str, str]:
+    """Return CSS-ready styling for a metric cell.
+
+    Keys:
+      band       : 'good' | 'okay' | 'bad' | 'neutral'
+      background : CSS color or '' (neutral)
+      color      : CSS text color or '' (neutral)
+      css_class  : 'pdc-hm-good' / 'pdc-hm-okay' / 'pdc-hm-bad' / '' (neutral)
+
+    Designed so the renderer can either inject inline ``style="..."`` for
+    one-off use or attach a class for shared CSS rules.
+    """
+    band = classify_metric(metric, value)
+    bg, fg = _BAND_STYLES.get(band, ("", ""))
+    css_class = "" if band == "neutral" else f"pdc-hm-{band}"
+    return {
+        "band": band,
+        "background": bg,
+        "color": fg,
+        "css_class": css_class,
+    }
+
+
+def classify_pitcher_tier(tier: str | None) -> str:
+    """Map a pitcher rating tier label to a heat-map band.
+
+    The rating is *vulnerability* — "Juicy" means the matchup is good FOR
+    THE HITTER, so it gets the ``good`` band on the modal even though a
+    juicy pitcher is bad for the pitcher.
+    """
+    t = (tier or "").strip().lower()
+    if t in ("juicy", "risky"):
+        return "good"
+    if t in ("average",):
+        return "okay"
+    if t in ("above-avg", "above avg", "elite"):
+        return "bad"
+    return "neutral"
+
+
 def format_game_log_rows(game_log: list[dict], limit: int = 10) -> list[dict]:
     """Format the last ``limit`` games as detail-dialog rows.
 

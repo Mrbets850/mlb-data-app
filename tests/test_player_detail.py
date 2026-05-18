@@ -19,10 +19,13 @@ if REPO_ROOT not in sys.path:
 from services.player_detail import (
     build_bvp_rows,
     build_split_windows,
+    classify_metric,
+    classify_pitcher_tier,
     compute_pitcher_rating,
     fetch_batter_game_log,
     format_game_log_rows,
     headshot_url,
+    heatmap_style_for,
 )
 
 
@@ -228,6 +231,88 @@ class TestFormatGameLogRows(unittest.TestCase):
 
     def test_empty_input(self):
         self.assertEqual(format_game_log_rows([]), [])
+
+
+class TestClassifyMetric(unittest.TestCase):
+    """Heat-map band classification — pinned thresholds and orientation.
+
+    The interactive detail modal relies on these to paint metric cells
+    green/yellow/red. If thresholds shift the UI shifts with them, so we
+    pin a representative case per metric family.
+    """
+
+    def test_unknown_metric_is_neutral(self):
+        self.assertEqual(classify_metric("not-a-metric", 50), "neutral")
+
+    def test_missing_value_is_neutral(self):
+        self.assertEqual(classify_metric("OPS", None), "neutral")
+        self.assertEqual(classify_metric("OPS", float("nan")), "neutral")
+        self.assertEqual(classify_metric("OPS", "abc"), "neutral")
+
+    def test_higher_is_better_bands(self):
+        # OPS thresholds: 0.820 good, 0.720 okay, below = bad
+        self.assertEqual(classify_metric("OPS", 0.900), "good")
+        self.assertEqual(classify_metric("OPS", 0.820), "good")  # boundary
+        self.assertEqual(classify_metric("OPS", 0.750), "okay")
+        self.assertEqual(classify_metric("OPS", 0.600), "bad")
+
+    def test_k_pct_is_reversed(self):
+        # K% — LOWER is better. <=18 good, <=24 okay, >24 bad
+        self.assertEqual(classify_metric("K%", 15.0), "good")
+        self.assertEqual(classify_metric("K%", 20.0), "okay")
+        self.assertEqual(classify_metric("K%", 30.0), "bad")
+
+    def test_hr_pct_thresholds(self):
+        self.assertEqual(classify_metric("HR%", 5.0), "good")
+        self.assertEqual(classify_metric("HR%", 3.0), "okay")
+        self.assertEqual(classify_metric("HR%", 1.5), "bad")
+
+    def test_matchup_score_high_is_good(self):
+        self.assertEqual(classify_metric("Matchup", 150.0), "good")
+        self.assertEqual(classify_metric("Matchup", 120.0), "okay")
+        self.assertEqual(classify_metric("Matchup", 90.0), "bad")
+
+
+class TestHeatmapStyleFor(unittest.TestCase):
+    def test_returns_class_and_colors_for_good(self):
+        s = heatmap_style_for("OPS", 1.000)
+        self.assertEqual(s["band"], "good")
+        self.assertEqual(s["css_class"], "pdc-hm-good")
+        self.assertTrue(s["background"])
+        self.assertTrue(s["color"])
+
+    def test_neutral_has_empty_class(self):
+        s = heatmap_style_for("OPS", None)
+        self.assertEqual(s["band"], "neutral")
+        self.assertEqual(s["css_class"], "")
+        self.assertEqual(s["background"], "")
+        self.assertEqual(s["color"], "")
+
+    def test_bad_uses_red_background(self):
+        s = heatmap_style_for("OPS", 0.500)
+        self.assertEqual(s["band"], "bad")
+        # Don't pin exact hex (avoids brittle theme tests) — just check it
+        # picked the bad palette.
+        self.assertTrue(s["background"].startswith("#"))
+        self.assertTrue(s["color"].startswith("#"))
+
+
+class TestClassifyPitcherTier(unittest.TestCase):
+    def test_juicy_is_good_for_hitter(self):
+        self.assertEqual(classify_pitcher_tier("Juicy"), "good")
+        self.assertEqual(classify_pitcher_tier("Risky"), "good")
+
+    def test_average_is_okay(self):
+        self.assertEqual(classify_pitcher_tier("Average"), "okay")
+
+    def test_elite_is_bad_for_hitter(self):
+        self.assertEqual(classify_pitcher_tier("Elite"), "bad")
+        self.assertEqual(classify_pitcher_tier("Above-Avg"), "bad")
+
+    def test_missing_or_unknown_is_neutral(self):
+        self.assertEqual(classify_pitcher_tier(None), "neutral")
+        self.assertEqual(classify_pitcher_tier(""), "neutral")
+        self.assertEqual(classify_pitcher_tier("WhoKnows"), "neutral")
 
 
 if __name__ == "__main__":

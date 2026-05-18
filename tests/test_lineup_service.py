@@ -352,5 +352,98 @@ class LineupServiceTests(unittest.TestCase):
             self.assertFalse(SportsDataIOProvider().is_configured)
 
 
+class FakeStatsAPI:
+    """Tiny stand-in for the ``statsapi`` Python wrapper.
+
+    Records every ``get(endpoint, params)`` call so tests can prove that the
+    provider delegates to the wrapper instead of making direct HTTP requests.
+    Each entry in ``responses`` maps an endpoint name to a payload.
+    """
+
+    def __init__(self, responses: dict[str, dict]):
+        self._responses = dict(responses)
+        self.calls: list[tuple[str, dict]] = []
+
+    def get(self, endpoint: str, params: dict):
+        self.calls.append((endpoint, dict(params)))
+        if endpoint in self._responses:
+            return self._responses[endpoint]
+        return {}
+
+
+class StatsAPIWrapperTests(unittest.TestCase):
+    """Confirm MLBStatsAPIProvider routes through the wrapper when present
+    and never hits HTTP for the same calls."""
+
+    def test_uses_wrapper_when_no_fetcher_injected(self):
+        sapi = FakeStatsAPI({"schedule": SCHEDULE_PREGAME})
+
+        # If the wrapper path is taken, this fetcher should never be called.
+        def panic_fetcher(url, params, headers):
+            raise AssertionError(f"Expected wrapper, got HTTP call to {url}")
+
+        prov = MLBStatsAPIProvider(statsapi_module=sapi,
+                                   use_statsapi_wrapper=True)
+        # Replace the HTTP fallback so a wrapper miss would still be visible.
+        prov._fetch = panic_fetcher  # type: ignore[attr-defined]
+        self.assertTrue(prov.using_wrapper)
+
+        games = prov.fetch_daily("2026-05-17")
+        self.assertEqual(len(games), 2)
+        self.assertEqual(games[0].game_pk, 700001)
+        # The wrapper was called with the schedule endpoint + hydrate params.
+        endpoints = [c[0] for c in sapi.calls]
+        self.assertIn("schedule", endpoints)
+        sched_params = next(p for ep, p in sapi.calls if ep == "schedule")
+        self.assertEqual(sched_params.get("date"), "2026-05-17")
+        self.assertEqual(sched_params.get("sportId"), 1)
+        self.assertIn("probablePitcher", sched_params.get("hydrate", ""))
+
+    def test_injected_fetcher_disables_wrapper(self):
+        sapi = FakeStatsAPI({"schedule": SCHEDULE_PREGAME})
+        prov = MLBStatsAPIProvider(
+            fetcher=make_fetcher({"/schedule": SCHEDULE_PREGAME,
+                                  "/feed/live": {},
+                                  "/boxscore": {}}),
+            statsapi_module=sapi,
+        )
+        # Tests inject a fetcher → wrapper must NOT be used or the offline
+        # HTTP shim is meaningless.
+        self.assertFalse(prov.using_wrapper)
+        games = prov.fetch_daily("2026-05-17")
+        self.assertEqual(len(games), 2)
+        self.assertEqual(sapi.calls, [])  # wrapper untouched
+
+    def test_wrapper_failure_falls_back_to_http(self):
+        # Wrapper raises → provider should fall back to its HTTP fetcher.
+        class BoomAPI:
+            def __init__(self): self.calls = 0
+            def get(self, endpoint, params):
+                self.calls += 1
+                raise RuntimeError("wrapper down")
+
+        sapi = BoomAPI()
+        prov = MLBStatsAPIProvider(statsapi_module=sapi,
+                                   use_statsapi_wrapper=True)
+        # Provide an HTTP fallback that returns the schedule fixture.
+        def http(url, params, headers):
+            if "/schedule" in url:
+                return SCHEDULE_PREGAME
+            return {}
+        prov._fetch = http  # type: ignore[attr-defined]
+
+        games = prov.fetch_daily("2026-05-17")
+        self.assertEqual(len(games), 2)
+        self.assertGreaterEqual(sapi.calls, 1)
+
+    def test_wrapper_disabled_when_module_missing(self):
+        # Simulate the package not being importable by forcing the module
+        # reference to a sentinel ``False`` (any non-callable will do); the
+        # provider should then refuse to route through the wrapper.
+        prov = MLBStatsAPIProvider(use_statsapi_wrapper=True)
+        prov._statsapi = None  # type: ignore[attr-defined]
+        self.assertFalse(prov.using_wrapper)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:32:41Z",
+  "last_updated": "2026-05-18T10:33:00Z",
   "picks": [
     {
       "rank": 1,
@@ -30,6 +30,14 @@
       "name": "Bobby Witt Jr.",
       "team": "",
       "player_id": 677951,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 5,
+      "name": "Yordan Alvarez",
+      "team": "",
+      "player_id": 670541,
       "note": "",
       "confidence": "🔥 Lock"
     }

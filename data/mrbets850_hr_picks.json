@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:38:46Z",
+  "last_updated": "2026-05-18T10:39:30Z",
   "picks": [
     {
       "rank": 1,
@@ -134,6 +134,14 @@
       "name": "Junior Caminero",
       "team": "",
       "player_id": 691406,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 18,
+      "name": "Nick Kurtz",
+      "team": "",
+      "player_id": 701762,
       "note": "",
       "confidence": "💎 Strong"
     }

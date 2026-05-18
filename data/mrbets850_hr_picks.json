@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:42:13Z",
+  "last_updated": "2026-05-18T10:42:26Z",
   "picks": [
     {
       "rank": 1,
@@ -190,6 +190,14 @@
       "name": "Munetaka Murakami",
       "team": "",
       "player_id": 808959,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 25,
+      "name": "Luke Raley",
+      "team": "",
+      "player_id": 670042,
       "note": "",
       "confidence": "💎 Strong"
     }

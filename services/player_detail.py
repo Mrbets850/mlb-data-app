@@ -13,6 +13,8 @@ Public surface
 - ``build_bvp_rows(...)`` -> ``list[dict]``
 - ``format_game_log_rows(game_log, opponent_map=None, limit=10)`` -> ``list[dict]``
 - ``headshot_url(player_id)`` -> ``str | None``
+- ``team_logo_url(team_abbr)`` -> ``str | None``
+- ``filter_log_for_split(game_log, split, season, end_date, opp_team=None)`` -> ``list[dict]``
 
 All helpers degrade gracefully — missing inputs return empty/None values
 rather than raising so the dialog can show "—" cells where data is absent.
@@ -36,6 +38,42 @@ _HEADSHOT_TMPL = (
     "https://img.mlbstatic.com/mlb-photos/image/upload/"
     "w_120,q_auto:best/v1/people/{pid}/headshot/67/current"
 )
+
+
+# Public MLB team-logo CDN, served as SVG. Same no-auth/free constraint
+# as headshots — the browser fetches and caches. Keyed by numeric team id.
+_TEAM_LOGO_TMPL = "https://www.mlbstatic.com/team-logos/{tid}.svg"
+
+# Abbreviation -> MLBAM team id. Kept inside the service so the helper is
+# self-contained for tests and for any caller that doesn't have access to
+# app.py's TEAM_INFO dict.
+_TEAM_ABBR_TO_ID: dict[str, int] = {
+    "ARI": 109, "ATL": 144, "BAL": 110, "BOS": 111, "CHC": 112, "CWS": 145,
+    "CIN": 113, "CLE": 114, "COL": 115, "DET": 116, "HOU": 117, "KC": 118,
+    "LAA": 108, "LAD": 119, "MIA": 146, "MIL": 158, "MIN": 142, "NYM": 121,
+    "NYY": 147, "ATH": 133, "OAK": 133, "PHI": 143, "PIT": 134, "SD": 135,
+    "SF": 137, "SEA": 136, "STL": 138, "TB": 139, "TEX": 140, "TOR": 141,
+    "WSH": 120, "WSN": 120, "CHW": 145, "KCR": 118, "SDP": 135, "SFG": 137,
+    "TBR": 139,
+}
+
+
+def team_logo_url(team_abbr: str | None) -> str | None:
+    """Return the public MLB team-logo SVG URL for an abbreviation, or None.
+
+    Pure URL builder — no I/O. The browser fetches the SVG directly from the
+    public CDN; callers fall back to the bare abbreviation if the image
+    fails to load.
+    """
+    if not team_abbr:
+        return None
+    abbr = str(team_abbr).strip().upper()
+    if not abbr:
+        return None
+    tid = _TEAM_ABBR_TO_ID.get(abbr)
+    if not tid:
+        return None
+    return _TEAM_LOGO_TMPL.format(tid=tid)
 
 
 def headshot_url(player_id: int | None) -> str | None:
@@ -157,6 +195,11 @@ def _format_game_result(game: dict) -> str:
 
 
 # --- Splits aggregation -----------------------------------------------------
+
+def aggregate_window(rows: Iterable[dict]) -> dict:
+    """Public alias of :func:`_agg_window` for callers outside this module."""
+    return _agg_window(rows)
+
 
 def _agg_window(rows: Iterable[dict]) -> dict:
     """Aggregate a window of game-log rows into split totals + rates.
@@ -498,7 +541,7 @@ def format_game_log_rows(game_log: list[dict], limit: int = 10) -> list[dict]:
 
     Returns rows ordered most-recent first, with keys:
       date_short ('Apr 14'), opp_label ('@LAD' or 'vs CHC'), score, ab, h,
-      hr, tb, rbi.
+      hr, tb, rbi, k (strikeouts), opp ('LAD'), opp_logo (URL or None).
     """
     if not game_log:
         return []
@@ -515,11 +558,106 @@ def format_game_log_rows(game_log: list[dict], limit: int = 10) -> list[dict]:
         out.append({
             "date_short": date_short,
             "opp_label": opp_label,
+            "opp": opp,
+            "opp_logo": team_logo_url(opp),
             "score": r.get("result") or "",
             "ab": int(r.get("ab") or 0),
             "h": int(r.get("h") or 0),
             "hr": int(r.get("hr") or 0),
             "tb": int(r.get("tb") or 0),
             "rbi": int(r.get("rbi") or 0),
+            "k": int(r.get("k") or 0),
         })
     return out
+
+
+# --- Split-window filtering for interactive modal ---------------------------
+
+# Map UI split labels to the keys used by :func:`build_split_windows` so the
+# dialog can drive a single source of truth and the UI just passes the label
+# the user tapped (e.g. "L10", "2026", "’25-’26").
+_SPLIT_LABEL_TO_KEY: dict[str, str] = {
+    "L5": "L5",
+    "L10": "L10",
+    "L20": "L20",
+    "Season": "Season",
+    "TwoYear": "TwoYear",
+    # Common UI variants — the modal renders "2026" for current season and
+    # "’25-’26" for the two-year window. H2H falls back to L10 because true
+    # head-to-head data is not pulled per slate (proxy, like build_bvp_rows).
+    "H2H": "L10",
+}
+
+
+def split_label_to_key(label: str | None) -> str:
+    """Normalize a UI split chip label to a ``build_split_windows`` key.
+
+    The dialog accepts variants like "2026" or "’25-’26"; this helper resolves
+    them to the canonical aggregate key. Unknown labels fall back to ``L10``
+    so a typo never produces an empty modal.
+    """
+    if not label:
+        return "L10"
+    raw = str(label).strip()
+    if raw in _SPLIT_LABEL_TO_KEY:
+        return _SPLIT_LABEL_TO_KEY[raw]
+    # The current-season chip is rendered as the season year ("2026"); the
+    # two-year chip uses curly quotes ("’25-’26"). Detect both shapes.
+    if raw.isdigit() and len(raw) == 4:
+        return "Season"
+    if ("25" in raw and "26" in raw) or "-" in raw or "–" in raw:
+        return "TwoYear"
+    return "L10"
+
+
+def filter_log_for_split(game_log: list[dict], split: str,
+                         season: int, end_date: _date | None = None,
+                         *, opp_team: str | None = None) -> list[dict]:
+    """Return the subset of ``game_log`` rows that belongs to ``split``.
+
+    - ``L5`` / ``L10`` / ``L20``: last N games on or before ``end_date``.
+    - ``Season`` / "2026": current-season rows only.
+    - ``TwoYear`` / "’25-’26": current + prior season rows.
+    - ``H2H``: rows whose opponent matches ``opp_team`` if supplied,
+      otherwise falls back to the L10 window so the modal never goes blank.
+
+    Returned rows preserve the underlying chronological order
+    (oldest -> newest) so downstream consumers can take ``[-N:]`` slices.
+    """
+    if not game_log:
+        return []
+    if end_date is None:
+        end_date = _date.today()
+
+    def _on_or_before(rows):
+        out = []
+        for r in rows:
+            rd = r.get("date") or ""
+            if not rd:
+                continue
+            try:
+                if _date.fromisoformat(rd[:10]) <= end_date:
+                    out.append(r)
+            except Exception:
+                continue
+        return out
+
+    filtered = _on_or_before(game_log)
+    key = split_label_to_key(split)
+
+    if key == "L5":
+        return filtered[-5:]
+    if key == "L10":
+        if split == "H2H" and opp_team:
+            opp_norm = str(opp_team).strip().upper()
+            h2h = [r for r in filtered if str(r.get("opponent") or "").upper() == opp_norm]
+            return h2h or filtered[-10:]
+        return filtered[-10:]
+    if key == "L20":
+        return filtered[-20:]
+    if key == "Season":
+        return [r for r in filtered if (r.get("date") or "")[:4] == str(season)]
+    if key == "TwoYear":
+        return [r for r in filtered if (r.get("date") or "")[:4]
+                in (str(season), str(season - 1))]
+    return filtered[-10:]

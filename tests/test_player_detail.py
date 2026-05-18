@@ -22,6 +22,7 @@ from services.player_detail import (
     build_split_windows,
     classify_metric,
     classify_pitcher_tier,
+    compute_hr_due_indicator,
     compute_pitcher_rating,
     compute_player_grade,
     fetch_batter_game_log,
@@ -33,6 +34,17 @@ from services.player_detail import (
     split_label_to_key,
     team_logo_url,
 )
+
+
+def _make_game(date_str, *, ab=4, h=1, hr=0, k=1, doubles=0, triples=0,
+               opp="LAD", is_home=False):
+    return {
+        "date": date_str, "opponent": opp, "is_home": is_home, "result": "",
+        "ab": ab, "h": h, "hr": hr, "rbi": hr, "bb": 0, "k": k,
+        "pa": ab, "tb": h + doubles + 2 * triples + 3 * hr,
+        "doubles": doubles, "triples": triples, "avg": None, "sb": 0,
+        "sf": 0, "hbp": 0,
+    }
 
 
 class TestHeadshotUrl(unittest.TestCase):
@@ -631,6 +643,164 @@ class TestComputePlayerGrade(unittest.TestCase):
         self.assertTrue(out["available"])
         # Only ISO contributed; should land in the middle bands, not crash.
         self.assertIn(out["grade"], {"A", "B", "C", "D"})
+
+
+class TestComputeHrDueIndicator(unittest.TestCase):
+    """Six-criterion HR Due composite. Each criterion can resolve as hit /
+    miss / missing; the score denominator stays at 6 either way."""
+
+    def test_no_inputs_returns_all_missing(self):
+        out = compute_hr_due_indicator()
+        self.assertEqual(out["score"], 0)
+        self.assertEqual(out["total"], 6)
+        self.assertEqual(len(out["criteria"]), 6)
+        for c in out["criteria"]:
+            self.assertEqual(c["state"], "missing")
+            self.assertEqual(c["detail"], "Data unavailable")
+
+    def test_recent_barrel_hit_from_recent_hr(self):
+        # A HR in the last 3 games is treated as a barrel by the proxy.
+        log = [
+            _make_game("2026-05-10"),
+            _make_game("2026-05-12"),
+            _make_game("2026-05-15", hr=1),
+        ]
+        out = compute_hr_due_indicator(game_log=log)
+        crit = next(c for c in out["criteria"] if c["key"] == "recent_barrel")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("1 barrel", crit["detail"])
+
+    def test_recent_barrel_miss_with_no_xbh(self):
+        log = [
+            _make_game("2026-05-10"),
+            _make_game("2026-05-12"),
+            _make_game("2026-05-15"),
+        ]
+        out = compute_hr_due_indicator(game_log=log)
+        crit = next(c for c in out["criteria"] if c["key"] == "recent_barrel")
+        self.assertEqual(crit["state"], "miss")
+
+    def test_season_barrel_elite_hit_above_threshold(self):
+        out = compute_hr_due_indicator(season_barrel_pct=14.8)
+        crit = next(c for c in out["criteria"] if c["key"] == "season_barrel")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("14.8%", crit["detail"])
+        self.assertIn("MLB median 7.0%", crit["detail"])
+
+    def test_season_barrel_miss_below_threshold(self):
+        out = compute_hr_due_indicator(season_barrel_pct=6.0)
+        crit = next(c for c in out["criteria"] if c["key"] == "season_barrel")
+        self.assertEqual(crit["state"], "miss")
+
+    def test_season_barrel_missing_when_none(self):
+        out = compute_hr_due_indicator(season_barrel_pct=None)
+        crit = next(c for c in out["criteria"] if c["key"] == "season_barrel")
+        self.assertEqual(crit["state"], "missing")
+
+    def test_drought_z_hit_when_above_median_gap(self):
+        # Construct a log with HRs at predictable gaps and a long current
+        # drought so Z is comfortably above 0.5.
+        log = []
+        # Two HR-then-quiet sequences set median gap ~ ab*5 each.
+        for i in range(5):
+            log.append(_make_game(f"2026-04-{10+i:02d}", ab=4, k=1))
+        log.append(_make_game("2026-04-15", ab=4, k=0, hr=1))
+        for i in range(5):
+            log.append(_make_game(f"2026-04-{16+i:02d}", ab=4, k=1))
+        log.append(_make_game("2026-04-21", ab=4, k=0, hr=1))
+        # Long current drought (post last HR).
+        for i in range(20):
+            log.append(_make_game(f"2026-04-{22+i:02d}", ab=4, k=0))
+        out = compute_hr_due_indicator(game_log=log)
+        crit = next(c for c in out["criteria"] if c["key"] == "drought_z")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("BIPs since HR", crit["detail"])
+        self.assertIn("Z:", crit["detail"])
+
+    def test_drought_missing_when_no_hr_in_log(self):
+        log = [_make_game("2026-05-01") for _ in range(5)]
+        out = compute_hr_due_indicator(game_log=log)
+        crit = next(c for c in out["criteria"] if c["key"] == "drought_z")
+        self.assertEqual(crit["state"], "missing")
+
+    def test_la_window_hit_in_range(self):
+        out = compute_hr_due_indicator(season_la=20.9, recent_la=19.8)
+        crit = next(c for c in out["criteria"] if c["key"] == "la_window")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("19.8°", crit["detail"])
+        self.assertIn("20.9°", crit["detail"])
+
+    def test_la_window_miss_outside_range(self):
+        out = compute_hr_due_indicator(season_la=8.0)
+        crit = next(c for c in out["criteria"] if c["key"] == "la_window")
+        self.assertEqual(crit["state"], "miss")
+
+    def test_la_window_missing_when_none(self):
+        out = compute_hr_due_indicator()
+        crit = next(c for c in out["criteria"] if c["key"] == "la_window")
+        self.assertEqual(crit["state"], "missing")
+
+    def test_pitcher_hr9_hit_above_league(self):
+        out = compute_hr_due_indicator(opp_pitcher_row={"HR/9": 1.69})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_hr9")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("1.69", crit["detail"])
+        self.assertIn("MLB avg 1.30", crit["detail"])
+
+    def test_pitcher_hr9_miss_below_league(self):
+        out = compute_hr_due_indicator(opp_pitcher_row={"HR/9": 0.80})
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_hr9")
+        self.assertEqual(crit["state"], "miss")
+
+    def test_pitcher_hr9_derived_from_hr_and_ip(self):
+        # HR/9 not present but HR + IP are — helper must derive it.
+        out = compute_hr_due_indicator(
+            opp_pitcher_row={"HR": 20, "IP": 100.0},  # 1.80 HR/9
+        )
+        crit = next(c for c in out["criteria"] if c["key"] == "pitcher_hr9")
+        self.assertEqual(crit["state"], "hit")
+
+    def test_park_factor_hit_above_neutral(self):
+        out = compute_hr_due_indicator(park_factor=131)
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("+31%", crit["detail"])
+
+    def test_park_factor_miss_at_or_below_neutral(self):
+        out = compute_hr_due_indicator(park_factor=95)
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertEqual(crit["state"], "miss")
+
+    def test_label_due_when_score_high(self):
+        # Hit every criterion. HR in last 3 games + elite barrel + drought
+        # + LA window + bad pitcher + good park.
+        log = []
+        # gap 0 (multi-hr) + gap establishing median (5)
+        log.append(_make_game("2026-04-01", hr=1))
+        for i in range(5):
+            log.append(_make_game(f"2026-04-{2+i:02d}", ab=4, k=1))
+        log.append(_make_game("2026-04-07", hr=1))
+        for i in range(20):
+            log.append(_make_game(f"2026-04-{8+i:02d}", ab=4, k=0))
+        # Then a recent HR to satisfy recent_barrel and a 30-game drought.
+        log.append(_make_game("2026-05-01", hr=1))
+        for i in range(25):
+            log.append(_make_game(f"2026-05-{2+i:02d}", ab=4, k=0))
+        # Note: the most recent HR is at 2026-05-01 but the drought runs ~100 BIPs.
+        out = compute_hr_due_indicator(
+            game_log=log,
+            season_barrel_pct=14.8,
+            season_la=20.9,
+            opp_pitcher_row={"HR/9": 1.69},
+            park_factor=131,
+        )
+        self.assertGreaterEqual(out["score"], 5)
+        self.assertIn(out["label"], {"Due \U0001f525", "Warm"})
+
+    def test_score_is_count_of_hits(self):
+        out = compute_hr_due_indicator(season_barrel_pct=14.8, park_factor=131)
+        self.assertEqual(out["score"], 2)
+        self.assertEqual(out["total"], 6)
 
 
 if __name__ == "__main__":

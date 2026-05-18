@@ -895,15 +895,62 @@ class TestComputeHrDueIndicator(unittest.TestCase):
         self.assertNotIn("HR/9", crit["detail"])
 
     def test_park_factor_hit_above_neutral(self):
-        out = compute_hr_due_indicator(park_factor=131)
+        # 1.00-neutral scale: >1.00 is HR-friendly.
+        out = compute_hr_due_indicator(park_factor=1.28, park_name="Great American Ball Park")
         crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
         self.assertEqual(crit["state"], "hit")
-        self.assertIn("+31%", crit["detail"])
+        self.assertIn("Great American Ball Park", crit["detail"])
+        self.assertIn("1.28", crit["detail"])
+        self.assertIn("neutral 1.00", crit["detail"])
 
-    def test_park_factor_miss_at_or_below_neutral(self):
-        out = compute_hr_due_indicator(park_factor=95)
+    def test_park_factor_neutral_is_miss(self):
+        # Exactly 1.00 is neutral; only strictly >1.00 counts as a hit.
+        out = compute_hr_due_indicator(park_factor=1.00, park_name="Target Field")
         crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
         self.assertEqual(crit["state"], "miss")
+        self.assertIn("Target Field", crit["detail"])
+        self.assertIn("1.00", crit["detail"])
+
+    def test_park_factor_pitcher_friendly_below_neutral(self):
+        out = compute_hr_due_indicator(park_factor=0.92, park_name="T-Mobile Park")
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertEqual(crit["state"], "miss")
+        self.assertIn("T-Mobile Park", crit["detail"])
+        self.assertIn("0.92", crit["detail"])
+
+    def test_park_factor_legacy_100_scale_autoconverts(self):
+        # Older callers may still pass a 100-based value; the helper should
+        # treat anything > 5 as 100-scale and convert.
+        out = compute_hr_due_indicator(park_factor=131, park_name="Coors Field")
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("Coors Field", crit["detail"])
+        self.assertIn("1.31", crit["detail"])
+
+    def test_park_factor_team_mapping_provides_name_and_factor(self):
+        # Only home_team passed: helper looks up both venue name and factor.
+        out = compute_hr_due_indicator(home_team="CIN")
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertEqual(crit["state"], "hit")
+        self.assertIn("Great American Ball Park", crit["detail"])
+
+    def test_park_factor_team_alias_mapping(self):
+        # OAK should alias to the Athletics' current venue (ATH).
+        out = compute_hr_due_indicator(home_team="OAK")
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertIn("Sutter Health Park", crit["detail"])
+        self.assertIn("neutral 1.00", crit["detail"])
+
+    def test_park_factor_unknown_team_marks_missing(self):
+        out = compute_hr_due_indicator(home_team="ZZZ")
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertEqual(crit["state"], "missing")
+        self.assertIn("Data unavailable", crit["detail"])
+
+    def test_park_factor_no_inputs_marks_missing(self):
+        out = compute_hr_due_indicator()
+        crit = next(c for c in out["criteria"] if c["key"] == "park_hr")
+        self.assertEqual(crit["state"], "missing")
 
     def test_label_due_when_score_high(self):
         # Hit every criterion. HR in last 3 games + elite barrel + drought

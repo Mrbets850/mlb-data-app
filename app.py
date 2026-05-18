@@ -4651,9 +4651,13 @@ _PLAYER_DETAIL_CSS = """
   -webkit-overflow-scrolling: touch; }
 .pdc-chip { flex: 0 0 auto; min-width: 64px; background:#0b1220; border:1px solid #1e293b;
   border-radius: 12px; padding: 8px 10px; text-align:center; }
-.pdc-chip .lab { font-size:.58rem; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.06em; }
-.pdc-chip .val { font-size:.92rem; font-weight:900; color:#e2e8f0; margin-top: 2px; }
-.pdc-chip.is-active { background: rgba(56,189,248,.15); border-color: #38bdf8; }
+/* L5/L10/L20/Season labels: brighter sky-blue so the window label is
+   readable on the dark chip — the prior #64748b ink was nearly invisible. */
+.pdc-chip .lab { font-size:.66rem; font-weight:900; color:#93c5fd;
+  text-transform:uppercase; letter-spacing:.06em; }
+.pdc-chip .val { font-size:.98rem; font-weight:900; color:#f8fafc; margin-top: 3px; }
+.pdc-chip.is-active { background: rgba(56,189,248,.18); border-color: #38bdf8; }
+.pdc-chip.is-active .lab { color:#bae6fd; }
 .pdc-chip.is-active .val { color:#7dd3fc; }
 .pdc-recent { display:flex; flex-direction:column; gap:8px; }
 .pdc-recent-pills { display:flex; gap:8px; }
@@ -4680,8 +4684,9 @@ _PLAYER_DETAIL_CSS = """
 .pdc-recap { display:grid; grid-template-columns: repeat(4, 1fr); gap:6px; }
 .pdc-recap-tile { background:#0b1220; border:1px solid #1e293b; border-radius: 10px;
   padding: 6px 4px; text-align:center; }
-.pdc-recap-tile .lab { font-size:.55rem; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.06em; }
-.pdc-recap-tile .val { font-size:.82rem; font-weight:900; color:#e2e8f0; margin-top:2px; }
+.pdc-recap-tile .lab { font-size:.62rem; font-weight:900; color:#93c5fd;
+  text-transform:uppercase; letter-spacing:.06em; }
+.pdc-recap-tile .val { font-size:.9rem; font-weight:900; color:#f8fafc; margin-top:2px; }
 .pdc-likely { padding: 4px 10px; border-radius: 999px; background: rgba(56,189,248,.15);
   color:#7dd3fc; font-weight: 800; font-size:.72rem; display:inline-block; margin-top:6px; }
 .pdc-likely-reason { color:#94a3b8; font-size:.66rem; font-weight:700; margin-top:4px; line-height:1.3; }
@@ -4995,24 +5000,31 @@ def _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date
     """Emit one button per row in the sorted board so the user can open the
     detail dialog by tapping a hitter. Buttons are spread across responsive
     columns so they map 1:1 to the cards above.
+
+    Each button now leads with the player's LIKELY prediction so the strip
+    visually replaces the small "Likely" pill the user was looking at on the
+    heat-map row. The LIKELY column in the heat-map itself is preserved.
     """
     if sorted_df is None or sorted_df.empty:
         return
 
-    # Prominent, mobile-first "View {Player} Card" tap targets.
-    # Sky-blue gradient + 48px min-height = clearly clickable on phones.
+    # Prominent, mobile-first "LIKELY · View {Player} Card" tap targets.
+    # Sky-blue gradient + 56px min-height = clearly clickable on phones.
+    # On the dark premium background, the gold inner LIKELY chip makes the
+    # prediction unmistakable before you tap.
     st.markdown(
         '<div class="pdc-trigger-css">'
         '<style>'
         '.pdc-trigger-css + div div[data-testid="stButton"] button { '
-        '  width: 100%; min-height: 52px; '
+        '  width: 100%; min-height: 56px; '
         '  background: linear-gradient(180deg, #0ea5e9 0%, #0369a1 100%); '
         '  color: #f8fafc; border: 1px solid #38bdf8; '
         '  border-radius: 14px; padding: 10px 12px; '
-        '  font-weight: 900; font-size: .82rem; line-height: 1.15; '
+        '  font-weight: 900; font-size: .82rem; line-height: 1.2; '
         '  letter-spacing: .02em; text-align: center; '
         '  box-shadow: 0 4px 14px rgba(14,165,233,.35), inset 0 1px 0 rgba(255,255,255,.18); '
         '  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease; '
+        '  white-space: pre-line; '
         '} '
         '.pdc-trigger-css + div div[data-testid="stButton"] button:hover { '
         '  filter: brightness(1.08); '
@@ -5021,18 +5033,20 @@ def _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date
         '.pdc-trigger-css + div div[data-testid="stButton"] button:active { '
         '  transform: translateY(0); filter: brightness(.95); }'
         '.pdc-trigger-css + div div[data-testid="stButton"] button p { '
-        '  margin: 0 !important; color: inherit !important; font-weight: 900 !important; }'
+        '  margin: 0 !important; color: inherit !important; font-weight: 900 !important; '
+        '  white-space: pre-line !important; }'
         '@media (max-width: 640px) { '
         '  .pdc-trigger-css + div div[data-testid="stButton"] button { '
-        '    min-height: 56px; font-size: .88rem; padding: 12px 10px; } }'
+        '    min-height: 64px; font-size: .9rem; padding: 12px 10px; } }'
         '</style></div>',
         unsafe_allow_html=True,
     )
 
     st.markdown(
-        '<div style="font-size:.72rem; font-weight:800; color:#7dd3fc; '
-        'text-transform:uppercase; letter-spacing:.08em; margin: 6px 0 4px 2px;">'
-        '👆 Tap a player to open their full detail card</div>',
+        '<div style="font-size:.78rem; font-weight:900; color:#facc15; '
+        'text-transform:uppercase; letter-spacing:.08em; margin: 4px 0 6px 2px; '
+        'text-shadow: 0 1px 0 rgba(0,0,0,.4);">'
+        '⭐ LIKELY Predictions &mdash; Tap a player to open their full card</div>',
         unsafe_allow_html=True,
     )
 
@@ -5053,8 +5067,16 @@ def _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date
             name = row.get("Hitter", "")
             spot = row.get("Spot", "")
             spot_prefix = f"#{int(spot)} " if pd.notna(spot) and spot != 99 else ""
-            # Two-line CTA so the player's name is unmistakable.
-            label = f"{spot_prefix}{name}\n👉 View Player Card"
+            likely_lbl = row.get("Likely", "")
+            if likely_lbl is None or (isinstance(likely_lbl, float) and pd.isna(likely_lbl)):
+                likely_lbl = ""
+            likely_lbl = str(likely_lbl).strip()
+            # Three-line CTA: LIKELY prediction first (this is the strip the
+            # user wants emphasized), then the player, then the action.
+            if likely_lbl and likely_lbl != "—":
+                label = f"LIKELY: {likely_lbl}\n{spot_prefix}{name}\n👉 View Player Card"
+            else:
+                label = f"{spot_prefix}{name}\n👉 View Player Card"
             btn_key = f"pdc_open_{key_prefix}_{idx}_{pid or name}"
             if col.button(label, key=btn_key, use_container_width=True):
                 payload_key = f"_pdc_payload_{key_prefix}_{idx}"
@@ -5103,9 +5125,13 @@ def render_matchup_board_with_sort(board_df, key_prefix, label, *,
         )
     descending = direction.startswith("High")
     sorted_df = sort_matchup_board(board_df, sort_col, descending)
-    st.markdown(render_matchup_heatmap_html(sorted_df), unsafe_allow_html=True)
+    # Render the LIKELY-prediction button strip ABOVE the heat-map so the
+    # interactive player-card CTA sits in the same vertical band as the
+    # "LIKELY" pill the user sees on each row — this is what makes the
+    # heat map feel tappable instead of read-only.
     if pitchers_df is not None:
         _render_player_detail_buttons(sorted_df, key_prefix, pitchers_df, slate_date)
+    st.markdown(render_matchup_heatmap_html(sorted_df), unsafe_allow_html=True)
 
 # ===========================================================================
 # Slate pitchers (Baseball Savant CSV joined by player_id +
@@ -8424,9 +8450,14 @@ st.markdown(
     "  display:inline-flex; align-items:center; justify-content:center; }"
     ".apps-gen-header { display:flex; align-items:baseline; justify-content:space-between; "
     "  margin: 6px 4px 4px; padding: 0 2px; gap: 10px; flex-wrap:wrap; }"
-    ".apps-gen-title { font-weight:900; font-size:1.18rem; color:#3b1f6b; "
-    "  letter-spacing:.01em; text-shadow:0 1px 0 rgba(255,255,255,.4); }"
-    ".apps-gen-sub { font-size:.8rem; color:#475569; font-weight:600; }"
+    # Title sits directly on the dark midnight app background (PR #48), so
+    # the old dark-purple ink was invisible. Bold gold + soft glow keeps it
+    # legible without competing with the gold pill strip below.
+    ".apps-gen-title { font-weight:900; font-size:1.18rem; color:#facc15; "
+    "  letter-spacing:.01em; text-shadow:0 1px 0 rgba(0,0,0,.55), "
+    "    0 0 10px rgba(250,204,21,.25); }"
+    ".apps-gen-sub { font-size:.8rem; color:#e2e8f0; font-weight:700; "
+    "  text-shadow: 0 1px 0 rgba(0,0,0,.5); }"
     ".top-tab-pill:hover { border-color:#7c3aed; transform:translateY(-1px); "
     "  box-shadow:0 4px 10px rgba(124,58,237,.18); color:#0f172a; "
     "  text-decoration:none; }"

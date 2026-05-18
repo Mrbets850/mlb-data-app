@@ -37,6 +37,27 @@ import requests
 
 log = logging.getLogger(__name__)
 
+# Optional dependency: ``MLB-StatsAPI`` (https://github.com/toddrob99/MLB-StatsAPI).
+# This is the free Python wrapper around the same statsapi.mlb.com endpoints
+# we already call directly — importing it lets us delegate URL construction,
+# query-string assembly, and minor schema quirks to a maintained library. We
+# import lazily and guard against ImportError so the service degrades to the
+# direct-HTTP path if the package isn't installed in a given environment
+# (Streamlit Cloud builds occasionally exclude optional deps).
+try:  # pragma: no cover — import wiring only
+    import statsapi as _statsapi  # type: ignore
+except Exception:  # pragma: no cover
+    _statsapi = None
+
+
+def statsapi_available() -> bool:
+    """True when the ``statsapi`` wrapper is importable.
+
+    Exposed for tests and for the app's diagnostics panel — UI code can show
+    which path the lineup service is using without poking module internals.
+    """
+    return _statsapi is not None
+
 # --- Public types -----------------------------------------------------------
 
 LINEUP_STATUS_CONFIRMED = "confirmed"   # MLB has published the batting order
@@ -159,23 +180,73 @@ class MLBStatsAPIProvider(LineupProvider):
     BOXSCORE_URL = "https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore"
 
     def __init__(self, fetcher: Fetcher | None = None,
-                 user_agent: str = "themlbedge.com/lineup-service") -> None:
+                 user_agent: str = "themlbedge.com/lineup-service",
+                 *,
+                 use_statsapi_wrapper: bool | None = None,
+                 statsapi_module: Any | None = None) -> None:
+        # Custom fetcher always wins — tests inject one to drive parsers
+        # offline. When the caller doesn't supply one, we prefer the free
+        # ``statsapi`` Python wrapper if it's importable (or explicitly
+        # injected via ``statsapi_module``), and fall back to plain
+        # ``requests.get`` otherwise. The wrapper hits the same public
+        # statsapi.mlb.com endpoints so behavior is unchanged — we just
+        # reuse a maintained query-string + URL builder.
+        self._injected_fetcher = fetcher is not None
         self._fetch = fetcher or _default_http_fetcher
         self._headers = {"User-Agent": user_agent, "Accept": "application/json"}
+        self._statsapi = statsapi_module if statsapi_module is not None else _statsapi
+        if use_statsapi_wrapper is None:
+            self._use_wrapper = (self._statsapi is not None and not self._injected_fetcher)
+        else:
+            # Honour explicit opt-in/out, but never wrap an injected fetcher
+            # (that would defeat the test-only HTTP shim).
+            self._use_wrapper = bool(use_statsapi_wrapper) and not self._injected_fetcher
+
+    @property
+    def using_wrapper(self) -> bool:
+        """Whether this provider is delegating to the ``statsapi`` package."""
+        return self._use_wrapper and self._statsapi is not None
+
+    def _wrapper_get(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        """Call ``statsapi.get(endpoint, params)`` defensively.
+
+        Returns ``None`` if the wrapper isn't usable or the call fails so
+        the caller can fall through to direct HTTP. Errors are logged at
+        debug — they're expected in offline test environments and on
+        Streamlit Cloud cold starts where the package may not be present.
+        """
+        sapi = self._statsapi
+        if not (self._use_wrapper and sapi is not None):
+            return None
+        try:
+            return sapi.get(endpoint, params) or {}
+        except Exception as exc:
+            log.debug("statsapi.get(%s) failed: %s", endpoint, exc)
+            return None
 
     # ---- Public methods ----
 
     def fetch_daily(self, date_iso: str) -> list[GameLineups] | None:
-        try:
-            sched = self._fetch(
-                self.SCHEDULE_URL,
-                {"sportId": 1, "date": date_iso,
-                 "hydrate": "probablePitcher,team,venue,lineups"},
-                self._headers,
-            )
-        except Exception as exc:
-            log.warning("MLB schedule fetch failed for %s: %s", date_iso, exc)
-            return None
+        # Prefer the ``statsapi`` wrapper when present — same endpoint, but
+        # we lean on the package to keep its query-string in sync if MLB
+        # ever changes parameter names. Fall through to direct HTTP on any
+        # error so a flaky wrapper install never blocks the slate.
+        sched: dict[str, Any] | None = self._wrapper_get(
+            "schedule",
+            {"sportId": 1, "date": date_iso,
+             "hydrate": "probablePitcher,team,venue,lineups"},
+        )
+        if sched is None:
+            try:
+                sched = self._fetch(
+                    self.SCHEDULE_URL,
+                    {"sportId": 1, "date": date_iso,
+                     "hydrate": "probablePitcher,team,venue,lineups"},
+                    self._headers,
+                )
+            except Exception as exc:
+                log.warning("MLB schedule fetch failed for %s: %s", date_iso, exc)
+                return None
         out: list[GameLineups] = []
         for d in sched.get("dates", []) or []:
             for game in d.get("games", []) or []:
@@ -202,14 +273,16 @@ class MLBStatsAPIProvider(LineupProvider):
     def fetch_game(self, game_pk: int,
                    _skeleton: GameLineups | None = None) -> GameLineups | None:
         # Live feed is the richest source; boxscore is a smaller fallback.
-        try:
-            feed = self._fetch(
-                self.LIVE_FEED_URL.format(game_pk=game_pk),
-                None, self._headers,
-            )
-        except Exception as exc:
-            log.debug("Live feed fetch failed for %s: %s", game_pk, exc)
-            feed = None
+        feed = self._wrapper_get("game", {"gamePk": int(game_pk)})
+        if not feed:
+            try:
+                feed = self._fetch(
+                    self.LIVE_FEED_URL.format(game_pk=game_pk),
+                    None, self._headers,
+                )
+            except Exception as exc:
+                log.debug("Live feed fetch failed for %s: %s", game_pk, exc)
+                feed = None
 
         if feed:
             parsed = self._parse_live_feed(feed, fallback_skel=_skeleton)
@@ -217,14 +290,16 @@ class MLBStatsAPIProvider(LineupProvider):
                                        or parsed.lineup_status != LINEUP_STATUS_NOT_POSTED):
                 return parsed
 
-        try:
-            box = self._fetch(
-                self.BOXSCORE_URL.format(game_pk=game_pk),
-                None, self._headers,
-            )
-        except Exception as exc:
-            log.debug("Boxscore fetch failed for %s: %s", game_pk, exc)
-            box = None
+        box = self._wrapper_get("game_boxscore", {"gamePk": int(game_pk)})
+        if not box:
+            try:
+                box = self._fetch(
+                    self.BOXSCORE_URL.format(game_pk=game_pk),
+                    None, self._headers,
+                )
+            except Exception as exc:
+                log.debug("Boxscore fetch failed for %s: %s", game_pk, exc)
+                box = None
 
         if box:
             return self._parse_boxscore_only(box, _skeleton)

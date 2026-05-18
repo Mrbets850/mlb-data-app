@@ -4543,7 +4543,25 @@ from services.player_detail import (
     build_bvp_rows as _pd_build_bvp_rows,
     format_game_log_rows as _pd_format_game_log_rows,
     headshot_url as _pd_headshot_url,
+    heatmap_style_for as _pd_heatmap_style_for,
+    classify_pitcher_tier as _pd_classify_pitcher_tier,
 )
+
+
+def _pd_hm_cell(metric: str, value, formatted: str) -> str:
+    """Wrap one metric value in a heat-map-colored ``<span>``.
+
+    ``metric`` selects the threshold band (see ``services.player_detail``).
+    ``formatted`` is the already-stringified display value ("—", "27.5%", etc.).
+    Neutral cells render without color so empty/unknown metrics stay readable.
+    """
+    style = _pd_heatmap_style_for(metric, value)
+    if not style["css_class"]:
+        return formatted
+    return (
+        f'<span class="pdc-hm {style["css_class"]}">'
+        f'{formatted}</span>'
+    )
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -4853,6 +4871,48 @@ div[role="dialog"] button[aria-label="Close"] {
 .pdc-likely { padding: 4px 10px; border-radius: 999px; background: rgba(56,189,248,.22);
   color:#bae6fd; font-weight: 800; font-size:.74rem; display:inline-block; margin-top:6px; }
 .pdc-likely-reason { color:#cbd5e1; font-size:.7rem; font-weight:700; margin-top:4px; line-height:1.35; }
+
+/* ---------------------------------------------------------------
+   Heat-map metric bands. Applied as inline pills around numeric
+   values inside the modal so each cell visually communicates
+   strength (green) / neutral (yellow) / weakness (red) at a glance.
+   Padding and border-radius are kept tight so the colored chip
+   doesn't break the table grid; text colors are chosen for
+   luminance contrast against each background.
+   --------------------------------------------------------------- */
+.pdc-hm {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 900;
+  font-size: inherit;
+  line-height: 1.2;
+  letter-spacing: 0;
+  min-width: 36px;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
+}
+.pdc-hm-good { background:#15803d !important; color:#ecfdf5 !important; }
+.pdc-hm-okay { background:#ca8a04 !important; color:#0f172a !important; }
+.pdc-hm-bad  { background:#b91c1c !important; color:#fef2f2 !important; }
+/* Recap tiles host the .pdc-hm pill as their value — give the chip a
+   slightly larger footprint so the tile reads as one colored block. */
+.pdc-recap-tile .pdc-hm { padding: 4px 10px; min-width: 50px; }
+/* Chip values (Splits) — recolor the whole chip body when banded. */
+.pdc-chip.pdc-hm-good { background:#15803d; border-color:#22c55e; }
+.pdc-chip.pdc-hm-good .lab { color:#dcfce7; }
+.pdc-chip.pdc-hm-good .val { color:#ecfdf5; }
+.pdc-chip.pdc-hm-okay { background:#ca8a04; border-color:#facc15; }
+.pdc-chip.pdc-hm-okay .lab { color:#1f2937; }
+.pdc-chip.pdc-hm-okay .val { color:#0f172a; }
+.pdc-chip.pdc-hm-bad  { background:#b91c1c; border-color:#ef4444; }
+.pdc-chip.pdc-hm-bad  .lab { color:#fee2e2; }
+.pdc-chip.pdc-hm-bad  .val { color:#fef2f2; }
+/* Pitcher rating tile coloring — already handled by tier classes; we
+   add complementary text contrast so the "tier" caption stays legible. */
+.pdc-rating-score.pdc-hm-good { background:#14532d; border-color:#22c55e; }
+.pdc-rating-score.pdc-hm-okay { background:#78350f; border-color:#facc15; }
+.pdc-rating-score.pdc-hm-bad  { background:#7f1d1d; border-color:#ef4444; }
 </style>
 """
 
@@ -4952,38 +5012,47 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     )
 
     # Heat-map recap (tile snapshot — same numbers the tile showed).
-    def _r(label, val, fmt="{:.3f}"):
+    # ``metric`` is the internal-name lookup used by the heat-map classifier
+    # so the green/yellow/red banding matches the rest of the modal and the
+    # original heat-map board.
+    def _r(label, val, fmt="{:.3f}", *, metric: str | None = None):
         if val is None or (isinstance(val, float) and pd.isna(val)):
             return f'<div class="pdc-recap-tile"><div class="lab">{label}</div><div class="val">—</div></div>'
         try:
             v_str = fmt.format(float(val))
         except Exception:
             v_str = str(val)
-        return f'<div class="pdc-recap-tile"><div class="lab">{label}</div><div class="val">{v_str}</div></div>'
+        val_html = _pd_hm_cell(metric, val, v_str) if metric else v_str
+        return f'<div class="pdc-recap-tile"><div class="lab">{label}</div><div class="val">{val_html}</div></div>'
 
     recap_html = (
         '<div class="pdc-section-title">Slate Snapshot</div>'
         '<div class="pdc-card">'
         '<div class="pdc-recap">'
-        + _r("MTCH", tile.get("Matchup"), "{:.1f}")
-        + _r("OPS", tile.get("OPS"))
-        + _r("ISO", tile.get("ISO"))
-        + _r("BRL%", tile.get("Brl/BIP%"), "{:.1f}%")
-        + _r("HR/FB", tile.get("HR/FB%"), "{:.1f}%")
-        + _r("xwOBA", tile.get("xwOBA"))
+        + _r("MTCH", tile.get("Matchup"), "{:.1f}", metric="Matchup")
+        + _r("OPS", tile.get("OPS"), metric="OPS")
+        + _r("ISO", tile.get("ISO"), metric="ISO")
+        + _r("BRL%", tile.get("Brl/BIP%"), "{:.1f}%", metric="Brl/BIP%")
+        + _r("HR/FB", tile.get("HR/FB%"), "{:.1f}%", metric="HR/FB%")
+        + _r("xwOBA", tile.get("xwOBA"), metric="xwOBA")
         + '</div>'
         + (f'<div class="pdc-meta" style="margin-top:8px;">📈 {tile.get("Form","")}</div>' if tile.get("Form") else "")
         + (f'<div class="pdc-meta">💣 {tile.get("LastHR","")}</div>' if tile.get("LastHR") else "")
         + '</div>'
     )
 
-    # Pitcher rating.
+    # Pitcher rating. The rating is *vulnerability for the pitcher*, so a
+    # "Juicy" tier is GOOD for the hitter — we map tier->band accordingly
+    # via classify_pitcher_tier so the colored ring matches the rest of
+    # the modal's heat-map semantics.
     if rating.get("available"):
         bullets_html = "".join(f"<li>{b}</li>" for b in rating.get("bullets", []))
+        pitcher_band = _pd_classify_pitcher_tier(rating.get("tier"))
+        score_cls = f"pdc-hm-{pitcher_band}" if pitcher_band != "neutral" else ""
         rating_html = (
             '<div class="pdc-section-title">Opposing Pitcher Ratings</div>'
             f'<div class="pdc-card pdc-rating tier-{rating.get("tier","Average").replace(" ","-")}">'
-            f'<div class="pdc-rating-score">'
+            f'<div class="pdc-rating-score {score_cls}">'
             f'<div class="num">{rating["score"]}</div>'
             f'<div class="tier">{rating["tier"]}</div>'
             f'</div>'
@@ -5011,14 +5080,18 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     bvp_body = []
     for row in bvp_rows:
         proxy_tag = '<span class="proxy">proxy</span>' if not row.get("actual") else ""
+        h_pct  = row.get("H%")
+        slg    = row.get("SLG")
+        hr_pct = row.get("HR%")
+        bb_pct = row.get("BB%")
         bvp_body.append(
             f'<tr>'
             f'<td class="row-label">{row["label"]}{proxy_tag}</td>'
             f'<td>{_bvp_cell(row.get("PA"),"pa")}</td>'
-            f'<td>{_bvp_cell(row.get("H%"),"pct")}</td>'
-            f'<td>{_bvp_cell(row.get("SLG"),"slg")}</td>'
-            f'<td>{_bvp_cell(row.get("HR%"),"pct")}</td>'
-            f'<td>{_bvp_cell(row.get("BB%"),"pct")}</td>'
+            f'<td>{_pd_hm_cell("H%",  h_pct,  _bvp_cell(h_pct, "pct"))}</td>'
+            f'<td>{_pd_hm_cell("SLG", slg,    _bvp_cell(slg,   "slg"))}</td>'
+            f'<td>{_pd_hm_cell("HR%", hr_pct, _bvp_cell(hr_pct, "pct"))}</td>'
+            f'<td>{_pd_hm_cell("BB%", bb_pct, _bvp_cell(bb_pct, "pct"))}</td>'
             f'</tr>'
         )
     bvp_html = (
@@ -5046,12 +5119,15 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     for label, agg in chip_specs:
         is_active = "is-active" if label == active_chip else ""
         val = "—"
+        avg_v = None
         if agg and agg.get("PA"):
             if agg.get("AVG") is not None:
-                s = f"{agg['AVG']:.3f}"
+                avg_v = agg["AVG"]
+                s = f"{avg_v:.3f}"
                 val = s[1:] if s.startswith("0.") else s
+        band_cls = _pd_heatmap_style_for("AVG", avg_v)["css_class"]
         chip_html.append(
-            f'<div class="pdc-chip {is_active}">'
+            f'<div class="pdc-chip {is_active} {band_cls}">'
             f'<div class="lab">{label}</div>'
             f'<div class="val">{val}</div>'
             f'</div>'

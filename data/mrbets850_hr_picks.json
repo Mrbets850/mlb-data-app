@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-18T10:41:56Z",
+  "last_updated": "2026-05-18T10:42:13Z",
   "picks": [
     {
       "rank": 1,
@@ -184,6 +184,14 @@
       "player_id": 660710,
       "note": "",
       "confidence": "💸 Long Shot"
+    },
+    {
+      "rank": 24,
+      "name": "Munetaka Murakami",
+      "team": "",
+      "player_id": 808959,
+      "note": "",
+      "confidence": "💎 Strong"
     }
   ]
 }

@@ -448,6 +448,8 @@ def apply_live_pitcher_to_game_row(row: Mapping[str, Any] | Any,
     # can render a freshness chip uniformly.
     out.setdefault("away_pitcher_source", "probable")
     out.setdefault("home_pitcher_source", "probable")
+    out.setdefault("away_pitcher_changed", False)
+    out.setdefault("home_pitcher_changed", False)
 
     if state is None or not state.is_live:
         return out
@@ -458,12 +460,18 @@ def apply_live_pitcher_to_game_row(row: Mapping[str, Any] | Any,
             # Game is live but the feed didn't return a current pitcher for
             # this side yet. Keep the probable so the card still renders.
             continue
+        # Preserve the original probable/starter values so the UI can render
+        # a "PITCHING CHANGE DETECTED" badge with the original starter's
+        # name even after we've overwritten the *_probable* fields below.
         probable_id = _safe_int(out.get(f"{side}_probable_id"))
+        probable_name = out.get(f"{side}_probable") or ""
+        out[f"{side}_original_probable"] = probable_name
+        out[f"{side}_original_probable_id"] = probable_id
         # Always override once we have a real current pitcher id — even if
         # it happens to equal the probable, this normalizes the source tag
         # and surfaces handedness from the live feed (more reliable than
         # the schedule hydrate, which sometimes omits it).
-        out[f"{side}_probable"] = live_p.name or out.get(f"{side}_probable", "")
+        out[f"{side}_probable"] = live_p.name or probable_name
         out[f"{side}_probable_id"] = live_p.player_id
         out[f"{side}_pitcher_source"] = (
             "live" if (probable_id != live_p.player_id) else "live-same"
@@ -471,11 +479,62 @@ def apply_live_pitcher_to_game_row(row: Mapping[str, Any] | Any,
         out[f"{side}_pitcher_hand"] = live_p.hand or ""
         out[f"{side}_pitcher_is_starter"] = bool(live_p.is_starter)
         out[f"{side}_pitcher_pitches"] = live_p.pitches_thrown
+        out[f"{side}_pitcher_changed"] = _is_pitcher_change(
+            probable_id, probable_name, live_p,
+        )
 
     out["_live_state_status"] = state.abstract_status
     out["_live_state_inning"] = state.inning
     out["_live_state_inning_half"] = state.inning_half
+    out["_live_pitcher_change_count"] = (
+        int(bool(out.get("away_pitcher_changed")))
+        + int(bool(out.get("home_pitcher_changed")))
+    )
     return out
+
+
+def _normalize_name(s: Any) -> str:
+    """Lowercase + collapse whitespace + strip punctuation for name compares.
+
+    Used as a fallback when one side of the compare lacks a stable id (e.g.
+    the schedule's probable_id is blank but a name was hydrated). Conservative
+    on purpose — when normalization is empty we report "unknown" so callers
+    don't trigger a false positive on missing data.
+    """
+    if not s:
+        return ""
+    out = []
+    for ch in str(s).lower():
+        if ch.isalnum() or ch.isspace():
+            out.append(ch)
+    return " ".join("".join(out).split())
+
+
+def _is_pitcher_change(probable_id: int | None,
+                       probable_name: str,
+                       live_p: "LivePitcher") -> bool:
+    """Return True iff the live pitcher demonstrably differs from the
+    pregame probable starter.
+
+    Decision rules, in order:
+      1. If both sides have a stable player id → compare ids only.
+      2. If exactly one side has an id → can't compare reliably; fall back
+         to normalized name compare ONLY if both names are present.
+      3. If neither id nor a usable name is available on the probable side
+         → return False (we have no original to compare against, so we
+         can't claim a change happened).
+
+    The bias is toward False on ambiguity: a missing badge is better than
+    a false alarm during the live-betting flow.
+    """
+    live_id = _safe_int(getattr(live_p, "player_id", None))
+    if probable_id and live_id:
+        return probable_id != live_id
+    pn = _normalize_name(probable_name)
+    ln = _normalize_name(getattr(live_p, "name", ""))
+    if pn and ln:
+        return pn != ln
+    return False
 
 
 def freshness_label(row: Mapping[str, Any], side: str) -> str:
@@ -483,12 +542,15 @@ def freshness_label(row: Mapping[str, Any], side: str) -> str:
     one side of ``row`` (after ``apply_live_pitcher_to_game_row``).
 
     Examples:
+      - "Live · pitching change"        — current pitcher differs from probable
       - "Live · current pitcher"        — game in progress, override active
       - "Live · starter still in"       — game live but starter hasn't been pulled
       - "Probable"                      — pregame
     """
     src = row.get(f"{side}_pitcher_source") or "probable"
     if src in ("live", "live-same"):
+        if row.get(f"{side}_pitcher_changed"):
+            return "Live · pitching change"
         starter = row.get(f"{side}_pitcher_is_starter")
         if starter is False:
             return "Live · current pitcher"

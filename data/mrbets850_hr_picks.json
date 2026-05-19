@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:16:32Z",
+  "last_updated": "2026-05-19T12:16:49Z",
   "picks": [
     {
       "rank": 1,
@@ -78,6 +78,14 @@
       "name": "Angel Martínez",
       "team": "",
       "player_id": 682657,
+      "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 11,
+      "name": "MJ Melendez",
+      "team": "",
+      "player_id": 669004,
       "note": "",
       "confidence": "💎 Strong"
     }

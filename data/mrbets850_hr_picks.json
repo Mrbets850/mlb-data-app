@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:16:49Z",
+  "last_updated": "2026-05-19T12:17:22Z",
   "picks": [
     {
       "rank": 1,
@@ -87,6 +87,14 @@
       "team": "",
       "player_id": 669004,
       "note": "",
+      "confidence": "💎 Strong"
+    },
+    {
+      "rank": 12,
+      "name": "Kyle Manzardo",
+      "team": "",
+      "player_id": 700932,
+      "note": "Back to back",
       "confidence": "💎 Strong"
     }
   ]

@@ -1,11 +1,19 @@
 {
-  "last_updated": "2026-05-19T12:13:10Z",
+  "last_updated": "2026-05-19T12:13:39Z",
   "picks": [
     {
       "rank": 1,
       "name": "Kyle Schwarber",
       "team": "",
       "player_id": 656941,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 2,
+      "name": "Pete Alonso",
+      "team": "",
+      "player_id": 624413,
       "note": "",
       "confidence": "🔥 Lock"
     }

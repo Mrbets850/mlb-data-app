@@ -1,4 +1,13 @@
 {
-  "last_updated": "2026-05-19T08:14:02Z",
-  "picks": []
+  "last_updated": "2026-05-19T12:13:10Z",
+  "picks": [
+    {
+      "rank": 1,
+      "name": "Kyle Schwarber",
+      "team": "",
+      "player_id": 656941,
+      "note": "",
+      "confidence": "🔥 Lock"
+    }
+  ]
 }

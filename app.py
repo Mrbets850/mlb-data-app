@@ -13,6 +13,11 @@ from services.slate_rollover import (
     default_schedule_fetcher as _slate_rollover_fetcher,
     now_utc as _slate_now_utc,
 )
+from services.live_game_state import (
+    get_live_game_state as _svc_get_live_game_state,
+    apply_live_pitcher_to_game_row as _svc_apply_live_pitcher,
+    freshness_label as _svc_pitcher_freshness_label,
+)
 import re
 import unicodedata
 import urllib.parse
@@ -1377,7 +1382,14 @@ def fmt_ops(v, dash="—"):
         return dash
 
 
-@st.cache_data(ttl=1800)
+# Schedule TTL is short (60s) for live-betting freshness — once a game is
+# live, downstream consumers route through ``apply_live_pitcher_overlay``
+# for the current pitcher, but the schedule itself can still change
+# (probable announcements, postponements, lineup hydrate). A 60s TTL keeps
+# the StatsAPI footprint negligible — one request per minute per active
+# user session — while ensuring no live data is cut off behind a stale
+# 30-minute cache.
+@st.cache_data(ttl=60)
 def get_schedule(selected_date):
     url = "https://statsapi.mlb.com/api/v1/schedule"
     params = {"sportId": 1, "date": selected_date.strftime("%Y-%m-%d"),
@@ -2149,7 +2161,10 @@ def get_hr_player_odds_map() -> dict:
                       detail=detail, max_age_min=30)
     return out
 
-@st.cache_data(ttl=120)
+# 60s TTL keeps lineups/substitutions current for live-betting consumers
+# without hammering the free MLB StatsAPI. Pregame and final games change
+# infrequently so 60s is still over-budget there — fine.
+@st.cache_data(ttl=60)
 def get_boxscore(game_pk):
     url = f"https://statsapi.mlb.com/api/v1/game/{game_pk}/boxscore"
     try:
@@ -7648,6 +7663,10 @@ def build_hr_sleepers_table(_schedule_df, _batters_df, _pitchers_df,
     recent form is unavailable."""
     rows = []
     for _, g in _schedule_df.iterrows():
+        # Live overlay so a slate-wide HR/RBI scoring pass sees the
+        # current pitcher once a game is in progress, not the pregame
+        # probable that's already been pulled.
+        g = apply_live_pitcher_overlay(g)
         try:
             cc = build_game_context(g)
         except Exception:
@@ -8245,6 +8264,7 @@ def build_targets_table(_schedule_df, _batters_df, _pitchers_df, mode="tb",
     never leaks across days or opponents."""
     rows = []
     for _, g in _schedule_df.iterrows():
+        g = apply_live_pitcher_overlay(g)
         try:
             cc = build_game_context(g)
         except Exception:
@@ -8987,6 +9007,105 @@ def render_game_header(game_row, ctx, weather):
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Live game state — current pitcher overlay
+# ---------------------------------------------------------------------------
+# Once a game flips from preview to live, the schedule's pregame
+# ``probablePitcher`` becomes stale the moment the starter is pulled. We
+# layer the live feed on top of every schedule_df row through this helper so
+# pitcher cards, matchup heat-maps, generators, and parlays all see the
+# *current* pitcher with no signature changes downstream.
+#
+# 60s TTL keeps the StatsAPI live feed footprint negligible (~one request
+# per active game per minute) while matching live-betting cadence. Pregame
+# and final games are also handled — the service uses a longer TTL for
+# those internally.
+@st.cache_data(ttl=60, show_spinner=False)
+def _live_state_snapshot(game_pk):
+    """Return a small dict snapshot of the live state for ``game_pk``.
+
+    Returning a dict (not the dataclass) keeps Streamlit's cache happy —
+    dataclasses with default_factory don't always hash cleanly across reruns
+    and we only need a handful of fields here. ``None`` when unavailable so
+    callers can short-circuit to their pregame fallback.
+    """
+    state = _svc_get_live_game_state(game_pk)
+    if state is None:
+        return None
+    def _p_to_dict(p):
+        if p is None:
+            return None
+        return {
+            "player_id": p.player_id,
+            "name": p.name,
+            "hand": p.hand,
+            "is_starter": p.is_starter,
+            "pitches_thrown": p.pitches_thrown,
+        }
+    return {
+        "game_pk": state.game_pk,
+        "abstract_status": state.abstract_status,
+        "detailed_status": state.detailed_status,
+        "inning": state.inning,
+        "inning_half": state.inning_half,
+        "venue": state.venue,
+        "away_pitcher": _p_to_dict(state.away_pitcher),
+        "home_pitcher": _p_to_dict(state.home_pitcher),
+    }
+
+
+def apply_live_pitcher_overlay(game_row):
+    """Apply current-pitcher live overlay to a schedule row.
+
+    Accepts a dict, pd.Series, or anything supporting ``.to_dict()`` /
+    ``.get()`` and returns a dict with the same shape plus possible live
+    overrides. Pregame rows pass through unchanged (with a ``*_pitcher_source
+    = "probable"`` tag added so the UI can render a consistent freshness
+    chip).
+    """
+    try:
+        snap = _live_state_snapshot(game_row.get("game_pk") if hasattr(game_row, "get")
+                                    else game_row["game_pk"])
+    except Exception:
+        snap = None
+    if snap is None:
+        # No live state — return a plain-dict copy with source tags so
+        # downstream callers can treat every row uniformly.
+        if hasattr(game_row, "to_dict"):
+            out = dict(game_row.to_dict())
+        elif isinstance(game_row, dict):
+            out = dict(game_row)
+        else:
+            out = dict(game_row)
+        out.setdefault("away_pitcher_source", "probable")
+        out.setdefault("home_pitcher_source", "probable")
+        return out
+    # Rebuild a LiveGameState-like object so the service helper can do the
+    # merge in one place. We avoid re-importing the dataclass by calling
+    # the service-level helper with a fresh fetch instead. Cheap: the
+    # underlying state is already cached in _live_state_snapshot above.
+    from services.live_game_state import LiveGameState, LivePitcher
+    def _p_from_dict(d):
+        if not d:
+            return None
+        return LivePitcher(
+            player_id=d.get("player_id"), name=d.get("name") or "",
+            hand=d.get("hand") or "", is_starter=bool(d.get("is_starter", True)),
+            pitches_thrown=d.get("pitches_thrown"),
+        )
+    state = LiveGameState(
+        game_pk=int(snap.get("game_pk") or 0),
+        abstract_status=snap.get("abstract_status") or "",
+        detailed_status=snap.get("detailed_status") or "",
+        inning=snap.get("inning"),
+        inning_half=snap.get("inning_half") or "",
+        venue=snap.get("venue") or "",
+        away_pitcher=_p_from_dict(snap.get("away_pitcher")),
+        home_pitcher=_p_from_dict(snap.get("home_pitcher")),
+    )
+    return _svc_apply_live_pitcher(game_row, state=state)
+
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_lineup_freshness(game_pk):
@@ -13663,6 +13782,7 @@ if _view == "🥎 AI 1+ Hits Parlay":
     def _build_hits_pool():
         rows = []
         for _, g in eligible_h_df.iterrows():
+            g = apply_live_pitcher_overlay(g)
             try:
                 cc = build_game_context(g)
             except Exception:
@@ -14355,6 +14475,12 @@ render_game_carousel(schedule_df, selected_idx)
 st.caption(f"Tap any game above to switch · currently viewing **{labels[selected_idx]}**")
 
 game_row = schedule_df.iloc[selected_idx]
+# Apply the live current-pitcher overlay so all downstream consumers
+# (matchup tables, heat-map, pitcher panels, top-3 strip, generators) see
+# the *current* pitcher once a game is live. Pregame rows pass through
+# unchanged. ``game_row`` becomes a plain dict here — pandas accessors
+# below stay compatible since dict supports ``["..."]`` and ``.get(...)``.
+game_row = apply_live_pitcher_overlay(game_row)
 ctx = build_game_context(game_row)
 weather = ctx["weather"]
 render_game_header(game_row, ctx, weather)
@@ -14450,6 +14576,36 @@ if _render_matchup:
     # Lineup-source caption appears once at the top of the tab
     if ctx["away_status"] == "Projected" or ctx["home_status"] == "Projected":
         st.caption("⚡ Showing **projected lineups** built from each team's most-used 9 over recent games. Rows auto-update once MLB posts the confirmed lineup.")
+
+    # ----- Live pitcher freshness chip ---------------------------------------
+    # Tell the user at a glance whether each side's matchup card is keyed
+    # to the *current* pitcher (live game) or the pregame probable. Updates
+    # within ~60s of an actual pitching change via the live overlay.
+    _live_status = (game_row.get("_live_state_status") or "").lower()
+    if _live_status in ("live", "final"):
+        try:
+            _away_src_label = _svc_pitcher_freshness_label(game_row, "away")
+            _home_src_label = _svc_pitcher_freshness_label(game_row, "home")
+            _inning = game_row.get("_live_state_inning")
+            _half = (game_row.get("_live_state_inning_half") or "").lower()
+            _half_short = "T" if _half == "top" else "B" if _half == "bottom" else ""
+            _inning_tag = f"{_half_short}{_inning}" if _inning else ""
+            _now_str = datetime.now(MLB_TZ).strftime("%-I:%M %p CT")
+            _chip = (
+                f"🟢 **Live** {('· ' + _inning_tag) if _inning_tag else ''} · "
+                f"{game_row.get('away_abbr','')} SP: {_away_src_label} · "
+                f"{game_row.get('home_abbr','')} SP: {_home_src_label} · "
+                f"refreshed {_now_str}"
+            )
+            if _live_status == "final":
+                _chip = (
+                    f"🔘 **Final** · "
+                    f"{game_row.get('away_abbr','')} SP: {_away_src_label} · "
+                    f"{game_row.get('home_abbr','')} SP: {_home_src_label}"
+                )
+            st.caption(_chip)
+        except Exception:
+            pass
 
     # ----- Pitcher Vulnerability panels (shown above lineups so hitter
     # heat-maps below can be read against each SP's exploitable profile) -----
@@ -14664,6 +14820,7 @@ def _build_slate_dataframe(_schedule_df, _batters_df, _pitchers_df, cache_key, s
     cache_key is a string used to invalidate the cache when the slate or data changes."""
     rows = []
     for _, g in _schedule_df.iterrows():
+        g = apply_live_pitcher_overlay(g)
         try:
             cc = build_game_context(g)
             a = build_matchup_table(cc["away_lineup"], _batters_df, _pitchers_df, g["home_probable"], cc["weather"], g["park_factor"],
@@ -14705,7 +14862,16 @@ def _slate_lineup_signature(_schedule_df) -> str:
     for _, g in _schedule_df.iterrows():
         try:
             cc = build_game_context(g)
-            parts.append(f"{g.get('game_pk','?')}:{cc.get('away_status','')}:{cc.get('home_status','')}")
+            # Fold the live pitcher ids into the signature so a pitching
+            # change immediately invalidates the slate cache and triggers
+            # a rebuild against the new opposing pitcher.
+            ov = apply_live_pitcher_overlay(g)
+            live_a = ov.get("away_probable_id") if isinstance(ov, dict) else None
+            live_h = ov.get("home_probable_id") if isinstance(ov, dict) else None
+            parts.append(
+                f"{g.get('game_pk','?')}:{cc.get('away_status','')}:"
+                f"{cc.get('home_status','')}:p{live_a}-{live_h}"
+            )
         except Exception:
             parts.append(f"{g.get('game_pk','?')}:err")
     return "|".join(parts)

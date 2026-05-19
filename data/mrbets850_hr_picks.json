@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:15:24Z",
+  "last_updated": "2026-05-19T12:15:38Z",
   "picks": [
     {
       "rank": 1,
@@ -54,6 +54,14 @@
       "name": "Byron Buxton",
       "team": "",
       "player_id": 621439,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 8,
+      "name": "Ryan Jeffers",
+      "team": "",
+      "player_id": 680777,
       "note": "",
       "confidence": "🔥 Lock"
     }

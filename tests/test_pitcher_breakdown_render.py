@@ -231,6 +231,19 @@ def test_styles_block_exposes_required_class_names():
         assert cls in css
 
 
+def test_styles_block_has_mobile_bottom_safe_area_spacing():
+    # The Pitcher Breakdown view used to clip its last tab row behind the
+    # mobile browser chrome / home indicator. The fix added a tail spacer
+    # plus a mobile media query that reserves room with env(safe-area-inset-bottom).
+    ns = _load_helpers()
+    css = ns["render_pitcher_breakdown_styles"]()
+    assert ".pbd-tail" in css, "mobile tail spacer class missing"
+    assert "env(safe-area-inset-bottom" in css, \
+        "safe-area-inset-bottom must be referenced for mobile padding"
+    assert "@media (max-width: 720px)" in css, \
+        "mobile media query for bottom padding missing"
+
+
 def test_fmt_or_dash_handles_nan_and_none():
     ns = _load_helpers()
     import math
@@ -299,3 +312,11 @@ def test_pitcher_breakdown_view_keeps_new_card_and_tabs():
     ]
     for s in required:
         assert s in block, f"Required Pitcher Breakdown piece missing: {s!r}"
+
+
+def test_pitcher_breakdown_view_renders_mobile_tail_spacer():
+    # Ensures the view emits the .pbd-tail div so the last tab row is
+    # always scrollable above the mobile browser chrome.
+    block = _pitcher_breakdown_view_source()
+    assert 'class="pbd-tail"' in block, \
+        "Mobile tail spacer div missing from Pitcher Breakdown view"

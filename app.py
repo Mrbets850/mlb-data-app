@@ -10393,6 +10393,21 @@ def render_pitcher_breakdown_styles() -> str:
         # ---- Picker ----
         ".pbd-picker-label { color:#a78bfa; font-weight:800; font-size:.78rem; "
         "  letter-spacing:.06em; text-transform:uppercase; margin: 6px 0 4px; }"
+        # ---- Mobile bottom safe-area / scroll tail ----
+        # iOS Safari + Chrome on Android both reserve a strip at the bottom
+        # of the viewport for browser chrome (URL bar, gesture indicator,
+        # home bar). Without explicit padding the last tab's content sits
+        # under that strip and looks cut off. We add a fixed tail spacer
+        # plus env(safe-area-inset-bottom) so the final row is always
+        # reachable, and let the page scroll naturally underneath it.
+        ".pbd-tail { height: calc(96px + env(safe-area-inset-bottom, 0px)); "
+        "  width: 100%; pointer-events: none; }"
+        "@media (max-width: 720px) {"
+        "  .pbd-card { margin-bottom: 8px; }"
+        "  .pbd-glog, .pbd-arsenal, .pbd-splits, .pbd-lineup {"
+        "    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));"
+        "  }"
+        "}"
         "</style>"
     )
 
@@ -11505,6 +11520,10 @@ if _view == "🥎 Pitcher Breakdown":
                 render_pitcher_breakdown_splits(_splits),
                 unsafe_allow_html=True,
             )
+
+        # Mobile tail spacer — guarantees the last row of any tab is
+        # scrollable above the browser chrome / home indicator strip.
+        st.markdown('<div class="pbd-tail"></div>', unsafe_allow_html=True)
     st.stop()
 
 # ============== HR Sleepers view ==============

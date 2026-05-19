@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:21:43Z",
+  "last_updated": "2026-05-19T12:22:15Z",
   "picks": [
     {
       "rank": 1,
@@ -176,6 +176,14 @@
       "player_id": 670042,
       "note": "",
       "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 23,
+      "name": "Jo Adell",
+      "team": "",
+      "player_id": 666176,
+      "note": "",
+      "confidence": "💎 Strong"
     }
   ]
 }

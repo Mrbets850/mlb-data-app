@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:17:45Z",
+  "last_updated": "2026-05-19T12:18:09Z",
   "picks": [
     {
       "rank": 1,
@@ -104,6 +104,14 @@
       "player_id": 805999,
       "note": "",
       "confidence": "💎 Strong"
+    },
+    {
+      "rank": 14,
+      "name": "Ben Rice",
+      "team": "",
+      "player_id": 700250,
+      "note": "",
+      "confidence": "🎯 Lean"
     }
   ]
 }

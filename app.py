@@ -872,6 +872,140 @@ html, body, [class*="css"] {
     .game-pill .time { font-size: 0.72rem; }
 }
 
+/* ---- Live + Final score chips on game pills + game header ----
+   The chip replaces the start-time line on the pill once a game is live or
+   final; on the dark game-header card we also append a compact box-score
+   block below the matchup so the user sees the score without scrolling. */
+.game-pill .score-line {
+    display: flex; align-items: center; justify-content: center;
+    gap: 6px; margin-top: 4px; font-weight: 900;
+    font-size: 0.92rem; color: #0f172a; letter-spacing: 0.02em;
+}
+.game-pill .score-line .sep { color: #94a3b8; font-weight: 800; }
+.game-pill .status-chip {
+    display: inline-block; margin-top: 4px;
+    padding: 1px 8px; border-radius: 999px;
+    font-size: 0.65rem; font-weight: 900; letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.game-pill .status-chip.live {
+    background: #fee2e2; color: #991b1b;
+    box-shadow: 0 0 0 1px #fecaca inset;
+}
+.game-pill .status-chip.live::before {
+    content: ""; display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #dc2626; margin-right: 5px; vertical-align: middle;
+    animation: livePulse 1.6s ease-in-out infinite;
+}
+.game-pill .status-chip.final {
+    background: #e2e8f0; color: #334155;
+    box-shadow: 0 0 0 1px #cbd5e1 inset;
+}
+.game-pill .status-chip.postponed {
+    background: #fef3c7; color: #92400e;
+    box-shadow: 0 0 0 1px #fde68a inset;
+}
+@keyframes livePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+/* Compact box-score block inside the dark game-header card. */
+.gh-scorebox {
+    margin-top: 12px; background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(250, 204, 21, 0.35); border-radius: 12px;
+    padding: 10px 12px; color: #f8fafc;
+}
+.gh-scorebox .status-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.gh-scorebox .status-pill {
+    font-size: 0.7rem; font-weight: 900; letter-spacing: 0.1em;
+    text-transform: uppercase; padding: 2px 10px; border-radius: 999px;
+}
+.gh-scorebox .status-pill.live   { background:#dc2626; color:#fff; }
+.gh-scorebox .status-pill.final  { background:#facc15; color:#1a0b3a; }
+.gh-scorebox .status-pill.postponed { background:#fbbf24; color:#1a0b3a; }
+.gh-scorebox .status-pill.live::before {
+    content: ""; display: inline-block;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #fff; margin-right: 6px; vertical-align: middle;
+    animation: livePulse 1.6s ease-in-out infinite;
+}
+.gh-scorebox .status-meta { font-size: 0.78rem; color: #cbd5e1; font-weight: 700; }
+.gh-scorebox table {
+    width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums;
+    color: #f8fafc;
+}
+.gh-scorebox table th, .gh-scorebox table td {
+    padding: 4px 6px; text-align: center; font-size: 0.82rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.gh-scorebox table th {
+    color: #fde68a; font-size: 0.66rem; font-weight: 800;
+    letter-spacing: 0.06em; text-transform: uppercase;
+}
+.gh-scorebox table td.team {
+    text-align: left; font-weight: 800; white-space: nowrap;
+}
+.gh-scorebox table td.rhe { font-weight: 900; color: #facc15; }
+.gh-scorebox table td.rhe.runs { font-size: 1.0rem; }
+.gh-scorebox .scrollwrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.gh-scorebox .diamond {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin-left: auto; font-size: 0.78rem; color: #cbd5e1;
+    font-weight: 700;
+}
+.gh-scorebox .diamond .bases {
+    display: inline-grid; grid-template-columns: 10px 10px 10px;
+    grid-template-rows: 10px 10px; gap: 2px; transform: rotate(0deg);
+}
+.gh-scorebox .diamond .base {
+    width: 10px; height: 10px; transform: rotate(45deg);
+    background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.35);
+}
+.gh-scorebox .diamond .base.on { background:#facc15; border-color:#facc15; }
+
+/* ---- live games ticker (top of slate) ---- */
+.live-ticker {
+    background: linear-gradient(180deg, #0b1437 0%, #0a2350 100%);
+    border: 1px solid #1e3a8a; border-radius: 14px;
+    padding: 8px 10px; margin-bottom: 10px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    box-shadow: 0 2px 8px rgba(15,23,42,0.06);
+}
+.live-ticker .row {
+    display: flex; align-items: center; gap: 10px; min-width: max-content;
+}
+.live-ticker .label {
+    color: #facc15; font-size: 0.7rem; font-weight: 900;
+    letter-spacing: 0.12em; text-transform: uppercase; padding-right: 6px;
+    border-right: 1px solid rgba(250,204,21,0.4); flex-shrink: 0;
+}
+.live-ticker .game {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.06); padding: 4px 10px;
+    border-radius: 999px; color: #f8fafc; font-weight: 800;
+    font-size: 0.85rem; white-space: nowrap;
+    border: 1px solid rgba(250,204,21,0.2);
+}
+.live-ticker .game .vs { color:#94a3b8; font-weight: 700; }
+.live-ticker .game .runs { color:#facc15; }
+.live-ticker .game .inning { color:#cbd5e1; font-size: 0.72rem; font-weight: 700; margin-left: 4px; }
+.live-ticker .game.final .runs { color:#fde68a; }
+.live-ticker .game.final::before {
+    content: "F"; background:#facc15; color:#1a0b3a;
+    font-size: 0.62rem; padding: 1px 5px; border-radius: 4px;
+    margin-right: 4px; font-weight: 900;
+}
+.live-ticker .game.live::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background:#dc2626; display: inline-block; margin-right: 2px;
+    animation: livePulse 1.6s ease-in-out infinite;
+}
+
 /* ---- section card ---- */
 .section-card {
     background: #fff; border: 1px solid #e2e8f0; border-radius: 18px;
@@ -8751,9 +8885,79 @@ def render_brand_bar(slate_count):
     </div>
     """, unsafe_allow_html=True)
 
+def _game_phase(detailed_status: str, snap: dict | None) -> str:
+    """Classify a schedule row into one of {live, final, postponed, preview}.
+
+    Prefer the live-feed status when available — it's the authority. Fall
+    back to the schedule's detailedState text for games we never tried to
+    fetch live state for (or where the feed failed)."""
+    s = ((snap or {}).get("abstract_status") or "").lower()
+    if s == "live":
+        return "live"
+    if s == "final":
+        return "final"
+    ds = (detailed_status or "").strip().lower()
+    if "final" in ds or "game over" in ds:
+        return "final"
+    if "in progress" in ds or "warmup" in ds or "delayed" in ds and "start" not in ds:
+        return "live"
+    if "postponed" in ds or "suspended" in ds or "cancelled" in ds or "canceled" in ds:
+        return "postponed"
+    return "preview"
+
+
+def _inning_label(snap: dict | None) -> str:
+    """Short inning label like 'Top 6' or 'Bot 3'. Empty when unknown."""
+    if not snap:
+        return ""
+    inn = snap.get("inning")
+    half = (snap.get("inning_half") or "").lower()
+    if not inn:
+        return ""
+    half_short = "Top" if half.startswith("t") else ("Bot" if half.startswith("b") else "")
+    return f"{half_short} {inn}".strip()
+
+
+def _pill_score_block(g, snap: dict | None) -> str:
+    """The status + score chunk shown inside each game pill.
+
+    Falls back to the original start-time line for preview games so the
+    pill keeps its existing pregame look. Postponed/cancelled games show
+    a single pill with no score."""
+    phase = _game_phase(g.get("status", ""), snap)
+    if phase == "preview":
+        return f'<span class="time">{g.get("time_short", "")}</span>'
+    if phase == "postponed":
+        label = (g.get("status") or "Postponed")
+        return (
+            f'<span class="status-chip postponed">{label}</span>'
+        )
+    # Live or final — we have a score to show.
+    away = (snap or {}).get("away_score")
+    home = (snap or {}).get("home_score")
+    away_s = "—" if away is None else str(away)
+    home_s = "—" if home is None else str(home)
+    away_ab = g.get("away_abbr", "")
+    home_ab = g.get("home_abbr", "")
+    if phase == "final":
+        chip = '<span class="status-chip final">Final</span>'
+    else:
+        sub = _inning_label(snap)
+        chip = '<span class="status-chip live">Live' + (
+            f' · {sub}' if sub else "") + '</span>'
+    return (
+        f'<span class="score-line">{away_ab} {away_s}<span class="sep">·</span>'
+        f'{home_ab} {home_s}</span>{chip}'
+    )
+
+
 def render_game_carousel(schedule_df, selected_idx):
     """Horizontal scrolling logo carousel. Pills are anchor links that set the
-    `?g=<idx>` query parameter, which the app reads to drive game selection."""
+    `?g=<idx>` query parameter, which the app reads to drive game selection.
+
+    Once a game is live or final we replace the start-time line on the pill
+    with a compact score + Live/Final chip so the user sees the result
+    without opening the game card."""
     if schedule_df.empty:
         return
     pills = []
@@ -8761,6 +8965,12 @@ def render_game_carousel(schedule_df, selected_idx):
         active = "active" if i == selected_idx else ""
         away_logo = logo_url(g["away_id"]) if g["away_id"] else ""
         home_logo = logo_url(g["home_id"]) if g["home_id"] else ""
+        # Live snapshot is best-effort — failures fall back to pregame look.
+        try:
+            snap = _live_state_snapshot(g.get("game_pk"))
+        except Exception:
+            snap = None
+        score_block = _pill_score_block(g, snap)
         pills.append(
             f'<a class="game-pill {active}" href="?g={i}" target="_self">'
             f'<span class="logos">'
@@ -8769,13 +8979,160 @@ def render_game_carousel(schedule_df, selected_idx):
             f'<img src="{home_logo}" alt="{g["home_abbr"]}" />'
             f'</span>'
             f'<span class="matchup-text">{g["away_abbr"]} @ {g["home_abbr"]}</span>'
-            f'<span class="time">{g["time_short"]}</span>'
+            f'{score_block}'
             f'</a>'
         )
     st.markdown(
         '<div class="carousel-wrap"><div class="carousel-strip">' + "".join(pills) + '</div></div>',
         unsafe_allow_html=True,
     )
+
+
+def render_live_ticker(schedule_df):
+    """Compact horizontal ticker of live + recently-final games.
+
+    Renders nothing when there are no live or final games on the slate, so
+    a pregame morning view doesn't show an empty bar. Pregame games are
+    intentionally excluded — those already appear in the pill carousel."""
+    if schedule_df is None or schedule_df.empty:
+        return
+    chunks = []
+    for _, g in schedule_df.iterrows():
+        try:
+            snap = _live_state_snapshot(g.get("game_pk"))
+        except Exception:
+            snap = None
+        phase = _game_phase(g.get("status", ""), snap)
+        if phase not in ("live", "final"):
+            continue
+        away_ab = g.get("away_abbr", "")
+        home_ab = g.get("home_abbr", "")
+        away = (snap or {}).get("away_score")
+        home = (snap or {}).get("home_score")
+        away_s = "—" if away is None else str(away)
+        home_s = "—" if home is None else str(home)
+        sub = ""
+        if phase == "live":
+            inn = _inning_label(snap)
+            if inn:
+                sub = f'<span class="inning">{inn}</span>'
+        chunks.append(
+            f'<span class="game {phase}">'
+            f'<span>{away_ab}</span><span class="runs">{away_s}</span>'
+            f'<span class="vs">·</span>'
+            f'<span>{home_ab}</span><span class="runs">{home_s}</span>'
+            f'{sub}</span>'
+        )
+    if not chunks:
+        return
+    label = "Live / Final"
+    st.markdown(
+        f'<div class="live-ticker"><div class="row">'
+        f'<span class="label">{label}</span>{"".join(chunks)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_box_score_html(game_row, snap: dict | None) -> str:
+    """Compact R/H/E + per-inning box score for the game-header card.
+
+    Empty string for preview/postponed games. For final games the layout is
+    a horizontally-scrollable per-inning table with R/H/E columns; for live
+    games we render the same table plus an inning + base/out diamond."""
+    if not snap:
+        return ""
+    phase = _game_phase(game_row.get("status", ""), snap)
+    if phase not in ("live", "final"):
+        return ""
+    away_ab = game_row.get("away_abbr", "")
+    home_ab = game_row.get("home_abbr", "")
+    innings = list(snap.get("innings") or [])
+    # Always show at least 9 inning columns for a balanced look; expand if
+    # extras were played. Each cell can be a runs int or blank.
+    cols = max(9, len(innings))
+    header_cells = "".join(f"<th>{i+1}</th>" for i in range(cols))
+    def _row(side: str, abbr: str) -> str:
+        idx = 0 if side == "away" else 1
+        tds = []
+        for i in range(cols):
+            if i < len(innings):
+                v = innings[i][idx]
+                tds.append(f"<td>{'' if v is None else v}</td>")
+            else:
+                tds.append("<td>·</td>")
+        runs = snap.get(f"{side}_score")
+        hits = snap.get(f"{side}_hits")
+        errs = snap.get(f"{side}_errors")
+        r_disp = "—" if runs is None else runs
+        h_disp = "—" if hits is None else hits
+        e_disp = "—" if errs is None else errs
+        return (
+            f"<tr><td class='team'>{abbr}</td>{''.join(tds)}"
+            f"<td class='rhe runs'>{r_disp}</td>"
+            f"<td class='rhe'>{h_disp}</td>"
+            f"<td class='rhe'>{e_disp}</td></tr>"
+        )
+    # Status row at the top: chip + meta line + (live-only) diamond.
+    if phase == "final":
+        chip = '<span class="status-pill final">Final</span>'
+        meta_bits = []
+        det = (snap.get("detailed_status") or "").strip()
+        if det and det.lower() not in ("final", "game over"):
+            meta_bits.append(det)
+        meta = (
+            f'<span class="status-meta">{" · ".join(meta_bits)}</span>'
+            if meta_bits else ""
+        )
+        diamond_html = ""
+    else:
+        chip = '<span class="status-pill live">Live</span>'
+        inn = _inning_label(snap) or ""
+        det = (snap.get("detailed_status") or "").strip()
+        meta_parts = []
+        if inn:
+            meta_parts.append(inn)
+        if det and det.lower() != "in progress":
+            meta_parts.append(det)
+        meta = (
+            f'<span class="status-meta">{" · ".join(meta_parts)}</span>'
+            if meta_parts else ""
+        )
+        # Build the base-state diamond (only meaningful mid-inning).
+        b = snap.get("balls"); s = snap.get("strikes"); o = snap.get("outs")
+        count_str = ""
+        if b is not None and s is not None:
+            count_str = f"{b}-{s}"
+        out_str = "" if o is None else f"{o} out{'s' if o != 1 else ''}"
+        def _base(on: bool) -> str:
+            return f'<span class="base{" on" if on else ""}"></span>'
+        # Grid is 3 cols x 2 rows: row 1 = blank, 2nd, blank; row 2 = 3rd, blank, 1st
+        bases_html = (
+            '<span class="bases">'
+            '<span></span>' + _base(bool(snap.get("on_second"))) + '<span></span>'
+            + _base(bool(snap.get("on_third"))) + '<span></span>'
+            + _base(bool(snap.get("on_first"))) + '</span>'
+        )
+        bits = []
+        if count_str:
+            bits.append(count_str)
+        if out_str:
+            bits.append(out_str)
+        bits_html = (" · ".join(bits)) if bits else ""
+        diamond_html = (
+            f'<span class="diamond">{bases_html}'
+            f'<span>{bits_html}</span></span>'
+        )
+    status_row = (
+        f'<div class="status-row">{chip}{meta}{diamond_html}</div>'
+    )
+    table = (
+        f'<div class="scrollwrap"><table>'
+        f'<thead><tr><th>Team</th>{header_cells}'
+        f'<th>R</th><th>H</th><th>E</th></tr></thead>'
+        f'<tbody>{_row("away", away_ab)}{_row("home", home_ab)}</tbody>'
+        f'</table></div>'
+    )
+    return f'<div class="gh-scorebox">{status_row}{table}</div>'
 
 def _impact_tile(label: str, pct: int, sub: str = "") -> str:
     """One of the three Weather-Impact tiles (HR / Runs / K).
@@ -8981,6 +9338,12 @@ def render_game_header(game_row, ctx, weather):
         weather, game_row.get("park_factor"), game_row.get("home_abbr", ""),
         ou_summary=ou_summary,
     )
+    # Box score: only renders for live + final games; pregame returns "".
+    try:
+        snap = _live_state_snapshot(game_row.get("game_pk"))
+    except Exception:
+        snap = None
+    box_html = _render_box_score_html(game_row, snap)
     st.markdown(f"""
     <div class="section-card dark">
         <div class="game-header">
@@ -9000,6 +9363,7 @@ def render_game_header(game_row, ctx, weather):
                 <div>vs {game_row['home_probable']} <span class="hand">({ctx['home_pitch_hand'] or '?'})</span></div>
             </div>
         </div>
+        {box_html}
         {weather_card_html}
         <div class="kpi-row" style="margin-top:10px;">
             <div class="kpi"><span class="tier {away_pill}">{game_row['away_abbr']}: {ctx['away_status']}</span></div>
@@ -9052,6 +9416,19 @@ def _live_state_snapshot(game_pk):
         "venue": state.venue,
         "away_pitcher": _p_to_dict(state.away_pitcher),
         "home_pitcher": _p_to_dict(state.home_pitcher),
+        "away_score": state.away_score,
+        "home_score": state.home_score,
+        "away_hits": state.away_hits,
+        "home_hits": state.home_hits,
+        "away_errors": state.away_errors,
+        "home_errors": state.home_errors,
+        "innings": list(state.innings or []),
+        "balls": state.balls,
+        "strikes": state.strikes,
+        "outs": state.outs,
+        "on_first": state.on_first,
+        "on_second": state.on_second,
+        "on_third": state.on_third,
     }
 
 
@@ -14564,6 +14941,7 @@ except (TypeError, ValueError):
 selected_idx = max(0, min(selected_idx, n_games - 1))
 st.session_state["_selected_idx"] = selected_idx
 
+render_live_ticker(schedule_df)
 render_game_carousel(schedule_df, selected_idx)
 st.caption(f"Tap any game above to switch · currently viewing **{labels[selected_idx]}**")
 

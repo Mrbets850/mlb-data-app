@@ -407,3 +407,99 @@ def test_overlay_with_invalid_row_does_not_raise():
     out = apply_live_pitcher_to_game_row({}, state=None)
     assert isinstance(out, dict)
     assert out["away_pitcher_source"] == "probable"
+
+
+# ---------------------------------------------------------------------------
+# score + box-score extraction (Live ticker + Final box on game cards)
+# ---------------------------------------------------------------------------
+
+def _feed_with_linescore(**ls_overrides) -> dict:
+    """Build a minimal feed payload with a populated linescore block — used
+    to drive the new score/innings/diamond extraction without standing up
+    the whole pitching shape."""
+    ls = {
+        "currentInning": 5,
+        "inningHalf": "Bottom",
+        "balls": 2, "strikes": 1, "outs": 1,
+        "offense": {"first": {"id": 1}, "second": None, "third": {"id": 2}},
+        "teams": {
+            "away": {"runs": 3, "hits": 5, "errors": 1},
+            "home": {"runs": 2, "hits": 4, "errors": 0},
+        },
+        "innings": [
+            {"num": 1, "away": {"runs": 1}, "home": {"runs": 0}},
+            {"num": 2, "away": {"runs": 0}, "home": {"runs": 1}},
+            {"num": 3, "away": {"runs": 2}, "home": {"runs": 0}},
+            {"num": 4, "away": {"runs": 0}, "home": {"runs": 1}},
+            {"num": 5, "away": {"runs": 0}, "home": {"runs": None}},
+        ],
+    }
+    ls.update(ls_overrides)
+    return {
+        "gameData": {
+            "game": {"pk": 555},
+            "status": {"abstractGameState": "Live", "detailedState": "In Progress"},
+            "venue": {"name": "Test Park"},
+            "players": {},
+        },
+        "liveData": {"linescore": ls, "boxscore": {"teams": {"away": {}, "home": {}}}},
+    }
+
+
+def test_parse_live_feed_extracts_rhe_and_innings():
+    state = parse_live_feed(_feed_with_linescore())
+    assert state is not None
+    assert state.away_score == 3 and state.home_score == 2
+    assert state.away_hits == 5 and state.home_hits == 4
+    assert state.away_errors == 1 and state.home_errors == 0
+    # Inning-by-inning runs preserved in order. Bottom of 5 hasn't been
+    # played yet → home value is None.
+    assert state.innings == [(1, 0), (0, 1), (2, 0), (0, 1), (0, None)]
+
+
+def test_parse_live_feed_extracts_diamond_and_count():
+    state = parse_live_feed(_feed_with_linescore())
+    assert state is not None
+    assert state.balls == 2 and state.strikes == 1 and state.outs == 1
+    assert state.on_first is True
+    assert state.on_second is False
+    assert state.on_third is True
+
+
+def test_parse_live_feed_missing_linescore_keeps_score_none():
+    # A pregame feed should leave all score fields as None so callers can
+    # render the original pregame UI rather than zeros.
+    state = parse_live_feed(_feed_with_linescore(teams={}, innings=[]))
+    assert state is not None
+    assert state.away_score is None and state.home_score is None
+    assert state.away_hits is None and state.home_errors is None
+    assert state.innings == []
+
+
+def test_parse_boxscore_only_extracts_rhe():
+    # Final-game fallback path: the /boxscore endpoint carries R/H/E inside
+    # teamStats. Without it the card would render "Final" with empty cells.
+    box = {
+        "teams": {
+            "away": {
+                "pitchers": [],
+                "teamStats": {
+                    "batting": {"runs": 7, "hits": 11},
+                    "fielding": {"errors": 0},
+                },
+            },
+            "home": {
+                "pitchers": [],
+                "teamStats": {
+                    "batting": {"runs": 4, "hits": 9},
+                    "fielding": {"errors": 2},
+                },
+            },
+        },
+    }
+    state = parse_boxscore_only(box, game_pk=42, abstract_status="Final",
+                                detailed_status="Final")
+    assert state is not None
+    assert state.away_score == 7 and state.home_score == 4
+    assert state.away_hits == 11 and state.home_hits == 9
+    assert state.away_errors == 0 and state.home_errors == 2

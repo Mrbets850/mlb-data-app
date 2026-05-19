@@ -9643,6 +9643,760 @@ def _safe_str(v, default=""):
         return default
 
 
+# ============================================================================
+# Pitcher Breakdown — premium per-pitcher interactive card.
+#
+# Renders a dark, mobile-first "player card" experience: identity row,
+# projection KPI tiles (PROJ K / PROJ IP / ERA / HR ALLOW / WHIP / OPP K RK)
+# followed by internal tabs (Arsenal · Opposing Lineup · Game Log · Splits).
+# All data sources degrade gracefully — when an API call fails or returns
+# nothing, the tab renders a friendly fallback instead of raw HTML.
+# ============================================================================
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _fetch_pitcher_game_log(player_id: int, season: int) -> pd.DataFrame:
+    """Per-game pitching log for one season from MLB StatsAPI.
+
+    Returns a DataFrame with one row per game (most recent last) with columns:
+      date, opp, ip, h, r, er, bb, k, hr, pitches, era_game.
+    Empty DataFrame on any failure or unrecognized payload.
+    """
+    if not player_id:
+        return pd.DataFrame()
+    try:
+        pid = int(player_id)
+    except Exception:
+        return pd.DataFrame()
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{pid}/stats",
+            params={"stats": "gameLog", "group": "pitching",
+                    "season": int(season), "sportId": 1},
+            timeout=10,
+        )
+        r.raise_for_status()
+        payload = r.json() or {}
+    except Exception:
+        return pd.DataFrame()
+
+    splits = []
+    for s in (payload.get("stats") or []):
+        for sp in (s.get("splits") or []):
+            splits.append(sp)
+    if not splits:
+        return pd.DataFrame()
+
+    rows = []
+    for sp in splits:
+        stat = sp.get("stat") or {}
+        d = sp.get("date") or (sp.get("game") or {}).get("date")
+        try:
+            dt = pd.to_datetime(d).date() if d else None
+        except Exception:
+            dt = None
+        opp = ""
+        try:
+            opp_team = sp.get("opponent") or {}
+            opp = opp_team.get("abbreviation") or opp_team.get("teamCode") or opp_team.get("name") or ""
+        except Exception:
+            opp = ""
+
+        def _f(k):
+            v = stat.get(k)
+            try: return float(v)
+            except Exception: return None
+
+        def _i(k):
+            v = stat.get(k)
+            try: return int(v)
+            except Exception: return None
+
+        ip = _f("inningsPitched")
+        h = _i("hits") or 0
+        r_ = _i("runs") or 0
+        er = _i("earnedRuns") or 0
+        bb = _i("baseOnBalls") or 0
+        k = _i("strikeOuts") or 0
+        hr = _i("homeRuns") or 0
+        pitches = _i("numberOfPitches") or _i("pitchesThrown")
+        era_g = (9.0 * er / float(ip)) if (ip and ip > 0) else None
+        rows.append({
+            "date": dt, "opp": opp,
+            "ip": ip, "h": h, "r": r_, "er": er,
+            "bb": bb, "k": k, "hr": hr,
+            "pitches": pitches, "era_game": era_g,
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df = df.dropna(subset=["date"])
+    if df.empty:
+        return df
+    df = df.sort_values("date").reset_index(drop=True)
+    return df
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_pitcher_splits_by_hand(player_id: int, season: int) -> dict:
+    """Pitcher splits vs LHB / vs RHB and Home/Away for the season.
+
+    Returns dict shaped like:
+      {"vsR": {...}, "vsL": {...}, "home": {...}, "away": {...}}
+    where each inner dict has keys: pa, avg, obp, slg, ops, k, bb, hr.
+    Missing splits become empty dicts so callers can render fallback text.
+    """
+    out = {"vsR": {}, "vsL": {}, "home": {}, "away": {}}
+    if not player_id:
+        return out
+    try:
+        pid = int(player_id)
+    except Exception:
+        return out
+
+    def _grab(sit_codes: str, key: str):
+        try:
+            r = requests.get(
+                f"https://statsapi.mlb.com/api/v1/people/{pid}/stats",
+                params={"stats": "statSplits", "group": "pitching",
+                        "season": int(season), "sitCodes": sit_codes,
+                        "sportId": 1},
+                timeout=10,
+            )
+            r.raise_for_status()
+            data = r.json() or {}
+        except Exception:
+            return
+        for st_ in (data.get("stats") or []):
+            for sp in (st_.get("splits") or []):
+                stat = sp.get("stat") or {}
+                def _f(k):
+                    try: return float(stat.get(k))
+                    except Exception: return None
+                def _i(k):
+                    try: return int(stat.get(k))
+                    except Exception: return None
+                out[key] = {
+                    "pa": _i("plateAppearances") or _i("battersFaced"),
+                    "avg": _f("avg"),
+                    "obp": _f("obp"),
+                    "slg": _f("slg"),
+                    "ops": _f("ops"),
+                    "k": _i("strikeOuts") or 0,
+                    "bb": _i("baseOnBalls") or 0,
+                    "hr": _i("homeRuns") or 0,
+                    "ip": _f("inningsPitched"),
+                }
+                return
+
+    # Use MLB StatsAPI 'sitCodes' splits selectors.
+    _grab("vr", "vsR")
+    _grab("vl", "vsL")
+    _grab("h",  "home")
+    _grab("a",  "away")
+    return out
+
+
+def _project_pitcher_targets(p_row: dict, game_log_df: pd.DataFrame | None = None) -> dict:
+    """Compute per-game projections for a starter from season-rate stats.
+
+    PROJ IP: blends recent-form IP/start (last 5 starts) and season IP/start.
+    PROJ K:  IP * K/9 / 9.
+    PROJ HR: IP * HR/9 / 9.
+    Returns dict with floats or None.
+    """
+    out = {"PROJ_IP": None, "PROJ_K": None, "PROJ_HR": None}
+    if not p_row:
+        return out
+    def _f(k):
+        v = p_row.get(k)
+        try:
+            if v is None: return None
+            x = float(v)
+            return None if x != x else x
+        except Exception:
+            return None
+    season_ip = _f("IP")
+    k9 = _f("K/9")
+    hr9 = _f("HR/9")
+
+    # Recent IP/start from the game log (last 5 starts, if available).
+    recent_ip_per_start = None
+    try:
+        if game_log_df is not None and not game_log_df.empty and "ip" in game_log_df.columns:
+            tail = game_log_df.tail(5)
+            ips = tail["ip"].dropna()
+            if not ips.empty:
+                recent_ip_per_start = float(ips.mean())
+    except Exception:
+        recent_ip_per_start = None
+
+    # Season IP/start (StatsAPI doesn't ship 'starts' here, but the slate
+    # row's IP is season-total. We approximate starts from game-log length
+    # if available; fall back to assuming ~5.5 IP per start when neither
+    # source is usable.)
+    season_ip_per_start = None
+    try:
+        if game_log_df is not None and not game_log_df.empty:
+            starts = len(game_log_df)
+            if season_ip and starts:
+                season_ip_per_start = float(season_ip) / float(starts)
+    except Exception:
+        season_ip_per_start = None
+
+    if recent_ip_per_start is not None and season_ip_per_start is not None:
+        proj_ip = 0.6 * recent_ip_per_start + 0.4 * season_ip_per_start
+    elif recent_ip_per_start is not None:
+        proj_ip = recent_ip_per_start
+    elif season_ip_per_start is not None:
+        proj_ip = season_ip_per_start
+    else:
+        proj_ip = 5.5  # league-average starter floor
+
+    # Clamp to a believable range so a single 1-IP relief blowup or a 9-IP
+    # complete game doesn't break the projection.
+    proj_ip = max(3.0, min(7.5, float(proj_ip)))
+    out["PROJ_IP"] = round(proj_ip, 1)
+    if k9 is not None:
+        out["PROJ_K"] = round(proj_ip * k9 / 9.0, 1)
+    if hr9 is not None:
+        out["PROJ_HR"] = round(proj_ip * hr9 / 9.0, 2)
+    return out
+
+
+def _compute_opp_k_rank(schedule_df, opp_abbr: str, pitcher_stats_df=None) -> tuple[int | None, int | None]:
+    """Best-effort 'opponent K rank' across the slate.
+
+    Ranks the opponent by how strikeout-prone its lineup is. We don't have
+    direct team K% in this app, so we approximate by aggregating the
+    starting pitcher K%/Whiff% they're facing tonight isn't useful — what
+    we want is opposing-batter K-rate. As a fallback we return (None, None)
+    when we can't compute it; callers display '—'. Right now we expose a
+    rank within the slate's pitcher K% as a proxy: a team facing a high-K
+    pitcher tonight is the same proxy used for the headline KPI tile.
+
+    Returns (rank, total) or (None, None) if not computable.
+    """
+    # No team-K table is loaded in app.py today — return blank rather than
+    # invent a number. The opp-K KPI tile will render '—' which is the
+    # intended graceful fallback the user accepted.
+    return (None, None)
+
+
+def _kpi_tile_html(label: str, value: str, sub: str = "", tone: str = "") -> str:
+    tone_colors = {
+        "good": "#10b981",
+        "warn": "#f59e0b",
+        "bad":  "#ef4444",
+        "":     "#facc15",
+    }
+    accent = tone_colors.get(tone, "#facc15")
+    sub_html = (
+        f'<div class="pbd-kpi-sub">{sub}</div>' if sub else ''
+    )
+    return (
+        '<div class="pbd-kpi">'
+        f'<div class="pbd-kpi-label">{label}</div>'
+        f'<div class="pbd-kpi-value" style="color:{accent};">{value}</div>'
+        f'{sub_html}'
+        '</div>'
+    )
+
+
+def _fmt_or_dash(v, fmt="{:.2f}"):
+    if v is None:
+        return "—"
+    try:
+        if isinstance(v, float) and v != v:
+            return "—"
+        return fmt.format(float(v))
+    except Exception:
+        return "—" if v in (None, "") else str(v)
+
+
+def render_pitcher_breakdown_header(p_row: dict, ranking_label: str = "") -> str:
+    """Top of the Pitcher Breakdown card: LIVE PREVIEW pill + title +
+    subtitle + identity row with headshot, name, matchup line, ranking
+    badge."""
+    pname = _safe_str(p_row.get("Pitcher"), "TBD")
+    team = _safe_str(p_row.get("Team"), "")
+    opp = _safe_str(p_row.get("Opp"), "")
+    loc = _safe_str(p_row.get("Loc"), "@")
+    throws = _safe_str(p_row.get("Throws"), "?")
+    hand_label = f"{throws}HP" if throws in ("L", "R") else "SP"
+    matchup_line = f"{team} {loc} {opp} · {hand_label}"
+
+    pid = p_row.get("_player_id") or p_row.get("player_id")
+    headshot = player_headshot_url(pid) if pid else ""
+    logo = p_row.get("_logo") or (logo_url(int(pid)) if False else "")
+    head_img = (
+        f'<img class="pbd-headshot" src="{headshot}" alt="{pname}" '
+        f'onerror="this.style.display=\'none\'" />'
+        if headshot else
+        '<div class="pbd-headshot pbd-headshot-empty">⚾</div>'
+    )
+
+    ranking_html = ""
+    if ranking_label:
+        ranking_html = (
+            f'<div class="pbd-rankbadge">{ranking_label}</div>'
+        )
+
+    return (
+        '<div class="pbd-top">'
+        '<div class="pbd-pill">'
+        '<span class="pbd-pill-dot"></span>LIVE PREVIEW'
+        '</div>'
+        '<div class="pbd-title">Pitcher Breakdown</div>'
+        '<div class="pbd-subtitle">Arsenal analysis, opposing lineup grid, '
+        'recent form, season stats.</div>'
+        '<div class="pbd-id-row">'
+        f'{head_img}'
+        '<div class="pbd-id-info">'
+        f'<div class="pbd-id-name">{pname}</div>'
+        f'<div class="pbd-id-matchup">{matchup_line}</div>'
+        '</div>'
+        f'{ranking_html}'
+        '</div>'
+        '</div>'
+    )
+
+
+def render_pitcher_breakdown_kpis(p_row: dict, proj: dict, opp_k_rank: tuple) -> str:
+    """KPI row: PROJ K · PROJ IP · ERA · HR ALLOW · WHIP · OPP K RK."""
+    proj_k = proj.get("PROJ_K")
+    proj_ip = proj.get("PROJ_IP")
+    proj_hr = proj.get("PROJ_HR")
+    era = p_row.get("ERA")
+    whip = p_row.get("WHIP")
+
+    # Tone hints reuse the same thresholds as the season-stat heatmap so
+    # the colors are consistent across the app.
+    def _tone(v, lo, hi, reverse=False):
+        try: x = float(v)
+        except Exception: return ""
+        if x != x: return ""
+        if reverse:
+            if x <= lo: return "good"
+            if x >= hi: return "bad"
+            return "warn"
+        if x >= hi: return "good"
+        if x <= lo: return "bad"
+        return "warn"
+
+    era_tone  = _tone(era,  5.50, 2.50, reverse=True)
+    whip_tone = _tone(whip, 1.50, 1.00, reverse=True)
+    k_tone    = _tone(proj_k, 4.0, 7.5)
+    ip_tone   = _tone(proj_ip, 4.5, 6.0)
+    hr_tone   = _tone(proj_hr, 1.5, 0.5, reverse=True)
+
+    rank, total = opp_k_rank or (None, None)
+    opp_k_value = f"#{rank}" if rank is not None else "—"
+    opp_k_sub = f"of {total}" if total else "season"
+
+    tiles = [
+        _kpi_tile_html("PROJ K",    _fmt_or_dash(proj_k, "{:.1f}"),  "tonight", k_tone),
+        _kpi_tile_html("PROJ IP",   _fmt_or_dash(proj_ip, "{:.1f}"), "innings", ip_tone),
+        _kpi_tile_html("ERA",       _fmt_or_dash(era, "{:.2f}"),     "season",  era_tone),
+        _kpi_tile_html("HR ALLOW",  _fmt_or_dash(proj_hr, "{:.2f}"), "tonight", hr_tone),
+        _kpi_tile_html("WHIP",      _fmt_or_dash(whip, "{:.2f}"),    "season",  whip_tone),
+        _kpi_tile_html("OPP K RK",  opp_k_value,                      opp_k_sub, ""),
+    ]
+    return (
+        '<div class="pbd-kpi-grid">'
+        + "".join(tiles) +
+        '</div>'
+    )
+
+
+def render_pitcher_breakdown_arsenal(mix_df: pd.DataFrame) -> str:
+    """Arsenal tab: pitch usage bars + Use% / wOBA / Whiff% / RV/100 detail."""
+    if mix_df is None or mix_df.empty:
+        return (
+            '<div class="pbd-empty">'
+            'No pitch-by-pitch Statcast data for this starter yet '
+            '(usually means &lt; 50 pitches thrown this season).'
+            '</div>'
+        )
+    rows = []
+    max_use = 0.0
+    try:
+        max_use = float(mix_df["pitch_usage"].fillna(0).max() or 0.0)
+    except Exception:
+        max_use = 0.0
+    if not max_use or max_use <= 0:
+        max_use = 100.0
+    for _, r in mix_df.iterrows():
+        pt = str(r.get("pitch_type", "")).strip().upper()
+        name = PITCH_NAME_MAP.get(pt, str(r.get("pitch_name", pt)) or pt or "—")
+        emoji = PITCH_EMOJI.get(pt, "⚾")
+        use = r.get("pitch_usage")
+        woba = r.get("woba")
+        whiff = r.get("whiff_percent")
+        rv100 = r.get("run_value_per_100")
+        velo = r.get("velocity") if "velocity" in r.index else None
+
+        try:
+            use_pct = float(use)
+        except Exception:
+            use_pct = 0.0
+        bar_width = max(0.0, min(100.0, (use_pct / max_use) * 100.0))
+        use_str = f"{use_pct:.0f}%" if use_pct else "—"
+
+        try:
+            w = float(woba)
+            if w <= 0.300: woba_col = "#34d399"
+            elif w <= 0.340: woba_col = "#a3e635"
+            elif w <= 0.380: woba_col = "#f59e0b"
+            else: woba_col = "#f87171"
+            woba_str = f"{w:.3f}"
+        except Exception:
+            woba_col, woba_str = "#94a3b8", "—"
+        try: whiff_str = f"{float(whiff):.0f}%"
+        except Exception: whiff_str = "—"
+        try: rv_str = f"{float(rv100):+.1f}"
+        except Exception: rv_str = "—"
+        try: velo_str = f"{float(velo):.1f} mph"
+        except Exception: velo_str = ""
+
+        velo_html = (
+            f'<span class="pbd-arsenal-velo">{velo_str}</span>' if velo_str else ''
+        )
+
+        rows.append(
+            '<div class="pbd-arsenal-row">'
+            '<div class="pbd-arsenal-head">'
+            f'<span class="pbd-arsenal-name">{emoji} {name}</span>'
+            f'{velo_html}'
+            f'<span class="pbd-arsenal-use">{use_str}</span>'
+            '</div>'
+            '<div class="pbd-arsenal-bar-wrap">'
+            f'<div class="pbd-arsenal-bar" style="width:{bar_width:.1f}%;"></div>'
+            '</div>'
+            '<div class="pbd-arsenal-stats">'
+            f'<div><span>wOBA</span><b style="color:{woba_col};">{woba_str}</b></div>'
+            f'<div><span>Whiff</span><b>{whiff_str}</b></div>'
+            f'<div><span>RV/100</span><b>{rv_str}</b></div>'
+            '</div>'
+            '</div>'
+        )
+    return '<div class="pbd-arsenal">' + "".join(rows) + '</div>'
+
+
+def render_pitcher_breakdown_game_log(log_df: pd.DataFrame, n: int = 6) -> str:
+    """Game Log tab: most recent starts as compact cards."""
+    if log_df is None or log_df.empty:
+        return (
+            '<div class="pbd-empty">'
+            'No game log available for this season yet (StatsAPI returns '
+            'nothing for pitchers who haven\'t appeared).'
+            '</div>'
+        )
+    tail = log_df.tail(n).iloc[::-1]  # most recent first
+    rows_html = []
+    for _, r in tail.iterrows():
+        d = r.get("date")
+        try:
+            d_str = pd.to_datetime(d).strftime("%b %-d") if d else "—"
+        except Exception:
+            d_str = str(d) if d else "—"
+        opp = _safe_str(r.get("opp"), "—") or "—"
+        ip = _fmt_or_dash(r.get("ip"), "{:.1f}")
+        k = r.get("k") if r.get("k") is not None else "—"
+        h = r.get("h") if r.get("h") is not None else "—"
+        bb = r.get("bb") if r.get("bb") is not None else "—"
+        er = r.get("er") if r.get("er") is not None else "—"
+        hr = r.get("hr") if r.get("hr") is not None else "—"
+        pitches = r.get("pitches")
+        pitches_str = f"{int(pitches)} P" if pitches else "—"
+        era_g = r.get("era_game")
+        try:
+            era_g_str = f"{float(era_g):.2f}"
+        except Exception:
+            era_g_str = "—"
+        # K-line tone (5+ Ks is a good start)
+        try:
+            k_tone = "good" if int(k) >= 6 else ("warn" if int(k) >= 4 else "bad")
+        except Exception:
+            k_tone = ""
+        try:
+            er_tone = "good" if int(er) <= 2 else ("warn" if int(er) <= 4 else "bad")
+        except Exception:
+            er_tone = ""
+        rows_html.append(
+            '<div class="pbd-glog-row">'
+            '<div class="pbd-glog-date">'
+            f'<div class="pbd-glog-d">{d_str}</div>'
+            f'<div class="pbd-glog-opp">vs {opp}</div>'
+            '</div>'
+            '<div class="pbd-glog-stats">'
+            f'<div><span>IP</span><b>{ip}</b></div>'
+            f'<div><span>K</span><b class="pbd-tone-{k_tone}">{k}</b></div>'
+            f'<div><span>H</span><b>{h}</b></div>'
+            f'<div><span>BB</span><b>{bb}</b></div>'
+            f'<div><span>ER</span><b class="pbd-tone-{er_tone}">{er}</b></div>'
+            f'<div><span>HR</span><b>{hr}</b></div>'
+            f'<div><span>P</span><b>{pitches_str}</b></div>'
+            f'<div><span>ERA</span><b>{era_g_str}</b></div>'
+            '</div>'
+            '</div>'
+        )
+    return '<div class="pbd-glog">' + "".join(rows_html) + '</div>'
+
+
+def render_pitcher_breakdown_lineup(game_pk, opp_team_id, opp_abbr: str) -> str:
+    """Opposing Lineup tab: starters with handedness + slot."""
+    if not game_pk:
+        return (
+            '<div class="pbd-empty">'
+            'Opposing lineup not yet posted. Check back ~2 hours before first pitch.'
+            '</div>'
+        )
+    try:
+        gl = get_lineup_service().get_game(int(game_pk))
+    except Exception:
+        gl = None
+    if gl is None:
+        return (
+            '<div class="pbd-empty">'
+            'Could not load opposing lineup from the lineup service. '
+            'Try again in a moment.'
+            '</div>'
+        )
+
+    # Pick the side that ISN'T this pitcher's team.
+    pick = None
+    try:
+        if opp_team_id and gl.away.team_id == int(opp_team_id):
+            pick = gl.away
+        elif opp_team_id and gl.home.team_id == int(opp_team_id):
+            pick = gl.home
+    except Exception:
+        pick = None
+    if pick is None:
+        # Fallback by abbr.
+        if opp_abbr and gl.away.team_abbr == opp_abbr:
+            pick = gl.away
+        elif opp_abbr and gl.home.team_abbr == opp_abbr:
+            pick = gl.home
+    if pick is None or not pick.starters:
+        return (
+            '<div class="pbd-empty">'
+            f'Opposing lineup for {opp_abbr or "the opponent"} is not posted yet. '
+            'MLB typically posts ~2 hours before first pitch.'
+            '</div>'
+        )
+
+    rows = []
+    for p in pick.starters[:9]:
+        slot = p.batting_order if p.batting_order else "—"
+        nm = _safe_str(p.name, "—")
+        pos = _safe_str(p.position, "")
+        side = _safe_str(p.bat_side, "?")
+        side_class = {"L": "L", "R": "R", "S": "S"}.get(side, "")
+        rows.append(
+            '<div class="pbd-lineup-row">'
+            f'<div class="pbd-lineup-slot">{slot}</div>'
+            '<div class="pbd-lineup-name">'
+            f'<div class="pbd-lineup-nm">{nm}</div>'
+            f'<div class="pbd-lineup-pos">{pos}</div>'
+            '</div>'
+            f'<div class="pbd-lineup-hand pbd-hand-{side_class}">{side}</div>'
+            '</div>'
+        )
+    head = (
+        '<div class="pbd-lineup-head">'
+        f'<div>{pick.team_abbr or opp_abbr or "OPP"} Lineup</div>'
+        f'<div class="pbd-lineup-status">{pick.status or "expected"}</div>'
+        '</div>'
+    )
+    return '<div class="pbd-lineup">' + head + "".join(rows) + '</div>'
+
+
+def render_pitcher_breakdown_splits(splits: dict) -> str:
+    """Splits tab: vs LHB / vs RHB / Home / Away."""
+    if not splits or not any(splits.values()):
+        return (
+            '<div class="pbd-empty">'
+            'No splits data available yet for this starter.'
+            '</div>'
+        )
+    def _card(title, d):
+        if not d:
+            return (
+                f'<div class="pbd-split-card pbd-split-empty">'
+                f'<div class="pbd-split-title">{title}</div>'
+                '<div class="pbd-split-na">no data</div>'
+                '</div>'
+            )
+        return (
+            '<div class="pbd-split-card">'
+            f'<div class="pbd-split-title">{title}</div>'
+            '<div class="pbd-split-grid">'
+            f'<div><span>PA</span><b>{d.get("pa") or "—"}</b></div>'
+            f'<div><span>AVG</span><b>{_fmt_or_dash(d.get("avg"), "{:.3f}")}</b></div>'
+            f'<div><span>OBP</span><b>{_fmt_or_dash(d.get("obp"), "{:.3f}")}</b></div>'
+            f'<div><span>SLG</span><b>{_fmt_or_dash(d.get("slg"), "{:.3f}")}</b></div>'
+            f'<div><span>OPS</span><b>{_fmt_or_dash(d.get("ops"), "{:.3f}")}</b></div>'
+            f'<div><span>K</span><b>{d.get("k") if d.get("k") is not None else "—"}</b></div>'
+            f'<div><span>BB</span><b>{d.get("bb") if d.get("bb") is not None else "—"}</b></div>'
+            f'<div><span>HR</span><b>{d.get("hr") if d.get("hr") is not None else "—"}</b></div>'
+            '</div>'
+            '</div>'
+        )
+    cards = [
+        _card("vs RHB", splits.get("vsR")),
+        _card("vs LHB", splits.get("vsL")),
+        _card("Home", splits.get("home")),
+        _card("Away", splits.get("away")),
+    ]
+    return '<div class="pbd-splits">' + "".join(cards) + '</div>'
+
+
+def render_pitcher_breakdown_styles() -> str:
+    """Single block of CSS shared by all Pitcher Breakdown components."""
+    return (
+        "<style>"
+        # ---- Outer card / hero ----
+        ".pbd-card { background: linear-gradient(180deg, #0b1220 0%, #1a0b2e 60%, #2a0e3e 100%); "
+        "  border:1px solid #312e81; border-radius:20px; padding:18px 16px; "
+        "  color:#e5e7eb; box-shadow: 0 10px 30px rgba(15,5,40,.45); "
+        "  margin: 14px 0 18px 0; }"
+        ".pbd-top { margin-bottom:14px; }"
+        ".pbd-pill { display:inline-flex; align-items:center; gap:6px; "
+        "  background: rgba(250,204,21,.12); color:#facc15; border:1px solid rgba(250,204,21,.45); "
+        "  padding:3px 10px; border-radius:999px; font-size:.66rem; font-weight:900; "
+        "  letter-spacing:.12em; text-transform:uppercase; }"
+        ".pbd-pill-dot { width:6px; height:6px; border-radius:50%; background:#facc15; "
+        "  box-shadow:0 0 8px rgba(250,204,21,.7); animation: pbdpulse 1.6s infinite; }"
+        "@keyframes pbdpulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }"
+        ".pbd-title { font-size:1.35rem; font-weight:900; color:#f8fafc; margin-top:10px; "
+        "  letter-spacing:.01em; }"
+        ".pbd-subtitle { font-size:.82rem; color:#a78bfa; margin-top:2px; }"
+        ".pbd-id-row { display:flex; align-items:center; gap:12px; margin-top:14px; "
+        "  padding:10px 12px; background: rgba(15,23,42,.55); border-radius:14px; "
+        "  border:1px solid rgba(99,102,241,.25); }"
+        ".pbd-headshot { width:54px; height:54px; border-radius:50%; object-fit:cover; "
+        "  background:#0f172a; border:2px solid rgba(168,85,247,.45); flex:0 0 auto; }"
+        ".pbd-headshot-empty { display:flex; align-items:center; justify-content:center; "
+        "  font-size:1.4rem; }"
+        ".pbd-id-info { flex:1 1 auto; min-width:0; }"
+        ".pbd-id-name { font-size:1.05rem; font-weight:900; color:#f8fafc; "
+        "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+        ".pbd-id-matchup { font-size:.78rem; color:#a5b4fc; margin-top:2px; }"
+        ".pbd-rankbadge { flex:0 0 auto; padding:6px 10px; border-radius:10px; "
+        "  background: linear-gradient(135deg, #facc15 0%, #f59e0b 100%); color:#1f1407; "
+        "  font-size:.7rem; font-weight:900; letter-spacing:.04em; text-transform:uppercase; "
+        "  box-shadow: 0 4px 12px rgba(245,158,11,.35); white-space:nowrap; }"
+        # ---- KPI grid ----
+        ".pbd-kpi-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; "
+        "  margin-bottom:14px; }"
+        "@media (min-width: 720px) { .pbd-kpi-grid { grid-template-columns: repeat(6, 1fr); } }"
+        ".pbd-kpi { background: rgba(15,23,42,.65); border:1px solid rgba(99,102,241,.25); "
+        "  border-radius:12px; padding:10px 8px; text-align:center; }"
+        ".pbd-kpi-label { font-size:.6rem; font-weight:900; letter-spacing:.08em; "
+        "  text-transform:uppercase; color:#94a3b8; }"
+        ".pbd-kpi-value { font-size:1.25rem; font-weight:900; margin-top:2px; "
+        "  font-variant-numeric: tabular-nums; line-height:1.1; }"
+        ".pbd-kpi-sub { font-size:.6rem; color:#94a3b8; margin-top:1px; "
+        "  letter-spacing:.04em; }"
+        # ---- Empty state ----
+        ".pbd-empty { padding:14px 16px; color:#a5b4fc; background: rgba(15,23,42,.55); "
+        "  border:1px dashed rgba(148,163,184,.35); border-radius:12px; font-size:.85rem; "
+        "  line-height:1.4; }"
+        # ---- Arsenal ----
+        ".pbd-arsenal { display:flex; flex-direction:column; gap:10px; }"
+        ".pbd-arsenal-row { background: rgba(15,23,42,.55); border:1px solid rgba(99,102,241,.22); "
+        "  border-radius:12px; padding:10px 12px; }"
+        ".pbd-arsenal-head { display:flex; align-items:center; gap:8px; "
+        "  font-size:.88rem; }"
+        ".pbd-arsenal-name { font-weight:800; color:#f8fafc; flex:1 1 auto; "
+        "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+        ".pbd-arsenal-velo { color:#a78bfa; font-weight:700; font-size:.74rem; "
+        "  background: rgba(167,139,250,.12); padding:2px 8px; border-radius:6px; }"
+        ".pbd-arsenal-use { font-weight:900; color:#facc15; font-variant-numeric: tabular-nums; }"
+        ".pbd-arsenal-bar-wrap { background: rgba(255,255,255,.06); border-radius:6px; "
+        "  height:6px; margin-top:8px; overflow:hidden; }"
+        ".pbd-arsenal-bar { height:100%; background: linear-gradient(90deg, #a78bfa 0%, #facc15 100%); "
+        "  border-radius:6px; transition: width .25s ease; }"
+        ".pbd-arsenal-stats { display:grid; grid-template-columns: repeat(3, 1fr); gap:6px; "
+        "  margin-top:8px; }"
+        ".pbd-arsenal-stats > div { background: rgba(255,255,255,.04); border-radius:8px; "
+        "  padding:4px 6px; text-align:center; }"
+        ".pbd-arsenal-stats span { display:block; font-size:.58rem; font-weight:800; "
+        "  letter-spacing:.06em; color:#94a3b8; text-transform:uppercase; }"
+        ".pbd-arsenal-stats b { font-size:.85rem; color:#f8fafc; font-variant-numeric: tabular-nums; }"
+        # ---- Game log ----
+        ".pbd-glog { display:flex; flex-direction:column; gap:8px; }"
+        ".pbd-glog-row { display:flex; align-items:center; gap:10px; "
+        "  background: rgba(15,23,42,.55); border:1px solid rgba(99,102,241,.22); "
+        "  border-radius:12px; padding:8px 10px; }"
+        ".pbd-glog-date { flex:0 0 auto; text-align:center; min-width:54px; }"
+        ".pbd-glog-d { font-weight:900; color:#facc15; font-size:.78rem; "
+        "  letter-spacing:.04em; }"
+        ".pbd-glog-opp { font-size:.68rem; color:#a5b4fc; margin-top:1px; }"
+        ".pbd-glog-stats { display:grid; grid-template-columns: repeat(8, 1fr); gap:4px; "
+        "  flex:1 1 auto; min-width:0; }"
+        "@media (max-width: 640px) { "
+        "  .pbd-glog-stats { grid-template-columns: repeat(4, 1fr); } "
+        "}"
+        ".pbd-glog-stats > div { text-align:center; }"
+        ".pbd-glog-stats span { display:block; font-size:.56rem; font-weight:800; "
+        "  letter-spacing:.06em; color:#94a3b8; text-transform:uppercase; }"
+        ".pbd-glog-stats b { font-size:.82rem; color:#f8fafc; font-variant-numeric: tabular-nums; }"
+        ".pbd-tone-good { color:#34d399 !important; }"
+        ".pbd-tone-warn { color:#fbbf24 !important; }"
+        ".pbd-tone-bad  { color:#f87171 !important; }"
+        # ---- Lineup ----
+        ".pbd-lineup { display:flex; flex-direction:column; gap:6px; }"
+        ".pbd-lineup-head { display:flex; justify-content:space-between; align-items:baseline; "
+        "  font-weight:900; color:#f8fafc; padding:0 4px 6px; font-size:.86rem; "
+        "  border-bottom:1px solid rgba(148,163,184,.18); margin-bottom:4px; }"
+        ".pbd-lineup-status { font-size:.62rem; color:#a5b4fc; font-weight:800; "
+        "  letter-spacing:.06em; text-transform:uppercase; }"
+        ".pbd-lineup-row { display:flex; align-items:center; gap:10px; "
+        "  background: rgba(15,23,42,.55); border:1px solid rgba(99,102,241,.18); "
+        "  border-radius:10px; padding:7px 10px; }"
+        ".pbd-lineup-slot { width:24px; height:24px; border-radius:6px; "
+        "  background: linear-gradient(135deg, #facc15, #f59e0b); color:#1f1407; "
+        "  font-weight:900; display:flex; align-items:center; justify-content:center; "
+        "  font-size:.78rem; flex:0 0 auto; }"
+        ".pbd-lineup-name { flex:1 1 auto; min-width:0; }"
+        ".pbd-lineup-nm { font-weight:800; color:#f8fafc; font-size:.88rem; "
+        "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+        ".pbd-lineup-pos { font-size:.66rem; color:#94a3b8; margin-top:1px; "
+        "  letter-spacing:.04em; }"
+        ".pbd-lineup-hand { width:28px; height:28px; border-radius:50%; "
+        "  display:flex; align-items:center; justify-content:center; "
+        "  font-weight:900; font-size:.74rem; flex:0 0 auto; "
+        "  background:#1e293b; color:#cbd5e1; border:1px solid #334155; }"
+        ".pbd-hand-L { background: rgba(96,165,250,.18); color:#93c5fd; "
+        "  border-color: rgba(96,165,250,.45); }"
+        ".pbd-hand-R { background: rgba(248,113,113,.18); color:#fca5a5; "
+        "  border-color: rgba(248,113,113,.45); }"
+        ".pbd-hand-S { background: rgba(168,85,247,.18); color:#c4b5fd; "
+        "  border-color: rgba(168,85,247,.45); }"
+        # ---- Splits ----
+        ".pbd-splits { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }"
+        "@media (min-width: 720px) { .pbd-splits { grid-template-columns: repeat(4, 1fr); } }"
+        ".pbd-split-card { background: rgba(15,23,42,.55); border:1px solid rgba(99,102,241,.22); "
+        "  border-radius:12px; padding:10px 12px; }"
+        ".pbd-split-empty { opacity:.55; }"
+        ".pbd-split-title { font-weight:900; color:#facc15; font-size:.74rem; "
+        "  letter-spacing:.08em; text-transform:uppercase; margin-bottom:8px; }"
+        ".pbd-split-na { color:#94a3b8; font-size:.78rem; }"
+        ".pbd-split-grid { display:grid; grid-template-columns: 1fr 1fr; gap:6px; }"
+        ".pbd-split-grid > div { background: rgba(255,255,255,.04); border-radius:8px; "
+        "  padding:5px 7px; text-align:center; }"
+        ".pbd-split-grid span { display:block; font-size:.58rem; font-weight:800; "
+        "  letter-spacing:.06em; color:#94a3b8; text-transform:uppercase; }"
+        ".pbd-split-grid b { font-size:.82rem; color:#f8fafc; font-variant-numeric: tabular-nums; }"
+        # ---- Picker ----
+        ".pbd-picker-label { color:#a78bfa; font-weight:800; font-size:.78rem; "
+        "  letter-spacing:.06em; text-transform:uppercase; margin: 6px 0 4px; }"
+        "</style>"
+    )
+
+
 def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=None,
                           *, pitcher_changed=False, original_name=""):
     # Coerce display-bound inputs defensively. Live overlays can deliver
@@ -10306,7 +11060,7 @@ _TOP_VIEW_OPTIONS = [
     "🧊 Cold Batters",
     "💣 HR Milestones",
     "☀️🌙 Day vs Night HR",
-    "🥎 Slate Pitchers",
+    "🥎 Pitcher Breakdown",
     "💎 HR Sleepers",
     "📊 Total Bases 1.5+",
     "🎯 HRR 1.5+",
@@ -10596,15 +11350,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if _view == "🥎 Slate Pitchers":
+if _view == "🥎 Pitcher Breakdown":
     st.markdown(
         '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
-        '🥎 Slate Pitchers'
+        '🥎 Pitcher Breakdown'
         '</div>'
         '<div style="color:#64748b; font-size:.9rem; margin: -4px 0 10px 0;">'
-        'Mobile-first pitcher evaluation dashboard. Compare today\'s probable '
-        'starters on the metrics that actually predict how hard they are to bat '
-        'against — <b>K%, K/9, BB%, K-BB%, WHIP, BABIP</b>.'
+        'Arsenal analysis, opposing lineup grid, recent form, season stats — '
+        'a premium interactive breakdown of every probable starter on tonight\'s slate.'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -10812,6 +11565,148 @@ if _view == "🥎 Slate Pitchers":
                 render_slate_pitcher_dashboard(sp_df_filtered, schedule_df),
                 unsafe_allow_html=True,
             )
+
+            # ---- Interactive Pitcher Breakdown card -----------------------
+            # Lets the user drill into one starter at a time: identity row,
+            # projection KPI tiles, and tabbed deep-dive (Arsenal · Opposing
+            # Lineup · Game Log · Splits). Mobile-first; degrades gracefully
+            # when any data source returns nothing.
+            st.markdown(render_pitcher_breakdown_styles(), unsafe_allow_html=True)
+
+            # Ranking labels — "#1 Projected Ks" etc — driven by Strikeout
+            # Score so the badge always picks the highest-K projection on
+            # the slate.
+            _pb_df = sp_df_filtered.copy()
+            try:
+                _pb_df["_pb_rank"] = (
+                    _pb_df["Strikeout Score"].rank(ascending=False, method="min")
+                )
+            except Exception:
+                _pb_df["_pb_rank"] = 0
+
+            _label_options = []
+            _row_by_label = {}
+            for _, _r in _pb_df.iterrows():
+                _nm = str(_r.get("Pitcher", "") or "TBD")
+                _team = str(_r.get("Team", "") or "")
+                _opp = str(_r.get("Opp", "") or "")
+                _label = f"{_nm} — {_team} {_r.get('Loc','')} {_opp}".strip()
+                if _label in _row_by_label:
+                    _label = f"{_label} ({_r.get('Time','')})"
+                _label_options.append(_label)
+                _row_by_label[_label] = _r.to_dict()
+
+            st.markdown(
+                '<div class="pbd-picker-label">🔎 Drill into a starter</div>',
+                unsafe_allow_html=True,
+            )
+            _selected_label = st.selectbox(
+                "Pick a pitcher for full breakdown",
+                _label_options,
+                index=0,
+                key="pbd_pick",
+                label_visibility="collapsed",
+            )
+            _pb_row = _row_by_label.get(_selected_label, {})
+
+            # Pull supporting data — each call is wrapped so a failure can't
+            # blank the whole card.
+            _pid = _pb_row.get("_player_id")
+            _mix_df = pd.DataFrame()
+            try:
+                if _pid:
+                    _mix_df = pitcher_pitch_mix(arsenal_pitcher_df, _pid)
+            except Exception:
+                _mix_df = pd.DataFrame()
+
+            _log_df = pd.DataFrame()
+            try:
+                if _pid:
+                    _log_df = _fetch_pitcher_game_log(int(_pid), 2026)
+            except Exception:
+                _log_df = pd.DataFrame()
+
+            _splits = {}
+            try:
+                if _pid:
+                    _splits = _fetch_pitcher_splits_by_hand(int(_pid), 2026)
+            except Exception:
+                _splits = {}
+
+            _proj = _project_pitcher_targets(_pb_row, _log_df)
+
+            # Ranking badge (e.g. "#1 Projected Ks") — only show top-3.
+            try:
+                _rank_n = int(_pb_row.get("_pb_rank") or 0) or None
+            except Exception:
+                _rank_n = None
+            _rank_label = ""
+            if _rank_n and _rank_n <= 3:
+                _rank_label = f"#{_rank_n} Projected Ks"
+
+            # Resolve game_pk + opp team_id for the Opposing Lineup tab.
+            _opp_abbr = str(_pb_row.get("Opp") or "")
+            _game_pk = None
+            _opp_team_id = None
+            try:
+                _sched_match = schedule_df[
+                    (schedule_df["away_abbr"] == _pb_row.get("Team")) &
+                    (schedule_df["home_abbr"] == _opp_abbr)
+                ]
+                if _sched_match.empty:
+                    _sched_match = schedule_df[
+                        (schedule_df["home_abbr"] == _pb_row.get("Team")) &
+                        (schedule_df["away_abbr"] == _opp_abbr)
+                    ]
+                if not _sched_match.empty:
+                    _sched_row = _sched_match.iloc[0]
+                    _game_pk = _sched_row.get("game_pk")
+                    if _sched_row.get("away_abbr") == _opp_abbr:
+                        _opp_team_id = _sched_row.get("away_id")
+                    else:
+                        _opp_team_id = _sched_row.get("home_id")
+            except Exception:
+                _game_pk = None
+                _opp_team_id = None
+
+            _opp_k_rank = _compute_opp_k_rank(schedule_df, _opp_abbr, pitcher_stats_df)
+
+            # Render the dark hero card (LIVE PREVIEW pill, title, identity)
+            # + the KPI grid as one HTML block so the spacing reads as a
+            # single premium player card.
+            st.markdown(
+                '<div class="pbd-card">'
+                + render_pitcher_breakdown_header(_pb_row, _rank_label)
+                + render_pitcher_breakdown_kpis(_pb_row, _proj, _opp_k_rank)
+                + '</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Internal tabs — st.tabs gives us a native, mobile-friendly tab
+            # control without raw-HTML interactivity hacks.
+            _tab_arsenal, _tab_opp, _tab_log, _tab_splits = st.tabs(
+                ["🎯 Arsenal", "👥 Opposing Lineup", "📅 Game Log", "🔀 Splits"]
+            )
+            with _tab_arsenal:
+                st.markdown(
+                    render_pitcher_breakdown_arsenal(_mix_df),
+                    unsafe_allow_html=True,
+                )
+            with _tab_opp:
+                st.markdown(
+                    render_pitcher_breakdown_lineup(_game_pk, _opp_team_id, _opp_abbr),
+                    unsafe_allow_html=True,
+                )
+            with _tab_log:
+                st.markdown(
+                    render_pitcher_breakdown_game_log(_log_df, n=6),
+                    unsafe_allow_html=True,
+                )
+            with _tab_splits:
+                st.markdown(
+                    render_pitcher_breakdown_splits(_splits),
+                    unsafe_allow_html=True,
+                )
 
         # CSV download (unchanged behavior — useful for power users)
         csv_bytes = sp_df_filtered.drop(

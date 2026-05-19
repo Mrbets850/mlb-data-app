@@ -85,6 +85,26 @@ class LiveGameState:
     venue: str = ""
     away_pitcher: LivePitcher | None = None
     home_pitcher: LivePitcher | None = None
+    # Score / box-score fields — populated for live and final games. Each is
+    # ``None`` when the StatsAPI payload doesn't carry it (preview, feed lag,
+    # or archived games) so callers can fall back rather than render zeros.
+    away_score: int | None = None
+    home_score: int | None = None
+    away_hits: int | None = None
+    home_hits: int | None = None
+    away_errors: int | None = None
+    home_errors: int | None = None
+    # Inning-by-inning runs, ordered from inning 1 → N. Empty list if not
+    # available. Each entry is (away_runs, home_runs); either side can be
+    # None when the bottom half hasn't been played yet.
+    innings: list[tuple[int | None, int | None]] = field(default_factory=list)
+    # Live game state bits used by the score ticker. All optional.
+    balls: int | None = None
+    strikes: int | None = None
+    outs: int | None = None
+    on_first: bool = False
+    on_second: bool = False
+    on_third: bool = False
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
@@ -239,6 +259,61 @@ def _current_pitcher_from_boxscore(box_side: Mapping[str, Any],
     )
 
 
+def _extract_score(linescore: Mapping[str, Any] | None) -> dict[str, int | None]:
+    """Pull R/H/E for away+home from a StatsAPI linescore block. Returns a
+    dict with all six keys; values are ``None`` when the payload is missing
+    that field so the caller can choose to hide vs. render a blank cell.
+    """
+    out = {
+        "away_score": None, "home_score": None,
+        "away_hits": None, "home_hits": None,
+        "away_errors": None, "home_errors": None,
+    }
+    if not linescore or not isinstance(linescore, Mapping):
+        return out
+    teams = linescore.get("teams") or {}
+    for side in ("away", "home"):
+        t = teams.get(side) or {}
+        out[f"{side}_score"] = _safe_int(t.get("runs"))
+        out[f"{side}_hits"] = _safe_int(t.get("hits"))
+        out[f"{side}_errors"] = _safe_int(t.get("errors"))
+    return out
+
+
+def _extract_innings(linescore: Mapping[str, Any] | None) -> list[tuple[int | None, int | None]]:
+    """Inning-by-inning runs for a compact box score. Empty list when the
+    payload doesn't carry per-inning detail (preview games, archived feeds).
+    """
+    if not linescore or not isinstance(linescore, Mapping):
+        return []
+    out: list[tuple[int | None, int | None]] = []
+    for inn in linescore.get("innings") or []:
+        away = _safe_int(((inn.get("away") or {}).get("runs")))
+        home = _safe_int(((inn.get("home") or {}).get("runs")))
+        out.append((away, home))
+    return out
+
+
+def _extract_diamond(linescore: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Live count + base state for the ticker. Defaults are "no runner /
+    no count" so the caller can render a neutral diamond when the feed
+    doesn't include them (e.g. between innings)."""
+    out = {
+        "balls": None, "strikes": None, "outs": None,
+        "on_first": False, "on_second": False, "on_third": False,
+    }
+    if not linescore or not isinstance(linescore, Mapping):
+        return out
+    out["balls"] = _safe_int(linescore.get("balls"))
+    out["strikes"] = _safe_int(linescore.get("strikes"))
+    out["outs"] = _safe_int(linescore.get("outs"))
+    offense = linescore.get("offense") or {}
+    out["on_first"] = bool(offense.get("first"))
+    out["on_second"] = bool(offense.get("second"))
+    out["on_third"] = bool(offense.get("third"))
+    return out
+
+
 def parse_live_feed(feed: Mapping[str, Any] | None) -> LiveGameState | None:
     """Parse a StatsAPI ``/feed/live`` payload into a ``LiveGameState``.
 
@@ -281,6 +356,10 @@ def parse_live_feed(feed: Mapping[str, Any] | None) -> LiveGameState | None:
     half = (linescore.get("inningHalf") or "").lower()
     venue = ((game_data.get("venue") or {}).get("name") or "")
 
+    score = _extract_score(linescore)
+    innings = _extract_innings(linescore)
+    diamond = _extract_diamond(linescore)
+
     return LiveGameState(
         game_pk=pk,
         abstract_status=abstract,
@@ -290,6 +369,19 @@ def parse_live_feed(feed: Mapping[str, Any] | None) -> LiveGameState | None:
         venue=venue,
         away_pitcher=away_pitcher,
         home_pitcher=home_pitcher,
+        away_score=score["away_score"],
+        home_score=score["home_score"],
+        away_hits=score["away_hits"],
+        home_hits=score["home_hits"],
+        away_errors=score["away_errors"],
+        home_errors=score["home_errors"],
+        innings=innings,
+        balls=diamond["balls"],
+        strikes=diamond["strikes"],
+        outs=diamond["outs"],
+        on_first=diamond["on_first"],
+        on_second=diamond["on_second"],
+        on_third=diamond["on_third"],
     )
 
 
@@ -308,12 +400,28 @@ def parse_boxscore_only(box: Mapping[str, Any] | None,
     teams = box.get("teams") or {}
     away_pitcher = _current_pitcher_from_boxscore(teams.get("away"), None)
     home_pitcher = _current_pitcher_from_boxscore(teams.get("home"), None)
+    # The /boxscore endpoint surfaces R/H/E inside each team's batting line.
+    def _team_rhe(side_block: Mapping[str, Any] | None) -> dict[str, int | None]:
+        if not side_block:
+            return {"runs": None, "hits": None, "errors": None}
+        bat = (side_block.get("teamStats") or {}).get("batting") or {}
+        fld = (side_block.get("teamStats") or {}).get("fielding") or {}
+        return {
+            "runs": _safe_int(bat.get("runs")),
+            "hits": _safe_int(bat.get("hits")),
+            "errors": _safe_int(fld.get("errors")),
+        }
+    away_rhe = _team_rhe(teams.get("away"))
+    home_rhe = _team_rhe(teams.get("home"))
     return LiveGameState(
         game_pk=int(game_pk),
         abstract_status=abstract_status,
         detailed_status=detailed_status,
         away_pitcher=away_pitcher,
         home_pitcher=home_pitcher,
+        away_score=away_rhe["runs"], home_score=home_rhe["runs"],
+        away_hits=away_rhe["hits"], home_hits=home_rhe["hits"],
+        away_errors=away_rhe["errors"], home_errors=home_rhe["errors"],
     )
 
 

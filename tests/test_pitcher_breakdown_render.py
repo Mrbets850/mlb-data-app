@@ -243,3 +243,59 @@ def test_opp_k_rank_returns_none_when_no_team_table_loaded():
     ns = _load_helpers()
     out = ns["_compute_opp_k_rank"](None, "NYY", None)
     assert out == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# Simplified Pitcher Breakdown view — old clutter must not be rendered.
+# These checks scan the source of app.py for the literal clutter strings
+# inside the "🥎 Pitcher Breakdown" view block. They are intentionally a
+# textual guard against regressions that would reintroduce the old
+# dashboard alongside the new card.
+# ---------------------------------------------------------------------------
+
+def _pitcher_breakdown_view_source() -> str:
+    src = pathlib.Path(__file__).resolve().parent.parent / "app.py"
+    text = src.read_text()
+    start = text.find('if _view == "🥎 Pitcher Breakdown":')
+    assert start >= 0, "Pitcher Breakdown view block not found in app.py"
+    # End at the next top-level view marker.
+    end = text.find('# ============== HR Sleepers view ==============', start)
+    assert end > start, "Could not locate end of Pitcher Breakdown view block"
+    return text[start:end]
+
+
+def test_pitcher_breakdown_view_omits_old_clutter_labels():
+    block = _pitcher_breakdown_view_source()
+    forbidden = [
+        "K Dominator",
+        "Command Edge",
+        "Traffic Limiter",
+        "Matchup Boost",
+        "How to read these metrics",
+        "Download Slate Pitchers",
+        "Sort by",
+        "Min IP",
+        "Hide TBD probable starters",
+        "render_slate_pitcher_dashboard",
+        "render_slate_pitcher_explainer",
+        "probable starters · ",
+    ]
+    for s in forbidden:
+        assert s not in block, f"Old clutter still present in Pitcher Breakdown view: {s!r}"
+
+
+def test_pitcher_breakdown_view_keeps_new_card_and_tabs():
+    block = _pitcher_breakdown_view_source()
+    required = [
+        "render_pitcher_breakdown_styles",
+        "render_pitcher_breakdown_header",
+        "render_pitcher_breakdown_kpis",
+        "render_pitcher_breakdown_arsenal",
+        "render_pitcher_breakdown_lineup",
+        "render_pitcher_breakdown_game_log",
+        "render_pitcher_breakdown_splits",
+        "build_slate_pitcher_table",
+        "Drill into a starter",
+    ]
+    for s in required:
+        assert s in block, f"Required Pitcher Breakdown piece missing: {s!r}"

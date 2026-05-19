@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:14:44Z",
+  "last_updated": "2026-05-19T12:15:02Z",
   "picks": [
     {
       "rank": 1,
@@ -38,6 +38,14 @@
       "name": "Brandon Lowe",
       "team": "",
       "player_id": 664040,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 6,
+      "name": "Munetaka Murakami",
+      "team": "",
+      "player_id": 808959,
       "note": "",
       "confidence": "🔥 Lock"
     }

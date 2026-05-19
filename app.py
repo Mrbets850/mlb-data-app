@@ -11356,370 +11356,155 @@ if _view == "🥎 Pitcher Breakdown":
         '🥎 Pitcher Breakdown'
         '</div>'
         '<div style="color:#64748b; font-size:.9rem; margin: -4px 0 10px 0;">'
-        'Arsenal analysis, opposing lineup grid, recent form, season stats — '
-        'a premium interactive breakdown of every probable starter on tonight\'s slate.'
+        'Pick a starter for a premium drill-down: arsenal, opposing lineup, '
+        'recent form, and splits.'
         '</div>',
         unsafe_allow_html=True,
     )
     if pitcher_stats_df is None or pitcher_stats_df.empty:
         st.warning(
-            "Pitcher stats CSV (`Data:savant_pitcher_stats.csv`) hasn’t loaded yet. "
-            "Make sure it’s pushed to the data repo — the Slate Pitchers tab joins by `player_id`."
+            "Pitcher stats CSV (`Data:savant_pitcher_stats.csv`) hasn’t loaded yet."
         )
         st.stop()
-    with st.spinner("Building slate pitcher board…"):
+    with st.spinner("Loading probable starters…"):
         sp_df = build_slate_pitcher_table(schedule_df, pitcher_stats_df)
+    # Drop TBD probables — they have no data behind the picker.
+    if not sp_df.empty and "Pitcher" in sp_df.columns:
+        sp_df = sp_df[sp_df["Pitcher"].astype(str).str.upper() != "TBD"]
     if sp_df.empty:
         st.info("No probable starters posted yet for this slate. Check back closer to first pitch.")
     else:
-        # -------- Filter controls (stack-friendly on phones) --------
-        # Season options: derived from the Savant pitcher_stats CSV. Today's
-        # slate is always the current season but the filter UI is preserved
-        # for forward-compat with multi-year data.
+        # ---- Interactive Pitcher Breakdown card -----------------------
+        # Single focus: starter picker + premium dark card + tabs.
+        st.markdown(render_pitcher_breakdown_styles(), unsafe_allow_html=True)
+
+        # Ranking labels — "#1 Projected Ks" etc — driven by Strikeout
+        # Score so the badge always picks the highest-K projection on
+        # the slate.
+        _pb_df = sp_df.copy()
         try:
-            _year_vals = sorted(
-                {int(y) for y in pitcher_stats_df.get("year", pd.Series([])).dropna().unique()
-                 if str(y).strip().isdigit()},
-                reverse=True,
+            _pb_df["_pb_rank"] = (
+                _pb_df["Strikeout Score"].rank(ascending=False, method="min")
             )
         except Exception:
-            _year_vals = []
-        _season_options = ["Current"] + [str(y) for y in _year_vals]
+            _pb_df["_pb_rank"] = 0
 
-        _team_options = ["All"] + sorted({
-            str(t) for t in sp_df.get("Team", pd.Series([])).dropna().tolist()
-            if str(t).strip()
-        })
+        _label_options = []
+        _row_by_label = {}
+        for _, _r in _pb_df.iterrows():
+            _nm = str(_r.get("Pitcher", "") or "TBD")
+            _team = str(_r.get("Team", "") or "")
+            _opp = str(_r.get("Opp", "") or "")
+            _label = f"{_nm} — {_team} {_r.get('Loc','')} {_opp}".strip()
+            if _label in _row_by_label:
+                _label = f"{_label} ({_r.get('Time','')})"
+            _label_options.append(_label)
+            _row_by_label[_label] = _r.to_dict()
 
-        f1, f2 = st.columns(2)
-        with f1:
-            _f_season = st.selectbox(
-                "Season", _season_options, index=0, key="sp_f_season",
-                help="Season for the underlying skill stats. 'Current' uses the "
-                     "latest year in the Savant CSV.",
-            )
-        with f2:
-            _f_throws = st.selectbox(
-                "Handedness", ["All", "R (RHP)", "L (LHP)"], index=0,
-                key="sp_f_throws",
-                help="Filter by pitcher throwing hand.",
-            )
-        f3, f4 = st.columns(2)
-        with f3:
-            _f_team = st.selectbox(
-                "Team", _team_options, index=0, key="sp_f_team",
-                help="Filter the slate by the pitcher's team.",
-            )
-        with f4:
-            _f_min_ip = st.number_input(
-                "Min IP", min_value=0.0, value=0.0, step=5.0,
-                key="sp_f_min_ip",
-                help="Hide pitchers with fewer than this many innings pitched "
-                     "(per MLB StatsAPI season totals).",
-            )
-
-        _hide_tbd = st.checkbox(
-            "Hide TBD probable starters", value=True, key="sp_hide_tbd",
-            help="Hide rows whose probable starter is still TBD.",
+        st.markdown(
+            '<div class="pbd-picker-label">🔎 Drill into a starter</div>',
+            unsafe_allow_html=True,
         )
+        _selected_label = st.selectbox(
+            "Pick a pitcher for full breakdown",
+            _label_options,
+            index=0,
+            key="pbd_pick",
+            label_visibility="collapsed",
+        )
+        _pb_row = _row_by_label.get(_selected_label, {})
 
-        # ----- Apply filters -----
-        sp_df_filtered = sp_df.copy()
-        if _hide_tbd:
-            sp_df_filtered = sp_df_filtered[
-                sp_df_filtered["Pitcher"].astype(str).str.upper() != "TBD"
-            ]
-        if _f_throws.startswith("R"):
-            sp_df_filtered = sp_df_filtered[sp_df_filtered["Throws"] == "R"]
-        elif _f_throws.startswith("L"):
-            sp_df_filtered = sp_df_filtered[sp_df_filtered["Throws"] == "L"]
-        if _f_team and _f_team != "All":
-            sp_df_filtered = sp_df_filtered[sp_df_filtered["Team"] == _f_team]
-        if _f_min_ip and _f_min_ip > 0 and "IP" in sp_df_filtered.columns:
-            sp_df_filtered = sp_df_filtered[
-                sp_df_filtered["IP"].fillna(-1).astype(float) >= float(_f_min_ip)
-            ]
-
-        # Coverage summary
-        if "Source" in sp_df.columns:
-            counts = sp_df["Source"].fillna("No sample").value_counts().to_dict()
-            total = int(sum(counts.values()))
-            def _ct(tag): return int(counts.get(tag, 0))
-            n_savant = _ct("Savant") + _ct("Savant·sm") + _ct("Savant·xs")
-            n_api    = _ct("StatsAPI")
-            n_none   = _ct("No sample")
-            st.markdown(
-                f'<div style="margin: 4px 0 10px 0; font-size:.85rem; color:#94a3b8;">'
-                f'<b>{total}</b> probable starters · '
-                f'<span style="color:#22c55e;">●</span> {n_savant} Savant 2026 · '
-                f'<span style="color:#60a5fa;">●</span> {n_api} StatsAPI fallback · '
-                f'<span style="color:#94a3b8;">●</span> {n_none} no sample'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        # ----- Top callouts: the slate's strongest profiles by category -----
-        def _best(df_, col, ascending=False, min_ip=0.0):
-            try:
-                d = df_[df_[col].notna()].copy() if col in df_.columns else pd.DataFrame()
-            except Exception:
-                d = pd.DataFrame()
-            if "IP" in d.columns and min_ip:
-                d = d[d["IP"].fillna(0).astype(float) >= float(min_ip)]
-            if d.empty:
-                return None
-            d = d.sort_values(col, ascending=ascending, na_position="last")
-            return d.iloc[0].to_dict()
-
-        callouts = []
-        cands = [
-            ("⚡ K Dominator",    "K-BB%", False, "Highest K-BB% on the slate — best mix of bat-missing and command."),
-            ("🎯 Command Edge",  "BB%",   True,  "Lowest walk rate — won't beat himself."),
-            ("🛡️ Traffic Limiter","WHIP",  True,  "Lowest WHIP — fewest baserunners allowed."),
-            ("📈 Matchup Boost", "K/9",   False, "Highest K/9 — biggest strikeout ceiling tonight."),
-        ]
-        for label, col, asc, blurb in cands:
-            row = _best(sp_df_filtered, col, ascending=asc, min_ip=5.0)
-            if row:
-                callouts.append((label, col, row, blurb))
-
-        if callouts:
-            cards_html = []
-            for label, col, row, blurb in callouts:
-                v = row.get(col)
-                fmt = SLATE_PITCHER_FORMAT.get(col, "{}")
-                try:
-                    vtxt = fmt.format(float(v))
-                except Exception:
-                    vtxt = str(v) if v is not None else "—"
-                cards_html.append(
-                    '<div class="spco-card">'
-                    f'<div class="spco-tag">{label}</div>'
-                    f'<div class="spco-name">{row.get("Pitcher","—")}</div>'
-                    f'<div class="spco-sub">{row.get("Team","")} '
-                    f'{row.get("Loc","")} {row.get("Opp","")} · {row.get("Time","")}</div>'
-                    f'<div class="spco-val">{col} <b>{vtxt}</b></div>'
-                    f'<div class="spco-blurb">{blurb}</div>'
-                    '</div>'
-                )
-            st.markdown(
-                "<style>"
-                ".spco-row { display:grid; grid-template-columns: 1fr 1fr; gap:10px; "
-                "  margin: 6px 0 14px 0; }"
-                "@media (min-width:720px) { .spco-row { grid-template-columns: repeat(4, 1fr); } }"
-                ".spco-card { background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); "
-                "  border:1px solid #334155; border-radius:12px; padding:10px 12px; "
-                "  color:#e5e7eb; }"
-                ".spco-tag { font-size:.68rem; font-weight:800; letter-spacing:.05em; "
-                "  text-transform:uppercase; color:#fde68a; }"
-                ".spco-name { font-weight:800; font-size:.98rem; color:#f8fafc; margin-top:4px; "
-                "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
-                ".spco-sub { font-size:.72rem; color:#94a3b8; margin-top:2px; }"
-                ".spco-val { margin-top:6px; font-size:.85rem; color:#cbd5e1; }"
-                ".spco-val b { color:#f8fafc; font-variant-numeric: tabular-nums; "
-                "  font-weight:800; }"
-                ".spco-blurb { font-size:.72rem; color:#94a3b8; margin-top:4px; line-height:1.3; }"
-                "</style>"
-                '<div class="spco-row">' + "".join(cards_html) + '</div>',
-                unsafe_allow_html=True,
-            )
-
-        # Explanation panel (above the cards so first-time users see context first)
-        st.markdown(render_slate_pitcher_explainer(), unsafe_allow_html=True)
-
-        # ----- Sort + main mobile-first cards -----
-        sort_cols = [c for c in
-                     ["Pitch Score", "K-BB%", "K%", "K/9", "BB%", "WHIP", "BABIP",
-                      "xwOBA", "Whiff%", "IP"]
-                     if c in sp_df_filtered.columns]
-        s1, s2 = st.columns([1.6, 1])
-        with s1:
-            _sort_by = st.selectbox(
-                "Sort by", sort_cols,
-                index=0 if "Pitch Score" in sort_cols else 0,
-                key="sp_sort_by",
-            )
-        with s2:
-            _sort_dir = st.selectbox(
-                "Order",
-                ["Best first", "Worst first"],
-                index=0, key="sp_sort_dir",
-            )
-        # "Best" depends on whether the metric is positive (higher better) or
-        # reverse (lower better).
-        _reverse_metrics = {"BB%", "WHIP", "BABIP", "xwOBA", "BB/9"}
-        asc_best = _sort_by in _reverse_metrics
-        ascending = asc_best if _sort_dir == "Best first" else (not asc_best)
+        # Pull supporting data — each call is wrapped so a failure can't
+        # blank the whole card.
+        _pid = _pb_row.get("_player_id")
+        _mix_df = pd.DataFrame()
         try:
-            sp_df_filtered = sp_df_filtered.sort_values(
-                _sort_by, ascending=ascending, na_position="last"
-            ).reset_index(drop=True)
+            if _pid:
+                _mix_df = pitcher_pitch_mix(arsenal_pitcher_df, _pid)
         except Exception:
-            pass
-
-        if sp_df_filtered.empty:
-            st.info("No pitchers match the current filters. Try widening Min IP, "
-                    "team, or handedness.")
-        else:
-            st.markdown(
-                render_slate_pitcher_dashboard(sp_df_filtered, schedule_df),
-                unsafe_allow_html=True,
-            )
-
-            # ---- Interactive Pitcher Breakdown card -----------------------
-            # Lets the user drill into one starter at a time: identity row,
-            # projection KPI tiles, and tabbed deep-dive (Arsenal · Opposing
-            # Lineup · Game Log · Splits). Mobile-first; degrades gracefully
-            # when any data source returns nothing.
-            st.markdown(render_pitcher_breakdown_styles(), unsafe_allow_html=True)
-
-            # Ranking labels — "#1 Projected Ks" etc — driven by Strikeout
-            # Score so the badge always picks the highest-K projection on
-            # the slate.
-            _pb_df = sp_df_filtered.copy()
-            try:
-                _pb_df["_pb_rank"] = (
-                    _pb_df["Strikeout Score"].rank(ascending=False, method="min")
-                )
-            except Exception:
-                _pb_df["_pb_rank"] = 0
-
-            _label_options = []
-            _row_by_label = {}
-            for _, _r in _pb_df.iterrows():
-                _nm = str(_r.get("Pitcher", "") or "TBD")
-                _team = str(_r.get("Team", "") or "")
-                _opp = str(_r.get("Opp", "") or "")
-                _label = f"{_nm} — {_team} {_r.get('Loc','')} {_opp}".strip()
-                if _label in _row_by_label:
-                    _label = f"{_label} ({_r.get('Time','')})"
-                _label_options.append(_label)
-                _row_by_label[_label] = _r.to_dict()
-
-            st.markdown(
-                '<div class="pbd-picker-label">🔎 Drill into a starter</div>',
-                unsafe_allow_html=True,
-            )
-            _selected_label = st.selectbox(
-                "Pick a pitcher for full breakdown",
-                _label_options,
-                index=0,
-                key="pbd_pick",
-                label_visibility="collapsed",
-            )
-            _pb_row = _row_by_label.get(_selected_label, {})
-
-            # Pull supporting data — each call is wrapped so a failure can't
-            # blank the whole card.
-            _pid = _pb_row.get("_player_id")
             _mix_df = pd.DataFrame()
-            try:
-                if _pid:
-                    _mix_df = pitcher_pitch_mix(arsenal_pitcher_df, _pid)
-            except Exception:
-                _mix_df = pd.DataFrame()
 
+        _log_df = pd.DataFrame()
+        try:
+            if _pid:
+                _log_df = _fetch_pitcher_game_log(int(_pid), 2026)
+        except Exception:
             _log_df = pd.DataFrame()
-            try:
-                if _pid:
-                    _log_df = _fetch_pitcher_game_log(int(_pid), 2026)
-            except Exception:
-                _log_df = pd.DataFrame()
 
+        _splits = {}
+        try:
+            if _pid:
+                _splits = _fetch_pitcher_splits_by_hand(int(_pid), 2026)
+        except Exception:
             _splits = {}
-            try:
-                if _pid:
-                    _splits = _fetch_pitcher_splits_by_hand(int(_pid), 2026)
-            except Exception:
-                _splits = {}
 
-            _proj = _project_pitcher_targets(_pb_row, _log_df)
+        _proj = _project_pitcher_targets(_pb_row, _log_df)
 
-            # Ranking badge (e.g. "#1 Projected Ks") — only show top-3.
-            try:
-                _rank_n = int(_pb_row.get("_pb_rank") or 0) or None
-            except Exception:
-                _rank_n = None
-            _rank_label = ""
-            if _rank_n and _rank_n <= 3:
-                _rank_label = f"#{_rank_n} Projected Ks"
+        try:
+            _rank_n = int(_pb_row.get("_pb_rank") or 0) or None
+        except Exception:
+            _rank_n = None
+        _rank_label = ""
+        if _rank_n and _rank_n <= 3:
+            _rank_label = f"#{_rank_n} Projected Ks"
 
-            # Resolve game_pk + opp team_id for the Opposing Lineup tab.
-            _opp_abbr = str(_pb_row.get("Opp") or "")
+        _opp_abbr = str(_pb_row.get("Opp") or "")
+        _game_pk = None
+        _opp_team_id = None
+        try:
+            _sched_match = schedule_df[
+                (schedule_df["away_abbr"] == _pb_row.get("Team")) &
+                (schedule_df["home_abbr"] == _opp_abbr)
+            ]
+            if _sched_match.empty:
+                _sched_match = schedule_df[
+                    (schedule_df["home_abbr"] == _pb_row.get("Team")) &
+                    (schedule_df["away_abbr"] == _opp_abbr)
+                ]
+            if not _sched_match.empty:
+                _sched_row = _sched_match.iloc[0]
+                _game_pk = _sched_row.get("game_pk")
+                if _sched_row.get("away_abbr") == _opp_abbr:
+                    _opp_team_id = _sched_row.get("away_id")
+                else:
+                    _opp_team_id = _sched_row.get("home_id")
+        except Exception:
             _game_pk = None
             _opp_team_id = None
-            try:
-                _sched_match = schedule_df[
-                    (schedule_df["away_abbr"] == _pb_row.get("Team")) &
-                    (schedule_df["home_abbr"] == _opp_abbr)
-                ]
-                if _sched_match.empty:
-                    _sched_match = schedule_df[
-                        (schedule_df["home_abbr"] == _pb_row.get("Team")) &
-                        (schedule_df["away_abbr"] == _opp_abbr)
-                    ]
-                if not _sched_match.empty:
-                    _sched_row = _sched_match.iloc[0]
-                    _game_pk = _sched_row.get("game_pk")
-                    if _sched_row.get("away_abbr") == _opp_abbr:
-                        _opp_team_id = _sched_row.get("away_id")
-                    else:
-                        _opp_team_id = _sched_row.get("home_id")
-            except Exception:
-                _game_pk = None
-                _opp_team_id = None
 
-            _opp_k_rank = _compute_opp_k_rank(schedule_df, _opp_abbr, pitcher_stats_df)
+        _opp_k_rank = _compute_opp_k_rank(schedule_df, _opp_abbr, pitcher_stats_df)
 
-            # Render the dark hero card (LIVE PREVIEW pill, title, identity)
-            # + the KPI grid as one HTML block so the spacing reads as a
-            # single premium player card.
+        st.markdown(
+            '<div class="pbd-card">'
+            + render_pitcher_breakdown_header(_pb_row, _rank_label)
+            + render_pitcher_breakdown_kpis(_pb_row, _proj, _opp_k_rank)
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+        _tab_arsenal, _tab_opp, _tab_log, _tab_splits = st.tabs(
+            ["🎯 Arsenal", "👥 Opposing Lineup", "📅 Game Log", "🔀 Splits"]
+        )
+        with _tab_arsenal:
             st.markdown(
-                '<div class="pbd-card">'
-                + render_pitcher_breakdown_header(_pb_row, _rank_label)
-                + render_pitcher_breakdown_kpis(_pb_row, _proj, _opp_k_rank)
-                + '</div>',
+                render_pitcher_breakdown_arsenal(_mix_df),
                 unsafe_allow_html=True,
             )
-
-            # Internal tabs — st.tabs gives us a native, mobile-friendly tab
-            # control without raw-HTML interactivity hacks.
-            _tab_arsenal, _tab_opp, _tab_log, _tab_splits = st.tabs(
-                ["🎯 Arsenal", "👥 Opposing Lineup", "📅 Game Log", "🔀 Splits"]
+        with _tab_opp:
+            st.markdown(
+                render_pitcher_breakdown_lineup(_game_pk, _opp_team_id, _opp_abbr),
+                unsafe_allow_html=True,
             )
-            with _tab_arsenal:
-                st.markdown(
-                    render_pitcher_breakdown_arsenal(_mix_df),
-                    unsafe_allow_html=True,
-                )
-            with _tab_opp:
-                st.markdown(
-                    render_pitcher_breakdown_lineup(_game_pk, _opp_team_id, _opp_abbr),
-                    unsafe_allow_html=True,
-                )
-            with _tab_log:
-                st.markdown(
-                    render_pitcher_breakdown_game_log(_log_df, n=6),
-                    unsafe_allow_html=True,
-                )
-            with _tab_splits:
-                st.markdown(
-                    render_pitcher_breakdown_splits(_splits),
-                    unsafe_allow_html=True,
-                )
-
-        # CSV download (unchanged behavior — useful for power users)
-        csv_bytes = sp_df_filtered.drop(
-            columns=[c for c in sp_df_filtered.columns if c.startswith("_")],
-            errors="ignore",
-        ).to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "⬇️ Download Slate Pitchers (CSV)",
-            data=csv_bytes,
-            file_name=f"slate_pitchers_{selected_date}.csv",
-            mime="text/csv",
-            width='content',
-        )
+        with _tab_log:
+            st.markdown(
+                render_pitcher_breakdown_game_log(_log_df, n=6),
+                unsafe_allow_html=True,
+            )
+        with _tab_splits:
+            st.markdown(
+                render_pitcher_breakdown_splits(_splits),
+                unsafe_allow_html=True,
+            )
     st.stop()
 
 # ============== HR Sleepers view ==============

@@ -9233,8 +9233,40 @@ def _pp_tone(v, lo, hi, reverse=False):
     return "good"
 
 
+def _safe_str(v, default=""):
+    """Coerce arbitrary live-metadata values to a clean string for rendering.
+
+    Why: live overlays may inject ``None``, ``float('nan')``, pandas NA, dicts,
+    or other non-string values into fields the renderer drops into an
+    HTML/markdown template. A ``TypeError`` mid-template (e.g. ``'replaced ' +
+    None``) wipes the whole card and surfaces raw HTML to the user.
+    """
+    try:
+        if v is None:
+            return default
+        # pandas NA / numpy NaN — comparing NaN to itself is the cheapest check
+        # that works without a hard pandas dependency in this helper.
+        if isinstance(v, float) and v != v:
+            return default
+        s = str(v).strip()
+        if not s or s.lower() in ("nan", "none", "<na>"):
+            return default
+        return s
+    except Exception:
+        return default
+
+
 def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=None,
                           *, pitcher_changed=False, original_name=""):
+    # Coerce display-bound inputs defensively. Live overlays can deliver
+    # ``None`` / NaN / non-string values into any of these slots, and an
+    # exception while building the f-string below blanks the whole card.
+    import html as _html
+    label_s = _safe_str(label, "SP")
+    pitcher_name_s = _safe_str(pitcher_name, "TBD")
+    pitch_hand_s = _safe_str(pitch_hand, "?")
+    original_name_s = _safe_str(original_name, "")
+    pitcher_changed_b = bool(pitcher_changed)
     score, key, verdict = pitcher_vulnerability(p_row)
     # Live StatsAPI season totals (WHIP, ERA, HR/9) — same data path the
     # Slate Pitchers builder uses, so the numbers stay consistent across the
@@ -9324,13 +9356,15 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
     # original probable so a bettor knows what the matchup was keyed on
     # before the change.
     change_badge_html = ""
-    if pitcher_changed:
-        _title = (
-            f"Active pitcher differs from probable starter "
-            f"({original_name or 'starter'} pulled)"
-            if original_name else
+    replaced_html = ""
+    if pitcher_changed_b:
+        _orig_esc = _html.escape(original_name_s) if original_name_s else ""
+        _title_raw = (
+            f"Active pitcher differs from probable starter ({original_name_s} pulled)"
+            if original_name_s else
             "Active pitcher differs from probable starter"
         )
+        _title = _html.escape(_title_raw, quote=True)
         change_badge_html = (
             f'<span title="{_title}" '
             f'style="display:inline-block; padding:3px 9px; border-radius:999px; '
@@ -9338,6 +9372,11 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
             f'font-size:.7rem; font-weight:900; letter-spacing:.04em; '
             f'margin-left:8px; text-transform:uppercase;">⚠️ Pitching Change</span>'
         )
+        if _orig_esc:
+            replaced_html = (
+                f'<div style="font-size:.72rem; color:#7c2d12; '
+                f'font-weight:700; margin-top:2px;">replaced {_orig_esc}</div>'
+            )
 
     # HR-target badge — bad (hard) / warn (soft). Same iconography as the
     # Slate Pitchers compact card so the signal is recognizable across tabs.
@@ -9372,35 +9411,67 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
         )
 
     mix_html = render_pitch_mix_block(pitch_mix_df, surface_bg="#ffffff") if pitch_mix_df is not None else ""
-    st.markdown(f"""
-    <div style="background:{color_bg}; border:1px solid #e2e8f0; border-left:6px solid {border};
-                border-radius:14px; padding:12px 14px;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-            <div>
-                <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">{label}</div>
-                <div style="font-size:1.05rem; font-weight:900; color:#0f172a;">{pitcher_name or 'TBD'}
-                    <span style="color:#64748b; font-weight:700; font-size:0.85rem;">({pitch_hand or '?'})</span>
-                    {change_badge_html}{hr_badge_html}</div>
-                {('<div style="font-size:.72rem; color:#7c2d12; font-weight:700; margin-top:2px;">replaced ' + original_name + '</div>') if (pitcher_changed and original_name) else ''}
-            </div>
-            <div style="text-align:right;">
-                <div style="font-size:1.5rem; font-weight:900; color:#0f172a; line-height:1;">{score}</div>
-                <span class="tier tier-{('elite' if key=='elite' else 'strong' if key=='strong' else 'ok' if key=='ok' else 'avoid')}">{verdict}</span>
-            </div>
-        </div>
-        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px; margin-top:10px;">
-          {_stat_block("WHIP",    whip,    whip_tone)}
-          {_stat_block("HR/9",    hr9,     hr9_tone)}
-          {_stat_block("ERA",     era,     era_tone)}
-          {_stat_block("xwOBA",   era_w,   xwoba_tone)}
-          {_stat_block("K%",      k,       k_tone)}
-          {_stat_block("BB%",     bb,      bb_tone)}
-          {_stat_block("Barrel%", barrel,  barrel_tone)}
-          {_stat_block("HardHit%",hardhit, hardhit_tone)}
-        </div>
-        {mix_html}
-    </div>
-    """, unsafe_allow_html=True)
+    _tier_key = ('elite' if key == 'elite'
+                 else 'strong' if key == 'strong'
+                 else 'ok' if key == 'ok' else 'avoid')
+    _label_html = _html.escape(label_s)
+    _name_html = _html.escape(pitcher_name_s)
+    _hand_html = _html.escape(pitch_hand_s)
+    _verdict_html = _html.escape(_safe_str(verdict, ""))
+    _score_html = _html.escape(_safe_str(score, "—"))
+    # Render the card body without leading per-line indentation. CommonMark
+    # treats a blank line followed by 4+-space-indented lines as an indented
+    # code block — so a single empty f-string slot inside an indented HTML
+    # template (e.g. the "replaced …" hint when the pitcher hasn't changed)
+    # is enough to dump the rest of the card as raw HTML text. Keep this
+    # template flush-left so an empty slot can never trigger that.
+    panel_html = (
+        f'<div style="background:{color_bg}; border:1px solid #e2e8f0; '
+        f'border-left:6px solid {border}; border-radius:14px; '
+        f'padding:12px 14px;">'
+        f'<div style="display:flex; justify-content:space-between; '
+        f'align-items:flex-start;">'
+        f'<div>'
+        f'<div style="font-size:0.7rem; color:#64748b; '
+        f'text-transform:uppercase; letter-spacing:0.1em; '
+        f'font-weight:800;">{_label_html}</div>'
+        f'<div style="font-size:1.05rem; font-weight:900; '
+        f'color:#0f172a;">{_name_html} '
+        f'<span style="color:#64748b; font-weight:700; '
+        f'font-size:0.85rem;">({_hand_html})</span>'
+        f'{change_badge_html}{hr_badge_html}</div>'
+        f'{replaced_html}'
+        f'</div>'
+        f'<div style="text-align:right;">'
+        f'<div style="font-size:1.5rem; font-weight:900; '
+        f'color:#0f172a; line-height:1;">{_score_html}</div>'
+        f'<span class="tier tier-{_tier_key}">{_verdict_html}</span>'
+        f'</div>'
+        f'</div>'
+        f'<div style="display:grid; grid-template-columns: repeat(4, 1fr); '
+        f'gap: 6px 10px; margin-top:10px;">'
+        f'{_stat_block("WHIP",    whip,    whip_tone)}'
+        f'{_stat_block("HR/9",    hr9,     hr9_tone)}'
+        f'{_stat_block("ERA",     era,     era_tone)}'
+        f'{_stat_block("xwOBA",   era_w,   xwoba_tone)}'
+        f'{_stat_block("K%",      k,       k_tone)}'
+        f'{_stat_block("BB%",     bb,      bb_tone)}'
+        f'{_stat_block("Barrel%", barrel,  barrel_tone)}'
+        f'{_stat_block("HardHit%",hardhit, hardhit_tone)}'
+        f'</div>'
+        f'{mix_html}'
+        f'</div>'
+    )
+    try:
+        st.markdown(panel_html, unsafe_allow_html=True)
+    except Exception as _exc:
+        # Last-ditch fallback so a render error in one card can't blank the
+        # entire Pitcher Vulnerability section. Surface a minimal text card
+        # so the user still sees the pitcher and a hint that data is degraded.
+        try:
+            st.warning(f"Pitcher card render fallback: {label_s} — {pitcher_name_s}")
+        except Exception:
+            pass
 
 # ===========================================================================
 # MAIN
@@ -14631,13 +14702,13 @@ if _render_matchup:
             # pitcher cards.
             _changes = []
             if game_row.get("away_pitcher_changed"):
-                _orig = game_row.get("away_original_probable") or "starter"
-                _now = game_row.get("away_probable") or "reliever"
-                _changes.append(f"{game_row.get('away_abbr','Away')}: {_orig} → {_now}")
+                _orig = _safe_str(game_row.get("away_original_probable"), "starter")
+                _now = _safe_str(game_row.get("away_probable"), "reliever")
+                _changes.append(f"{_safe_str(game_row.get('away_abbr'),'Away')}: {_orig} → {_now}")
             if game_row.get("home_pitcher_changed"):
-                _orig = game_row.get("home_original_probable") or "starter"
-                _now = game_row.get("home_probable") or "reliever"
-                _changes.append(f"{game_row.get('home_abbr','Home')}: {_orig} → {_now}")
+                _orig = _safe_str(game_row.get("home_original_probable"), "starter")
+                _now = _safe_str(game_row.get("home_probable"), "reliever")
+                _changes.append(f"{_safe_str(game_row.get('home_abbr'),'Home')}: {_orig} → {_now}")
             if _changes:
                 st.markdown(
                     "<div style='display:inline-block;margin:2px 0 8px;"
@@ -14661,20 +14732,40 @@ if _render_matchup:
     # heat-maps below can be read against each SP's exploitable profile) -----
     st.markdown('<div class="section-title" style="margin-top:14px;">🎯 Pitcher Vulnerability</div>', unsafe_allow_html=True)
     pc1, pc2 = st.columns(2)
+    _away_probable = _safe_str(game_row.get("away_probable"), "TBD")
+    _home_probable = _safe_str(game_row.get("home_probable"), "TBD")
+    _away_abbr = _safe_str(game_row.get("away_abbr"), "Away")
+    _home_abbr = _safe_str(game_row.get("home_abbr"), "Home")
     with pc1:
-        away_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("away_probable_id"))
-        render_pitcher_panel(f"Away SP — {game_row['away_abbr']}", game_row["away_probable"],
-                              ctx["away_pitch_hand"], find_pitcher_row(pitchers_df, game_row["away_probable"]),
+        try:
+            away_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("away_probable_id"))
+        except Exception:
+            away_mix = None
+        try:
+            _away_row = find_pitcher_row(pitchers_df, _away_probable)
+        except Exception:
+            _away_row = None
+        render_pitcher_panel(f"Away SP — {_away_abbr}", _away_probable,
+                              (ctx or {}).get("away_pitch_hand", "") if isinstance(ctx, dict) else "",
+                              _away_row,
                               pitch_mix_df=away_mix,
                               pitcher_changed=bool(game_row.get("away_pitcher_changed")),
-                              original_name=str(game_row.get("away_original_probable") or ""))
+                              original_name=_safe_str(game_row.get("away_original_probable"), ""))
     with pc2:
-        home_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("home_probable_id"))
-        render_pitcher_panel(f"Home SP — {game_row['home_abbr']}", game_row["home_probable"],
-                              ctx["home_pitch_hand"], find_pitcher_row(pitchers_df, game_row["home_probable"]),
+        try:
+            home_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("home_probable_id"))
+        except Exception:
+            home_mix = None
+        try:
+            _home_row = find_pitcher_row(pitchers_df, _home_probable)
+        except Exception:
+            _home_row = None
+        render_pitcher_panel(f"Home SP — {_home_abbr}", _home_probable,
+                              (ctx or {}).get("home_pitch_hand", "") if isinstance(ctx, dict) else "",
+                              _home_row,
                               pitch_mix_df=home_mix,
                               pitcher_changed=bool(game_row.get("home_pitcher_changed")),
-                              original_name=str(game_row.get("home_original_probable") or ""))
+                              original_name=_safe_str(game_row.get("home_original_probable"), ""))
 
     # away lineup — full heat-map stat board (one place for all stats)
     away_board = build_matchup_heatmap_board(

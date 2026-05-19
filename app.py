@@ -10008,6 +10008,141 @@ def render_pitcher_breakdown_kpis(p_row: dict, proj: dict, opp_k_rank: tuple) ->
     )
 
 
+def _pitcher_breakdown_pitch_score(p_row: dict, proj: dict | None = None) -> float | None:
+    """Return a 0-100 pitch score for sorting / chip display.
+
+    Prefers the precomputed ``Pitch Score`` from ``build_slate_pitcher_table``
+    (35% xwOBA-against + 25% K-BB% + 20% Whiff% + 20% Barrel%-against). When
+    that column is missing or null — common for StatsAPI-only fallback rows —
+    derives a stable proxy from available projection + skill metrics:
+
+        30% PROJ_K  normalized over 3.0..8.0  (higher=better)
+        20% K-BB%   normalized over 5..25     (higher=better)
+        20% ERA     normalized over 2.50..5.50 (lower=better)
+        15% WHIP    normalized over 1.00..1.50 (lower=better)
+        15% HR/9    normalized over 0.50..1.80 (lower=better)
+
+    Weights stay constant; whichever inputs are present split the score
+    proportionally. Returns ``None`` only if no signals are available so
+    sorting can push such pitchers to the tail with ``na_position='last'``.
+    """
+    proj = proj or {}
+
+    def _f(v):
+        try:
+            if v is None: return None
+            x = float(v)
+            return None if x != x else x
+        except Exception:
+            return None
+
+    raw = _f(p_row.get("Pitch Score"))
+    if raw is not None:
+        return round(raw, 1)
+
+    def _norm(x, lo, hi, reverse=False):
+        if x is None: return None
+        try:
+            v = float(x)
+        except Exception:
+            return None
+        if hi == lo: return 50.0
+        t = (v - lo) / (hi - lo)
+        t = max(0.0, min(1.0, t))
+        if reverse: t = 1.0 - t
+        return t * 100.0
+
+    # _norm expects lo<hi. For "lower=better" metrics we pass the natural
+    # range and use reverse=True so low raw values map to a high score.
+    parts = [
+        (0.30, _norm(proj.get("PROJ_K"), 3.0, 8.0)),
+        (0.20, _norm(p_row.get("K-BB%"), 5.0, 25.0)),
+        (0.20, _norm(p_row.get("ERA"), 2.50, 5.50, reverse=True)),
+        (0.15, _norm(p_row.get("WHIP"), 1.00, 1.50, reverse=True)),
+        (0.15, _norm(p_row.get("HR/9"), 0.50, 1.80, reverse=True)),
+    ]
+    num = 0.0
+    den = 0.0
+    for w, v in parts:
+        if v is None: continue
+        num += w * v
+        den += w
+    if den == 0:
+        return None
+    return round(num / den, 1)
+
+
+def _pitcher_breakdown_badges(p_row: dict, proj: dict | None = None) -> list:
+    """Return up to 4 (label, tone) badges for the Pitcher Breakdown card.
+
+    Reuses ``_sp_compute_tiers`` so classifications stay in sync with the
+    rest of the app, but caps the result and applies a priority ordering:
+    HR risk first (the headline bettors look for), then strength badges
+    (K Dominator, Command Edge, Traffic Limiter, Matchup Boost), then
+    softer context (BABIP / Fade Risk). Falls back to a PROJ_K-derived
+    Matchup Boost when nothing else fires but the projection is strong.
+    """
+    tiers = []
+    try:
+        tiers = _sp_compute_tiers(p_row) or []
+    except Exception:
+        tiers = []
+
+    def _prio(item):
+        label, tone = item
+        if "HR Target" in label: return 0
+        if tone == "good": return 1
+        if tone == "warn": return 2
+        return 3
+    tiers = sorted(tiers, key=_prio)
+
+    if proj and not any("Matchup Boost" in lbl for lbl, _ in tiers):
+        try:
+            pk = float(proj.get("PROJ_K") or 0)
+            if pk >= 7.5:
+                tiers.append((f"📈 Matchup Boost · {pk:.1f} K proj", "good"))
+        except Exception:
+            pass
+
+    return tiers[:4]
+
+
+def render_pitcher_breakdown_badges(p_row: dict, proj: dict | None = None,
+                                     pitch_score: float | None = None) -> str:
+    """Render the compact badge strip + pitch score chip under the KPI grid.
+
+    Returns an empty string when there is nothing meaningful to show, so
+    the card collapses cleanly for TBD / no-data rows instead of leaving
+    an empty bar.
+    """
+    badges = _pitcher_breakdown_badges(p_row, proj)
+    chips = []
+    if pitch_score is not None:
+        try:
+            ps = float(pitch_score)
+        except Exception:
+            ps = None
+        if ps is None:
+            tone = ""
+            ps_text = "—"
+        else:
+            if ps >= 65:   tone = "good"
+            elif ps >= 50: tone = "warn"
+            else:          tone = "bad"
+            ps_text = f"{ps:.1f}"
+        chips.append(
+            f'<span class="pbd-badge pbd-badge-score pbd-badge-{tone}">'
+            f'🎯 Pitch Score · {ps_text}</span>'
+        )
+    for label, tone in badges:
+        chips.append(
+            f'<span class="pbd-badge pbd-badge-{tone}">{label}</span>'
+        )
+    if not chips:
+        return ""
+    return '<div class="pbd-badges">' + "".join(chips) + '</div>'
+
+
 def render_pitcher_breakdown_arsenal(mix_df: pd.DataFrame) -> str:
     """Arsenal tab: pitch usage bars + Use% / wOBA / Whiff% / RV/100 detail."""
     if mix_df is None or mix_df.empty:
@@ -10299,6 +10434,29 @@ def render_pitcher_breakdown_styles() -> str:
         "  font-variant-numeric: tabular-nums; line-height:1.1; }"
         ".pbd-kpi-sub { font-size:.6rem; color:#94a3b8; margin-top:1px; "
         "  letter-spacing:.04em; }"
+        # ---- Badge strip (HR Target, K Dominator, Pitch Score chip, …) ----
+        ".pbd-badges { display:flex; flex-wrap:wrap; gap:6px; "
+        "  margin: -4px 0 14px 0; }"
+        ".pbd-badge { display:inline-flex; align-items:center; gap:4px; "
+        "  padding:4px 10px; border-radius:999px; font-size:.72rem; font-weight:800; "
+        "  letter-spacing:.02em; line-height:1.2; "
+        "  background: rgba(99,102,241,.14); color:#c7d2fe; "
+        "  border:1px solid rgba(99,102,241,.35); white-space:nowrap; "
+        "  max-width:100%; overflow:hidden; text-overflow:ellipsis; }"
+        ".pbd-badge-good { background: rgba(16,185,129,.16); color:#6ee7b7; "
+        "  border-color: rgba(16,185,129,.45); }"
+        ".pbd-badge-warn { background: rgba(245,158,11,.18); color:#fcd34d; "
+        "  border-color: rgba(245,158,11,.5); }"
+        ".pbd-badge-bad  { background: rgba(239,68,68,.18); color:#fca5a5; "
+        "  border-color: rgba(239,68,68,.5); }"
+        ".pbd-badge-info { background: rgba(96,165,250,.16); color:#93c5fd; "
+        "  border-color: rgba(96,165,250,.45); }"
+        ".pbd-badge-score { background: linear-gradient(135deg, "
+        "  rgba(250,204,21,.18), rgba(167,139,250,.18)); "
+        "  color:#fde68a; border-color: rgba(250,204,21,.5); }"
+        # ---- Sort hint ----
+        ".pbd-sort-hint { color:#94a3b8; font-size:.7rem; "
+        "  margin: 0 0 8px 2px; letter-spacing:.02em; }"
         # ---- Empty state ----
         ".pbd-empty { padding:14px 16px; color:#a5b4fc; background: rgba(15,23,42,.55); "
         "  border:1px dashed rgba(148,163,184,.35); border-radius:12px; font-size:.85rem; "
@@ -11404,6 +11562,42 @@ if _view == "🥎 Pitcher Breakdown":
         except Exception:
             _pb_df["_pb_rank"] = 0
 
+        # Order options for the picker. Default is the best Pitch Score
+        # first so the slate's top arms are top of mind. Slate order
+        # preserves the original schedule ordering from
+        # build_slate_pitcher_table; name is a plain alpha sort.
+        _PB_ORDER_OPTS = (
+            "Pitch Score (best to worst)",
+            "Slate order",
+            "Pitcher name (A-Z)",
+        )
+        st.markdown(
+            '<div class="pbd-picker-label">📊 Order picker</div>',
+            unsafe_allow_html=True,
+        )
+        _pb_order = st.selectbox(
+            "Order picker by",
+            _PB_ORDER_OPTS,
+            index=0,
+            key="pbd_order",
+            label_visibility="collapsed",
+        )
+        if _pb_order == "Pitch Score (best to worst)":
+            _pb_df = _pb_df.sort_values(
+                "Pitch Score", ascending=False, na_position="last"
+            ).reset_index(drop=True)
+            st.markdown(
+                '<div class="pbd-sort-hint">'
+                'Best Pitch Score first · lower=worse, dashes=insufficient sample'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        elif _pb_order == "Pitcher name (A-Z)":
+            _pb_df = _pb_df.sort_values(
+                "Pitcher", ascending=True, na_position="last"
+            ).reset_index(drop=True)
+        # Slate order: leave the original order from build_slate_pitcher_table.
+
         _label_options = []
         _row_by_label = {}
         for _, _r in _pb_df.iterrows():
@@ -11420,10 +11614,16 @@ if _view == "🥎 Pitcher Breakdown":
             '<div class="pbd-picker-label">🔎 Drill into a starter</div>',
             unsafe_allow_html=True,
         )
+        # Preserve the previously selected pitcher across re-sorts when
+        # possible; otherwise default to the top of the new ordering.
+        _prev_pick = st.session_state.get("pbd_pick")
+        _default_idx = 0
+        if _prev_pick in _label_options:
+            _default_idx = _label_options.index(_prev_pick)
         _selected_label = st.selectbox(
             "Pick a pitcher for full breakdown",
             _label_options,
-            index=0,
+            index=_default_idx,
             key="pbd_pick",
             label_visibility="collapsed",
         )
@@ -11488,11 +11688,13 @@ if _view == "🥎 Pitcher Breakdown":
             _opp_team_id = None
 
         _opp_k_rank = _compute_opp_k_rank(schedule_df, _opp_abbr, pitcher_stats_df)
+        _pb_pitch_score = _pitcher_breakdown_pitch_score(_pb_row, _proj)
 
         st.markdown(
             '<div class="pbd-card">'
             + render_pitcher_breakdown_header(_pb_row, _rank_label)
             + render_pitcher_breakdown_kpis(_pb_row, _proj, _opp_k_rank)
+            + render_pitcher_breakdown_badges(_pb_row, _proj, _pb_pitch_score)
             + '</div>',
             unsafe_allow_html=True,
         )

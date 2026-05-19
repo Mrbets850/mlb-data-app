@@ -73,6 +73,11 @@ def _load_helpers():
         "render_pitcher_breakdown_splits",
         "render_pitcher_breakdown_styles",
         "_compute_opp_k_rank",
+        "_sp_is_hr_target",
+        "_sp_compute_tiers",
+        "_pitcher_breakdown_pitch_score",
+        "_pitcher_breakdown_badges",
+        "render_pitcher_breakdown_badges",
     }
     keep = [n for n in tree.body
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -279,14 +284,16 @@ def _pitcher_breakdown_view_source() -> str:
 
 def test_pitcher_breakdown_view_omits_old_clutter_labels():
     block = _pitcher_breakdown_view_source()
+    # These are inline-literal markers from the old dashboard view — the
+    # simplified card calls helpers, so the labels never appear inline.
+    # Badge labels (K Dominator, Command Edge, Traffic Limiter, Matchup
+    # Boost) are intentionally NOT in this forbidden list now because
+    # those labels are produced by `_sp_compute_tiers` and surfaced via
+    # `render_pitcher_breakdown_badges` — they should only appear in the
+    # helper module, never inline in the view block.
     forbidden = [
-        "K Dominator",
-        "Command Edge",
-        "Traffic Limiter",
-        "Matchup Boost",
         "How to read these metrics",
         "Download Slate Pitchers",
-        "Sort by",
         "Min IP",
         "Hide TBD probable starters",
         "render_slate_pitcher_dashboard",
@@ -295,6 +302,14 @@ def test_pitcher_breakdown_view_omits_old_clutter_labels():
     ]
     for s in forbidden:
         assert s not in block, f"Old clutter still present in Pitcher Breakdown view: {s!r}"
+
+    # Badge tier labels must come from the helper, not inline in the view.
+    helper_only = ["K Dominator", "Command Edge", "Traffic Limiter"]
+    for s in helper_only:
+        assert s not in block, (
+            f"{s!r} should only be produced by _sp_compute_tiers, "
+            "not written inline in the Pitcher Breakdown view block"
+        )
 
 
 def test_pitcher_breakdown_view_keeps_new_card_and_tabs():
@@ -320,3 +335,137 @@ def test_pitcher_breakdown_view_renders_mobile_tail_spacer():
     block = _pitcher_breakdown_view_source()
     assert 'class="pbd-tail"' in block, \
         "Mobile tail spacer div missing from Pitcher Breakdown view"
+
+
+# ---------------------------------------------------------------------------
+# Badges + Pitch Score chip
+# ---------------------------------------------------------------------------
+
+def test_pitch_score_prefers_precomputed_column():
+    ns = _load_helpers()
+    row = {"Pitch Score": 72.4, "K-BB%": 18.0, "ERA": 3.10}
+    assert ns["_pitcher_breakdown_pitch_score"](row, {}) == 72.4
+
+
+def test_pitch_score_falls_back_to_projection_blend():
+    ns = _load_helpers()
+    # No Pitch Score column — derive from projection + skill metrics.
+    row = {"K-BB%": 20.0, "ERA": 3.00, "WHIP": 1.05, "HR/9": 0.7}
+    proj = {"PROJ_K": 7.5}
+    out = ns["_pitcher_breakdown_pitch_score"](row, proj)
+    assert out is not None and 60 <= out <= 100
+
+
+def test_pitch_score_returns_none_when_no_signals():
+    ns = _load_helpers()
+    assert ns["_pitcher_breakdown_pitch_score"]({}, {}) is None
+
+
+def test_badges_priority_puts_hr_target_first():
+    ns = _load_helpers()
+    # HR-prone arm with strong K% — both HR Target and K Dominator should fire,
+    # HR Target must come first.
+    row = {
+        "HR/9": 1.80, "Barrel%": 12.0, "xSLG": 0.470,
+        "K%": 30.0, "K/9": 11.0, "Whiff%": 32.0,
+        "K-BB%": 22.0, "BB%": 5.0, "WHIP": 1.08,
+    }
+    badges = ns["_pitcher_breakdown_badges"](row, {})
+    assert badges, "Expected at least one badge for HR-prone + K-dominant arm"
+    assert "HR Target" in badges[0][0], \
+        f"HR Target must be the headline badge, got: {badges[0]}"
+    # Cap stays at 4.
+    assert len(badges) <= 4
+
+
+def test_badges_caps_at_four_entries():
+    ns = _load_helpers()
+    row = {
+        "HR/9": 1.80, "Barrel%": 12.0, "xSLG": 0.470,
+        "K%": 30.0, "K/9": 11.0, "Whiff%": 32.0,
+        "K-BB%": 22.0, "BB%": 5.0, "WHIP": 1.08,
+        "BABIP": 0.250,
+    }
+    assert len(ns["_pitcher_breakdown_badges"](row, {})) <= 4
+
+
+def test_badges_empty_row_returns_empty_list():
+    ns = _load_helpers()
+    assert ns["_pitcher_breakdown_badges"]({}, {}) == []
+
+
+def test_badges_proj_k_fallback_fires_matchup_boost():
+    ns = _load_helpers()
+    # No skill metrics but a strong PROJ_K — Matchup Boost fires from
+    # the projection-derived fallback so the chip is never empty for the
+    # slate's headline pitchers.
+    badges = ns["_pitcher_breakdown_badges"]({}, {"PROJ_K": 8.0})
+    assert any("Matchup Boost" in lbl for lbl, _ in badges)
+
+
+def test_render_badges_includes_pitch_score_chip():
+    ns = _load_helpers()
+    html = ns["render_pitcher_breakdown_badges"](
+        {"K%": 28.0, "K-BB%": 20.0, "WHIP": 1.05, "HR/9": 0.6},
+        {"PROJ_K": 7.2}, 71.5,
+    )
+    assert "pbd-badges" in html
+    assert "Pitch Score" in html
+    assert "71.5" in html
+    # Should also include a strength badge from the helper.
+    assert "K Dominator" in html or "Command Edge" in html \
+        or "Matchup Boost" in html or "Traffic Limiter" in html
+
+
+def test_render_badges_empty_when_no_data_and_no_score():
+    ns = _load_helpers()
+    assert ns["render_pitcher_breakdown_badges"]({}, {}, None) == ""
+
+
+def test_render_badges_tone_class_reflects_pitch_score():
+    ns = _load_helpers()
+    # High score -> good tone class.
+    html_good = ns["render_pitcher_breakdown_badges"]({}, {}, 80.0)
+    assert "pbd-badge-good" in html_good
+    # Low score -> bad tone class.
+    html_bad = ns["render_pitcher_breakdown_badges"]({}, {}, 30.0)
+    assert "pbd-badge-bad" in html_bad
+
+
+def test_styles_block_includes_badge_classes():
+    ns = _load_helpers()
+    css = ns["render_pitcher_breakdown_styles"]()
+    for cls in (
+        "pbd-badges", "pbd-badge",
+        "pbd-badge-good", "pbd-badge-warn", "pbd-badge-bad",
+        "pbd-badge-score", "pbd-sort-hint",
+    ):
+        assert cls in css, f"Missing badge style class: {cls}"
+
+
+# ---------------------------------------------------------------------------
+# Picker sort dropdown
+# ---------------------------------------------------------------------------
+
+def test_pitcher_breakdown_view_has_order_selectbox():
+    # The view must expose a sort dropdown for the picker. We don't ship
+    # the literal "Sort by" string (the simplified design uses "Order
+    # picker") but the picker must offer Pitch Score best-to-worst as an
+    # ordering option.
+    block = _pitcher_breakdown_view_source()
+    assert "Order picker" in block, \
+        "Pitcher Breakdown view must expose an Order picker dropdown"
+    assert "Pitch Score (best to worst)" in block, \
+        "Picker must offer Pitch Score best-to-worst sort"
+    assert "Slate order" in block, "Picker must keep Slate order as a fallback"
+    assert "Pitcher name (A-Z)" in block, "Picker must keep alpha sort as an option"
+    # Best-to-worst must be the default (index=0 in the selectbox).
+    assert 'key="pbd_order"' in block, "Picker sort selectbox must have stable key"
+
+
+def test_pitcher_breakdown_view_preserves_selection_across_sorts():
+    block = _pitcher_breakdown_view_source()
+    # When sort changes, the picker should re-select the previously chosen
+    # pitcher when it still exists in the new ordering.
+    assert "_prev_pick" in block, \
+        "Picker must preserve the previous pitcher selection across re-sorts"

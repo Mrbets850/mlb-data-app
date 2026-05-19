@@ -9233,7 +9233,8 @@ def _pp_tone(v, lo, hi, reverse=False):
     return "good"
 
 
-def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=None):
+def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=None,
+                          *, pitcher_changed=False, original_name=""):
     score, key, verdict = pitcher_vulnerability(p_row)
     # Live StatsAPI season totals (WHIP, ERA, HR/9) — same data path the
     # Slate Pitchers builder uses, so the numbers stay consistent across the
@@ -9318,6 +9319,26 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
     color_bg = {"elite": "#fef2f2", "strong": "#fffbeb", "ok": "#f8fafc", "avoid": "#f0fdf4"}[key]
     border = {"elite": "#ef4444", "strong": "#f59e0b", "ok": "#94a3b8", "avoid": "#16a34a"}[key]
 
+    # Live "PITCHING CHANGE DETECTED" badge — surfaced when the live current
+    # pitcher differs from the pregame probable starter. Tooltip names the
+    # original probable so a bettor knows what the matchup was keyed on
+    # before the change.
+    change_badge_html = ""
+    if pitcher_changed:
+        _title = (
+            f"Active pitcher differs from probable starter "
+            f"({original_name or 'starter'} pulled)"
+            if original_name else
+            "Active pitcher differs from probable starter"
+        )
+        change_badge_html = (
+            f'<span title="{_title}" '
+            f'style="display:inline-block; padding:3px 9px; border-radius:999px; '
+            f'background:#fef3c7; color:#7c2d12; border:1px solid #f59e0b; '
+            f'font-size:.7rem; font-weight:900; letter-spacing:.04em; '
+            f'margin-left:8px; text-transform:uppercase;">⚠️ Pitching Change</span>'
+        )
+
     # HR-target badge — bad (hard) / warn (soft). Same iconography as the
     # Slate Pitchers compact card so the signal is recognizable across tabs.
     hr_badge_html = ""
@@ -9359,7 +9380,8 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
                 <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; font-weight:800;">{label}</div>
                 <div style="font-size:1.05rem; font-weight:900; color:#0f172a;">{pitcher_name or 'TBD'}
                     <span style="color:#64748b; font-weight:700; font-size:0.85rem;">({pitch_hand or '?'})</span>
-                    {hr_badge_html}</div>
+                    {change_badge_html}{hr_badge_html}</div>
+                {('<div style="font-size:.72rem; color:#7c2d12; font-weight:700; margin-top:2px;">replaced ' + original_name + '</div>') if (pitcher_changed and original_name) else ''}
             </div>
             <div style="text-align:right;">
                 <div style="font-size:1.5rem; font-weight:900; color:#0f172a; line-height:1;">{score}</div>
@@ -14604,6 +14626,34 @@ if _render_matchup:
                     f"{game_row.get('home_abbr','')} SP: {_home_src_label}"
                 )
             st.caption(_chip)
+            # Compact warning row when a side's pitcher has been pulled, so
+            # the change is unmistakable even if the user scrolls past the
+            # pitcher cards.
+            _changes = []
+            if game_row.get("away_pitcher_changed"):
+                _orig = game_row.get("away_original_probable") or "starter"
+                _now = game_row.get("away_probable") or "reliever"
+                _changes.append(f"{game_row.get('away_abbr','Away')}: {_orig} → {_now}")
+            if game_row.get("home_pitcher_changed"):
+                _orig = game_row.get("home_original_probable") or "starter"
+                _now = game_row.get("home_probable") or "reliever"
+                _changes.append(f"{game_row.get('home_abbr','Home')}: {_orig} → {_now}")
+            if _changes:
+                st.markdown(
+                    "<div style='display:inline-block;margin:2px 0 8px;"
+                    "padding:6px 12px;border-radius:999px;"
+                    "background:#fef3c7;color:#7c2d12;"
+                    "border:1px solid #f59e0b;"
+                    "font-weight:800;font-size:.78rem;"
+                    "letter-spacing:.04em;text-transform:uppercase;'>"
+                    "⚠️ Pitching Change Detected"
+                    "</div>"
+                    "<div style='font-size:.78rem;color:#7c2d12;"
+                    "margin:-2px 0 8px 4px;font-weight:600;'>"
+                    + " · ".join(_changes)
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
         except Exception:
             pass
 
@@ -14615,12 +14665,16 @@ if _render_matchup:
         away_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("away_probable_id"))
         render_pitcher_panel(f"Away SP — {game_row['away_abbr']}", game_row["away_probable"],
                               ctx["away_pitch_hand"], find_pitcher_row(pitchers_df, game_row["away_probable"]),
-                              pitch_mix_df=away_mix)
+                              pitch_mix_df=away_mix,
+                              pitcher_changed=bool(game_row.get("away_pitcher_changed")),
+                              original_name=str(game_row.get("away_original_probable") or ""))
     with pc2:
         home_mix = pitcher_pitch_mix(arsenal_pitcher_df, game_row.get("home_probable_id"))
         render_pitcher_panel(f"Home SP — {game_row['home_abbr']}", game_row["home_probable"],
                               ctx["home_pitch_hand"], find_pitcher_row(pitchers_df, game_row["home_probable"]),
-                              pitch_mix_df=home_mix)
+                              pitch_mix_df=home_mix,
+                              pitcher_changed=bool(game_row.get("home_pitcher_changed")),
+                              original_name=str(game_row.get("home_original_probable") or ""))
 
     # away lineup — full heat-map stat board (one place for all stats)
     away_board = build_matchup_heatmap_board(

@@ -229,9 +229,115 @@ def test_freshness_label_variants():
                         "away_pitcher_is_starter": True}
     row_live_reliever = {"away_pitcher_source": "live",
                          "away_pitcher_is_starter": False}
+    row_changed = {"away_pitcher_source": "live",
+                   "away_pitcher_is_starter": False,
+                   "away_pitcher_changed": True}
     assert freshness_label(row_pre, "away") == "Probable"
     assert "starter" in freshness_label(row_live_starter, "away").lower()
     assert "current pitcher" in freshness_label(row_live_reliever, "away").lower()
+    assert "pitching change" in freshness_label(row_changed, "away").lower()
+
+
+# ---------------------------------------------------------------------------
+# Pitching change detection
+# ---------------------------------------------------------------------------
+
+def test_overlay_pregame_does_not_flag_change():
+    pregame = LiveGameState(game_pk=777001, abstract_status="Preview")
+    out = apply_live_pitcher_to_game_row(_base_row(), state=pregame)
+    assert out["away_pitcher_changed"] is False
+    assert out["home_pitcher_changed"] is False
+
+
+def test_overlay_live_same_pitcher_does_not_flag_change():
+    live = LiveGameState(
+        game_pk=777001, abstract_status="Live",
+        away_pitcher=LivePitcher(player_id=1001, name="Old Starter", hand="R",
+                                 is_starter=True, pitches_thrown=42),
+        home_pitcher=LivePitcher(player_id=2001, name="Home SP", hand="R",
+                                 is_starter=True, pitches_thrown=55),
+    )
+    out = apply_live_pitcher_to_game_row(_base_row(), state=live)
+    assert out["away_pitcher_changed"] is False
+    assert out["home_pitcher_changed"] is False
+    assert out["_live_pitcher_change_count"] == 0
+
+
+def test_overlay_flags_change_when_pitcher_id_differs():
+    live = LiveGameState(
+        game_pk=777001, abstract_status="Live",
+        away_pitcher=LivePitcher(player_id=9999, name="Reliever", hand="L",
+                                 is_starter=False),
+        home_pitcher=LivePitcher(player_id=2001, name="Home SP", hand="R",
+                                 is_starter=True),
+    )
+    out = apply_live_pitcher_to_game_row(_base_row(), state=live)
+    assert out["away_pitcher_changed"] is True
+    assert out["away_original_probable"] == "Old Starter"
+    assert out["away_original_probable_id"] == 1001
+    assert out["home_pitcher_changed"] is False
+    assert out["_live_pitcher_change_count"] == 1
+
+
+def test_overlay_flags_change_by_name_when_id_missing():
+    # Schedule probable had a name but no id (rare hydrate edge case). When
+    # only one side has an id we still need to detect a change via names.
+    row = _base_row()
+    row["away_probable_id"] = None
+    live = LiveGameState(
+        game_pk=777001, abstract_status="Live",
+        away_pitcher=LivePitcher(player_id=9999, name="Brand New Reliever",
+                                 hand="L", is_starter=False),
+        home_pitcher=None,
+    )
+    out = apply_live_pitcher_to_game_row(row, state=live)
+    assert out["away_pitcher_changed"] is True
+
+
+def test_overlay_no_false_positive_when_probable_missing():
+    # Probable was never hydrated (id + name both blank). We have nothing to
+    # compare against — the badge must NOT trigger.
+    row = _base_row()
+    row["away_probable_id"] = None
+    row["away_probable"] = ""
+    live = LiveGameState(
+        game_pk=777001, abstract_status="Live",
+        away_pitcher=LivePitcher(player_id=9999, name="Reliever", hand="R",
+                                 is_starter=False),
+        home_pitcher=None,
+    )
+    out = apply_live_pitcher_to_game_row(row, state=live)
+    assert out["away_pitcher_changed"] is False
+
+
+def test_overlay_no_false_positive_on_name_variants():
+    # Same starter, same id — slight name difference (e.g. "John A. Doe" vs
+    # "John Doe") must NOT flag a change because the id is authoritative.
+    row = _base_row()
+    row["away_probable"] = "John A. Doe"
+    row["away_probable_id"] = 1001
+    live = LiveGameState(
+        game_pk=777001, abstract_status="Live",
+        away_pitcher=LivePitcher(player_id=1001, name="John Doe", hand="R",
+                                 is_starter=True),
+        home_pitcher=None,
+    )
+    out = apply_live_pitcher_to_game_row(row, state=live)
+    assert out["away_pitcher_changed"] is False
+
+
+def test_overlay_change_count_includes_both_sides():
+    live = LiveGameState(
+        game_pk=777001, abstract_status="Live",
+        away_pitcher=LivePitcher(player_id=9999, name="Away Reliever",
+                                 hand="L", is_starter=False),
+        home_pitcher=LivePitcher(player_id=8888, name="Home Reliever",
+                                 hand="R", is_starter=False),
+    )
+    out = apply_live_pitcher_to_game_row(_base_row(), state=live)
+    assert out["away_pitcher_changed"] is True
+    assert out["home_pitcher_changed"] is True
+    assert out["_live_pitcher_change_count"] == 2
 
 
 # ---------------------------------------------------------------------------

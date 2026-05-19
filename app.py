@@ -9344,33 +9344,38 @@ def render_game_header(game_row, ctx, weather):
     except Exception:
         snap = None
     box_html = _render_box_score_html(game_row, snap)
-    st.markdown(f"""
-    <div class="section-card dark">
-        <div class="game-header">
-            <div>
-                <div class="matchup-display">
-                    <img src="{away_logo}" alt="{game_row['away_abbr']}" />
-                    <div class="team-abbr">{game_row['away_abbr']}</div>
-                    <span class="vs">@</span>
-                    <div class="team-abbr">{game_row['home_abbr']}</div>
-                    <img src="{home_logo}" alt="{game_row['home_abbr']}" />
-                </div>
-                <div class="meta">{game_row['game_time_ct']} · {game_row['venue']} · {game_row['status']}</div>
-            </div>
-            <div class="probables">
-                <div class="label">Probables</div>
-                <div>{game_row['away_probable']} <span class="hand">({ctx['away_pitch_hand'] or '?'})</span></div>
-                <div>vs {game_row['home_probable']} <span class="hand">({ctx['home_pitch_hand'] or '?'})</span></div>
-            </div>
-        </div>
-        {box_html}
-        {weather_card_html}
-        <div class="kpi-row" style="margin-top:10px;">
-            <div class="kpi"><span class="tier {away_pill}">{game_row['away_abbr']}: {ctx['away_status']}</span></div>
-            <div class="kpi"><span class="tier {home_pill}">{game_row['home_abbr']}: {ctx['home_status']}</span></div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Build as a single flat string (no leading indentation, no blank lines).
+    # st.markdown runs textwrap.dedent + strip; an empty {box_html} on its own
+    # line becomes a blank line, which closes the CommonMark HTML block — and
+    # the subsequent indented <div>s then render as literal code blocks.
+    card_html = (
+        '<div class="section-card dark">'
+        '<div class="game-header">'
+        '<div>'
+        '<div class="matchup-display">'
+        f'<img src="{away_logo}" alt="{game_row["away_abbr"]}" />'
+        f'<div class="team-abbr">{game_row["away_abbr"]}</div>'
+        '<span class="vs">@</span>'
+        f'<div class="team-abbr">{game_row["home_abbr"]}</div>'
+        f'<img src="{home_logo}" alt="{game_row["home_abbr"]}" />'
+        '</div>'
+        f'<div class="meta">{game_row["game_time_ct"]} · {game_row["venue"]} · {game_row["status"]}</div>'
+        '</div>'
+        '<div class="probables">'
+        '<div class="label">Probables</div>'
+        f'<div>{game_row["away_probable"]} <span class="hand">({ctx["away_pitch_hand"] or "?"})</span></div>'
+        f'<div>vs {game_row["home_probable"]} <span class="hand">({ctx["home_pitch_hand"] or "?"})</span></div>'
+        '</div>'
+        '</div>'
+        f'{box_html}'
+        f'{weather_card_html}'
+        '<div class="kpi-row" style="margin-top:10px;">'
+        f'<div class="kpi"><span class="tier {away_pill}">{game_row["away_abbr"]}: {ctx["away_status"]}</span></div>'
+        f'<div class="kpi"><span class="tier {home_pill}">{game_row["home_abbr"]}: {ctx["home_status"]}</span></div>'
+        '</div>'
+        '</div>'
+    )
+    st.markdown(card_html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Live game state — current pitcher overlay
@@ -9514,15 +9519,20 @@ def render_lineup_banner(team_id, team_abbr, opp_pitcher, status, *,
             f'font-weight:700;letter-spacing:.02em;" title="Data source · '
             f'lineup status · last refresh">{freshness_text}</span>'
         )
-    st.markdown(f"""
-    <div class="lineup-banner">
-        <img src="{logo}" alt="{team_abbr}" />
-        <div class="lineup-title">{team_abbr} Lineup</div>
-        <div class="vs-pitcher">vs {opp_pitcher}</div>
-        {fresh_html}
-        <div class="badge"><span class="tier {pill_cls}">{status}</span></div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Flat string + no leading whitespace: an empty {fresh_html} on its own
+    # indented line would otherwise become a blank line after textwrap.dedent
+    # inside st.markdown, closing the HTML block and rendering the rest as
+    # literal code.
+    banner_html = (
+        '<div class="lineup-banner">'
+        f'<img src="{logo}" alt="{team_abbr}" />'
+        f'<div class="lineup-title">{team_abbr} Lineup</div>'
+        f'<div class="vs-pitcher">vs {opp_pitcher}</div>'
+        f'{fresh_html}'
+        f'<div class="badge"><span class="tier {pill_cls}">{status}</span></div>'
+        '</div>'
+    )
+    st.markdown(banner_html, unsafe_allow_html=True)
 
 def render_pitch_mix_block(mix_df: pd.DataFrame, surface_bg: str = "#ffffff") -> str:
     """Build the 'Pitch Mix' mini-table HTML for a pitcher.

@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:20:26Z",
+  "last_updated": "2026-05-19T12:20:50Z",
   "picks": [
     {
       "rank": 1,
@@ -160,6 +160,14 @@
       "player_id": 695657,
       "note": "",
       "confidence": "💎 Strong"
+    },
+    {
+      "rank": 21,
+      "name": "Luke Raley",
+      "team": "",
+      "player_id": 670042,
+      "note": "",
+      "confidence": "🎯 Lean"
     }
   ]
 }

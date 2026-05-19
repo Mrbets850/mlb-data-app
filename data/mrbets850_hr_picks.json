@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:18:29Z",
+  "last_updated": "2026-05-19T12:18:49Z",
   "picks": [
     {
       "rank": 1,
@@ -118,6 +118,14 @@
       "name": "Aaron Judge",
       "team": "",
       "player_id": 592450,
+      "note": "",
+      "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 16,
+      "name": "Hunter Goodman",
+      "team": "",
+      "player_id": 696100,
       "note": "",
       "confidence": "🎯 Lean"
     }

@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:15:02Z",
+  "last_updated": "2026-05-19T12:15:24Z",
   "picks": [
     {
       "rank": 1,
@@ -46,6 +46,14 @@
       "name": "Munetaka Murakami",
       "team": "",
       "player_id": 808959,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 7,
+      "name": "Byron Buxton",
+      "team": "",
+      "player_id": 621439,
       "note": "",
       "confidence": "🔥 Lock"
     }

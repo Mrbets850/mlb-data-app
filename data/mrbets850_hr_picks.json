@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:16:19Z",
+  "last_updated": "2026-05-19T12:16:32Z",
   "picks": [
     {
       "rank": 1,
@@ -72,6 +72,14 @@
       "player_id": 666160,
       "note": "",
       "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 10,
+      "name": "Angel Martínez",
+      "team": "",
+      "player_id": 682657,
+      "note": "",
+      "confidence": "💎 Strong"
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-19T12:22:27Z",
+  "last_updated": "2026-05-19T12:23:11Z",
   "picks": [
     {
       "rank": 1,
@@ -192,6 +192,14 @@
       "player_id": 571970,
       "note": "",
       "confidence": "🎯 Lean"
+    },
+    {
+      "rank": 25,
+      "name": "Liam Hicks",
+      "team": "",
+      "player_id": 689414,
+      "note": "",
+      "confidence": "💸 Long Shot"
     }
   ]
 }

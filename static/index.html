@@ -7,243 +7,1039 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="MLB EDGE" />
-  <meta name="theme-color" content="#1a0a2e" />
-  <meta name="description" content="Premium MLB analytics and player prop betting intelligence." />
-
-  <title>THE MLB EDGE</title>
+  <meta name="theme-color" content="#050b18" />
+  <meta name="description" content="MLB Edge — Daily ranked HR picks, advanced Statcast metrics, and real-time matchup intelligence for the modern bettor." />
+  <meta property="og:title" content="THE MLB EDGE — Ranked Analytics &amp; HR Picks" />
+  <meta property="og:description" content="Hand-ranked HR plays backed by ISO, Barrel%, Exit Velocity, and xwOBA. Updated daily. Built for the modern bettor." />
+  <meta property="og:type" content="website" />
+  <title>THE MLB EDGE — Ranked Analytics &amp; HR Picks</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icons/icon-180.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
 
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
+    /* ─── DESIGN TOKENS ─────────────────────────────────── */
     :root {
-      --purple-deep:  #1a0a2e;
-      --purple-mid:   #2d1557;
-      --purple-light: #7c3aed;
-      --gold:         #FFD700;
-      --gold-dim:     #c9a800;
-      --white:        #f5f5f5;
+      --bg:          #050b18;
+      --bg-card:     #0b1426;
+      --bg-card-2:   #0f1c34;
+      --border:      rgba(248,250,252,.07);
+      --border-g:    rgba(250,204,21,.22);
+      --border-ga:   rgba(250,204,21,.48);
+      --gold:        #facc15;
+      --gold-d:      rgba(250,204,21,.72);
+      --gold-glow:   rgba(250,204,21,.11);
+      --gold-glow2:  rgba(250,204,21,.05);
+      --purple-bg:   rgba(124,58,237,.14);
+      --text:        #eef2ff;
+      --text-2:      #8d9ec5;
+      --text-3:      #4b5a77;
+      --green:       #22c55e;
+      --green-bg:    rgba(34,197,94,.11);
+      --red:         #ef4444;
+      --r-sm:        6px;
+      --r:           12px;
+      --r-lg:        20px;
     }
 
-    html, body {
-      height: 100%;
-      width: 100%;
-      overflow: hidden;
-      background: var(--purple-deep);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    /* ─── RESET ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, Arial, sans-serif;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
+    a { color: inherit; text-decoration: none; }
+    em { font-style: normal; color: var(--gold); }
 
-    /* ── Splash screen ── */
-    #splash {
-      position: fixed;
-      inset: 0;
-      z-index: 999;
-      background: var(--purple-deep);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 20px;
-      transition: opacity 0.5s ease;
+    /* ─── KEYFRAMES ──────────────────────────────────────── */
+    @keyframes fadein {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
-    #splash img {
-      width: 140px;
-      height: 140px;
-      border-radius: 28px;
-      box-shadow: 0 0 40px rgba(255,215,0,0.35);
-    }
-    #splash h1 {
-      font-size: 1.6rem;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      color: var(--gold);
-      text-transform: uppercase;
-    }
-    #splash p {
-      font-size: 0.85rem;
-      color: rgba(255,215,0,0.55);
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-    }
-    .spinner {
-      width: 36px;
-      height: 36px;
-      border: 3px solid rgba(255,215,0,0.2);
-      border-top-color: var(--gold);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin-top: 8px;
+    @keyframes slidein-r {
+      from { opacity: 0; transform: translateX(36px); }
+      to   { opacity: 1; transform: translateX(0); }
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    #splash.hidden { opacity: 0; pointer-events: none; }
-
-    /* ── Install banner ── */
-    #install-banner {
-      position: fixed;
-      bottom: 0;
-      left: 0; right: 0;
-      z-index: 998;
-      background: var(--purple-mid);
-      border-top: 1px solid rgba(255,215,0,0.25);
-      padding: 14px 20px;
-      display: none;
-      align-items: center;
-      gap: 14px;
-      box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
+    @keyframes shimmer {
+      0%   { background-position: -200% center; }
+      100% { background-position:  200% center; }
     }
-    #install-banner.visible { display: flex; }
-    #install-banner img { width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0; }
-    #install-banner .text { flex: 1; }
-    #install-banner .text strong { display: block; color: var(--gold); font-size: 0.9rem; }
-    #install-banner .text span { color: rgba(255,255,255,0.6); font-size: 0.75rem; }
-    #install-btn {
-      background: var(--gold);
-      color: var(--purple-deep);
-      font-weight: 800;
-      font-size: 0.85rem;
-      border: none;
-      border-radius: 8px;
-      padding: 10px 16px;
-      cursor: pointer;
+    @keyframes ticker {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+    @keyframes pulse-dot {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.55); }
+      50%       { box-shadow: 0 0 0 5px rgba(239,68,68,0); }
+    }
+    @keyframes cta-glow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(250,204,21,.18); }
+      50%       { box-shadow: 0 0 28px 6px rgba(250,204,21,.28); }
+    }
+    @keyframes stagger-in {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes bar-grow {
+      from { width: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        transition-duration: .01ms !important;
+      }
+    }
+
+    /* ─── GLOBAL GRID TEXTURE ─────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(250,204,21,.022) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(250,204,21,.022) 1px, transparent 1px);
+      background-size: 56px 56px;
+    }
+
+    /* ─── SCROLL REVEAL ──────────────────────────────────── */
+    .reveal {
+      opacity: 0;
+      transform: translateY(22px);
+      transition: opacity .55s ease, transform .55s ease;
+    }
+    .reveal.in {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .d1 { transition-delay: .10s; }
+    .d2 { transition-delay: .20s; }
+    .d3 { transition-delay: .30s; }
+    .d4 { transition-delay: .40s; }
+
+    /* ─── NAVBAR ─────────────────────────────────────────── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: 62px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 clamp(18px, 5vw, 80px);
+      background: rgba(5,11,24,.82);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      transition: border-color .3s ease;
+    }
+    nav.scrolled { border-bottom-color: var(--border-g); }
+
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .nav-logo {
+      width: 30px; height: 30px; border-radius: 8px;
+      background: var(--gold); color: #050b18;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .95rem; font-weight: 900; flex-shrink: 0;
+      letter-spacing: -.02em;
+    }
+    .nav-name {
+      font-size: .84rem; font-weight: 800;
+      letter-spacing: .09em; text-transform: uppercase;
+      color: var(--text);
+    }
+    .nav-name em { color: var(--gold); }
+    .nav-cta {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--gold); color: #050b18;
+      font-weight: 800; font-size: .78rem;
+      letter-spacing: .07em; text-transform: uppercase;
+      padding: 8px 18px; border-radius: var(--r-sm);
+      transition: opacity .18s, transform .18s;
+    }
+    .nav-cta:hover { opacity: .9; transform: translateY(-1px); }
+    .nav-cta .arr { transition: transform .18s; }
+    .nav-cta:hover .arr { transform: translateX(3px); }
+
+    /* ─── HERO ───────────────────────────────────────────── */
+    #hero {
+      position: relative; z-index: 1;
+      min-height: 100dvh;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: center;
+      gap: 48px;
+      padding: 82px clamp(18px, 5vw, 80px) 60px;
+      overflow: hidden;
+    }
+    /* hero radial atmosphere */
+    #hero::before {
+      content: '';
+      position: absolute; inset: 0; pointer-events: none;
+      background:
+        radial-gradient(ellipse 80% 70% at 15% 50%, rgba(124,58,237,.10) 0%, transparent 65%),
+        radial-gradient(ellipse 50% 50% at 80% 80%, rgba(250,204,21,.05) 0%, transparent 60%);
+    }
+
+    .hero-left {
+      position: relative; z-index: 1;
+      display: flex; flex-direction: column; gap: 26px;
+      animation: fadein .75s ease both;
+    }
+    .hero-eye {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: .68rem; font-weight: 700;
+      letter-spacing: .16em; text-transform: uppercase;
+      color: var(--gold);
+    }
+    .hero-eye::before { content: '⚾'; font-size: .85rem; }
+    .h1 {
+      font-size: clamp(2.6rem, 6vw, 5rem);
+      font-weight: 900; line-height: 1.0;
+      letter-spacing: -.025em;
+    }
+    .hero-sub {
+      font-size: clamp(.92rem, 1.5vw, 1.07rem);
+      color: var(--text-2); max-width: 460px; line-height: 1.72;
+    }
+    .hero-actions {
+      display: flex; flex-wrap: wrap; gap: 12px;
+    }
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--gold); color: #050b18;
+      font-weight: 800; font-size: .94rem;
+      padding: 14px 28px; border-radius: var(--r-sm);
+      position: relative; overflow: hidden;
+      transition: transform .2s, box-shadow .2s;
+    }
+    .btn-primary::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.36) 50%, transparent 100%);
+      background-size: 200% auto;
+      animation: shimmer 2.8s linear infinite;
+    }
+    .btn-primary > span, .btn-primary .arr { position: relative; z-index: 1; }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 26px rgba(250,204,21,.36); }
+    .btn-primary .arr { transition: transform .2s; }
+    .btn-primary:hover .arr { transform: translateX(4px); }
+
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 7px;
+      color: var(--gold-d); font-weight: 600; font-size: .9rem;
+      padding: 13px 22px;
+      border: 1px solid var(--border-g); border-radius: var(--r-sm);
+      transition: border-color .2s, color .2s, background .2s;
+    }
+    .btn-ghost:hover {
+      border-color: var(--border-ga);
+      color: var(--gold); background: var(--gold-glow2);
+    }
+
+    .hero-kpis {
+      display: flex; gap: 24px; flex-wrap: wrap;
+      padding-top: 12px; border-top: 1px solid var(--border);
+    }
+    .kpi { display: flex; flex-direction: column; gap: 3px; }
+    .kpi-n {
+      font-size: 1.45rem; font-weight: 800;
+      color: var(--gold); line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .kpi-l {
+      font-size: .62rem; font-weight: 600;
+      color: var(--text-3); text-transform: uppercase;
+      letter-spacing: .11em;
+    }
+
+    /* ─── RANK PANEL (hero right) ─────────────────────────── */
+    .hero-right {
+      position: relative; z-index: 1;
+      display: flex; justify-content: flex-end; align-items: center;
+      animation: slidein-r .85s ease both .18s;
+    }
+    .rank-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-g);
+      border-radius: var(--r-lg);
+      width: min(440px, 100%);
+      overflow: hidden;
+      box-shadow: 0 28px 70px rgba(0,0,0,.55), 0 0 0 1px rgba(250,204,21,.07);
+    }
+    .rp-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 13px 18px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(250,204,21,.03);
+    }
+    .rp-title {
+      font-size: .68rem; font-weight: 700;
+      letter-spacing: .13em; text-transform: uppercase;
+      color: var(--gold);
+    }
+    .live-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-size: .64rem; font-weight: 700;
+      letter-spacing: .1em; text-transform: uppercase;
+      color: var(--red);
+    }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--red);
+      animation: pulse-dot 1.7s ease infinite;
+    }
+    .rank-list { padding: 4px 0; }
+    .rank-item {
+      display: grid;
+      grid-template-columns: 44px 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 18px;
+      border-bottom: 1px solid var(--border);
+      opacity: 0;
+      animation: stagger-in .4s ease forwards;
+      transition: background .2s;
+    }
+    .rank-item:last-child { border-bottom: none; }
+    .rank-item:hover { background: var(--bg-card-2); }
+    .rank-item:nth-child(1) { animation-delay: .35s; }
+    .rank-item:nth-child(2) { animation-delay: .45s; }
+    .rank-item:nth-child(3) { animation-delay: .55s; }
+    .rank-item:nth-child(4) { animation-delay: .65s; }
+    .rank-item:nth-child(5) { animation-delay: .75s; }
+    .rank-item:nth-child(6) { animation-delay: .85s; }
+
+    .rank-n {
+      font-size: 1.4rem; font-weight: 900;
+      color: var(--gold); text-align: center; line-height: 1;
+    }
+    .rank-info { display: flex; flex-direction: column; gap: 1px; }
+    .rank-name { font-size: .88rem; font-weight: 700; color: var(--text); }
+    .rank-team {
+      font-size: .68rem; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: .05em;
+    }
+    .rank-chips {
+      display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px;
+    }
+    .rc {
+      font-size: .62rem; font-weight: 600; color: var(--text-2);
+      background: rgba(248,250,252,.04);
+      border: 1px solid var(--border);
+      padding: 2px 6px; border-radius: 4px;
+      font-family: 'SF Mono', 'Fira Code', 'Roboto Mono', monospace;
+    }
+    .tier {
+      font-size: .62rem; font-weight: 800;
+      letter-spacing: .07em; text-transform: uppercase;
+      padding: 3px 8px; border-radius: 4px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .t-elite  { background: rgba(250,204,21,.14); color: var(--gold); border: 1px solid rgba(250,204,21,.28); }
+    .t-strong { background: var(--green-bg); color: #4ade80; border: 1px solid rgba(34,197,94,.25); }
+    .t-ok     { background: rgba(251,146,60,.12); color: #fb923c; border: 1px solid rgba(251,146,60,.25); }
+
+    .rp-foot {
+      padding: 11px 18px;
+      background: rgba(250,204,21,.025);
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+    .rp-foot a {
+      font-size: .72rem; font-weight: 600;
+      color: var(--gold-d); letter-spacing: .05em;
+      transition: color .2s;
+    }
+    .rp-foot a:hover { color: var(--gold); }
+
+    /* ─── METRICS STRIP ──────────────────────────────────── */
+    #strip {
+      position: relative;
+      background: var(--bg-card);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      overflow: hidden;
+    }
+    #strip::before, #strip::after {
+      content: '';
+      position: absolute; top: 0; bottom: 0; width: 80px;
+      z-index: 1; pointer-events: none;
+    }
+    #strip::before { left:  0; background: linear-gradient(90deg,  var(--bg-card), transparent); }
+    #strip::after  { right: 0; background: linear-gradient(-90deg, var(--bg-card), transparent); }
+    .strip-inner {
+      display: flex; width: max-content;
+      animation: ticker 30s linear infinite;
+      will-change: transform;
+    }
+    .strip-group { display: flex; }
+    .s-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 13px 26px;
+      border-right: 1px solid var(--border);
       white-space: nowrap;
-      flex-shrink: 0;
+    }
+    .s-lbl {
+      font-size: .64rem; font-weight: 700;
+      letter-spacing: .11em; text-transform: uppercase;
+      color: var(--text-3);
+    }
+    .s-val {
+      font-size: .86rem; font-weight: 700; color: var(--text);
+      font-variant-numeric: tabular-nums;
+      font-family: 'SF Mono', 'Fira Code', 'Roboto Mono', monospace;
+    }
+    .s-delta {
+      font-size: .7rem; font-weight: 600;
+      display: flex; align-items: center; gap: 2px;
+    }
+    .up   { color: var(--green); }
+    .down { color: var(--red); }
+
+    /* ─── SECTIONS COMMON ────────────────────────────────── */
+    .sec {
+      position: relative; z-index: 1;
+      padding: clamp(56px, 8vw, 96px) clamp(18px, 5vw, 80px);
+    }
+    .sec-eye {
+      font-size: .66rem; font-weight: 700;
+      letter-spacing: .18em; text-transform: uppercase;
+      color: var(--gold); margin-bottom: 11px;
+    }
+    .sec-h {
+      font-size: clamp(1.75rem, 3.5vw, 2.75rem);
+      font-weight: 800; line-height: 1.15;
+      letter-spacing: -.022em; margin-bottom: 13px;
+    }
+    .sec-sub {
+      font-size: clamp(.88rem, 1.5vw, 1rem);
+      color: var(--text-2); max-width: 540px;
+      line-height: 1.72; margin-bottom: 40px;
+    }
+
+    /* ─── PICKS GRID ─────────────────────────────────────── */
+    #picks { background: var(--bg); }
+    .picks-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(252px, 1fr));
+      gap: 14px;
+    }
+    .picks-blur {
+      position: relative;
+    }
+    .picks-blur::after {
+      content: '';
+      position: absolute; bottom: 0; left: 0; right: 0;
+      height: 130px;
+      background: linear-gradient(to bottom, transparent, var(--bg));
+      pointer-events: none;
+    }
+    .pick-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 20px;
+      transition: border-color .25s, transform .25s, box-shadow .25s;
+    }
+    .pick-card:hover {
+      border-color: var(--border-g);
+      transform: translateY(-3px);
+      box-shadow: 0 14px 36px rgba(0,0,0,.42), 0 0 0 1px rgba(250,204,21,.10);
+    }
+    .pc-head {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .pc-rank {
+      font-size: 1.85rem; font-weight: 900;
+      color: var(--gold); line-height: 1;
+    }
+    .pc-rank .h { font-size: .95rem; opacity: .55; }
+    .pc-name { font-size: .96rem; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+    .pc-team { font-size: .68rem; color: var(--text-3); text-transform: uppercase; letter-spacing: .07em; }
+    .pc-metrics {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 9px; margin-top: 14px;
+    }
+    .pc-m { display: flex; flex-direction: column; gap: 2px; }
+    .pc-mk {
+      font-size: .6rem; font-weight: 700; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: .09em;
+    }
+    .pc-mv {
+      font-size: .9rem; font-weight: 700; color: var(--text);
+      font-family: 'SF Mono', 'Fira Code', 'Roboto Mono', monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    .pc-mv.hi { color: var(--gold); }
+    .pc-foot {
+      margin-top: 15px; padding-top: 13px;
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .pc-bar-wrap {
+      flex: 1; height: 3px;
+      background: var(--border); border-radius: 2px; overflow: hidden;
+    }
+    .pc-bar {
+      height: 100%; width: 0;
+      background: linear-gradient(90deg, var(--gold), rgba(250,204,21,.65));
+      border-radius: 2px;
+      transition: width .7s ease .2s;
+    }
+    .pc-score {
+      font-size: .68rem; font-weight: 700; color: var(--gold-d);
+      white-space: nowrap;
+      font-family: 'SF Mono', 'Fira Code', 'Roboto Mono', monospace;
+    }
+
+    /* ─── DIFFERENTIATORS ────────────────────────────────── */
+    #diff {
+      background: linear-gradient(to bottom, var(--bg), rgba(124,58,237,.025), var(--bg));
+    }
+    .diff-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+      gap: 18px;
+    }
+    .diff-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 26px 22px;
+      transition: border-color .25s, box-shadow .25s;
+    }
+    .diff-card:hover {
+      border-color: var(--border-g);
+      box-shadow: 0 8px 28px rgba(0,0,0,.32);
+    }
+    .diff-icon {
+      width: 42px; height: 42px; border-radius: 10px;
+      background: var(--gold-glow);
+      border: 1px solid var(--border-g);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.15rem; margin-bottom: 16px;
+    }
+    .diff-title { font-size: .96rem; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+    .diff-body  { font-size: .85rem; color: var(--text-2); line-height: 1.68; }
+    .diff-tags  { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+    .dtag {
+      font-size: .62rem; font-weight: 600; color: var(--gold-d);
+      background: var(--gold-glow2);
+      border: 1px solid rgba(250,204,21,.14);
+      padding: 2px 7px; border-radius: 4px;
+      letter-spacing: .07em; text-transform: uppercase;
+    }
+
+    /* ─── HOW IT WORKS ───────────────────────────────────── */
+    #hiw {
+      background: var(--bg-card);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 32px; }
+    .step { display: flex; flex-direction: column; gap: 12px; }
+    .step-n {
+      font-size: .66rem; font-weight: 800;
+      letter-spacing: .12em; color: var(--gold);
+      text-transform: uppercase;
+    }
+    .step-t { font-size: 1.02rem; font-weight: 700; color: var(--text); }
+    .step-b { font-size: .84rem; color: var(--text-2); line-height: 1.64; }
+
+    /* ─── CTA BAND ───────────────────────────────────────── */
+    #cta {
+      position: relative; z-index: 1;
+      padding: clamp(60px, 9vw, 110px) clamp(18px, 5vw, 80px);
+      text-align: center; overflow: hidden;
+    }
+    #cta::before {
+      content: '';
+      position: absolute; inset: 0; pointer-events: none;
+      background: radial-gradient(ellipse 80% 60% at 50% 110%, rgba(250,204,21,.09) 0%, transparent 70%);
+    }
+    /* thin gold top-line */
+    #cta::after {
+      content: '';
+      position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border-g), transparent);
+    }
+    .cta-h {
+      font-size: clamp(1.9rem, 5vw, 3.5rem);
+      font-weight: 900; line-height: 1.1;
+      letter-spacing: -.03em; margin-bottom: 16px;
+    }
+    .cta-sub {
+      font-size: clamp(.88rem, 1.5vw, 1.05rem);
+      color: var(--text-2); max-width: 500px;
+      margin: 0 auto 36px; line-height: 1.72;
+    }
+    .cta-actions {
+      display: flex; flex-direction: column; align-items: center; gap: 13px;
+    }
+    .btn-cta {
+      display: inline-flex; align-items: center; gap: 9px;
+      background: var(--gold); color: #050b18;
+      font-weight: 800; font-size: .98rem;
+      padding: 16px 38px; border-radius: var(--r-sm);
+      position: relative; overflow: hidden;
+      animation: cta-glow 3s ease-in-out infinite;
+      transition: transform .2s, box-shadow .2s;
+    }
+    .btn-cta::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.42) 50%, transparent 100%);
+      background-size: 200% auto;
+      animation: shimmer 2.2s linear infinite;
+    }
+    .btn-cta > span, .btn-cta .arr { position: relative; z-index: 1; }
+    .btn-cta:hover { transform: translateY(-2px); box-shadow: 0 14px 40px rgba(250,204,21,.42); }
+    .btn-cta .arr { transition: transform .2s; }
+    .btn-cta:hover .arr { transform: translateX(4px); }
+    .cta-note {
+      font-size: .7rem; color: var(--text-3); letter-spacing: .05em;
+    }
+
+    /* ─── FOOTER ─────────────────────────────────────────── */
+    footer {
+      padding: 28px clamp(18px, 5vw, 80px);
+      border-top: 1px solid var(--border);
+      background: var(--bg-card);
+      display: flex; flex-wrap: wrap;
+      justify-content: space-between; align-items: center; gap: 14px;
+    }
+    .f-brand {
+      font-size: .8rem; font-weight: 700; color: var(--text-2);
+      letter-spacing: .07em;
+    }
+    .f-brand em { color: var(--gold); }
+    .f-note { font-size: .68rem; color: var(--text-3); max-width: 480px; line-height: 1.5; }
+
+    /* ─── INSTALL BANNER ─────────────────────────────────── */
+    #install-banner {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+      background: var(--bg-card);
+      border-top: 1px solid var(--border-g);
+      padding: 14px 18px;
+      display: none; align-items: center; gap: 14px;
+      box-shadow: 0 -8px 36px rgba(0,0,0,.65);
+    }
+    #install-banner.on { display: flex; }
+    #install-banner img { width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0; }
+    .ib-txt { flex: 1; }
+    .ib-txt strong { display: block; color: var(--gold); font-size: .88rem; }
+    .ib-txt span   { color: var(--text-2); font-size: .74rem; }
+    #install-btn {
+      background: var(--gold); color: #050b18;
+      font-weight: 800; font-size: .8rem;
+      border: none; border-radius: var(--r-sm);
+      padding: 9px 16px; cursor: pointer;
+      letter-spacing: .06em; text-transform: uppercase;
+      white-space: nowrap; flex-shrink: 0;
     }
     #dismiss-btn {
-      background: none;
-      border: none;
-      color: rgba(255,255,255,0.4);
-      font-size: 1.3rem;
-      cursor: pointer;
-      padding: 4px 6px;
-      flex-shrink: 0;
+      background: none; border: none;
+      color: var(--text-3); font-size: 1.2rem;
+      cursor: pointer; padding: 4px 6px; flex-shrink: 0;
     }
 
-    /* ── iOS install tip ── */
+    /* ─── iOS TIP ────────────────────────────────────────── */
     #ios-tip {
-      position: fixed;
-      bottom: 0; left: 0; right: 0;
-      z-index: 998;
-      background: var(--purple-mid);
-      border-top: 1px solid rgba(255,215,0,0.25);
-      padding: 16px 20px;
-      display: none;
-      flex-direction: column;
-      gap: 8px;
-      box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+      background: var(--bg-card);
+      border-top: 1px solid var(--border-g);
+      padding: 18px;
+      display: none; flex-direction: column; gap: 10px;
+      box-shadow: 0 -8px 36px rgba(0,0,0,.65);
     }
-    #ios-tip.visible { display: flex; }
-    #ios-tip p { color: var(--white); font-size: 0.85rem; line-height: 1.5; }
-    #ios-tip p span { color: var(--gold); font-weight: 700; }
+    #ios-tip.on { display: flex; }
+    #ios-tip p  { color: var(--text); font-size: .86rem; line-height: 1.55; }
+    #ios-tip p em { color: var(--gold); font-weight: 700; font-style: normal; }
     #ios-close {
       align-self: flex-end;
-      background: none;
-      border: 1px solid rgba(255,215,0,0.3);
-      color: var(--gold);
-      border-radius: 6px;
-      padding: 6px 14px;
-      font-size: 0.8rem;
-      cursor: pointer;
+      background: none; border: 1px solid var(--border-g);
+      color: var(--gold); border-radius: var(--r-sm);
+      padding: 7px 16px; font-size: .78rem; cursor: pointer;
     }
 
-    /* ── Main iframe ── */
-    #app-frame {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      border: none;
-      background: var(--purple-deep);
+    /* ─── RESPONSIVE ─────────────────────────────────────── */
+    @media (max-width: 920px) {
+      #hero {
+        grid-template-columns: 1fr;
+        min-height: auto;
+        padding-top: 96px;
+        gap: 36px;
+      }
+      .hero-right { justify-content: center; }
+      .rank-panel { width: 100%; max-width: 480px; }
+    }
+    @media (max-width: 600px) {
+      .hero-kpis { gap: 16px; }
+      .picks-grid { grid-template-columns: 1fr; }
+      .diff-grid  { grid-template-columns: 1fr; }
+      footer { flex-direction: column; align-items: flex-start; }
+      .steps { gap: 24px; }
     }
   </style>
 </head>
 <body>
 
-  <!-- Splash -->
-  <div id="splash">
-    <img src="icons/icon-192.png" alt="THE MLB EDGE logo" />
-    <h1>The MLB Edge</h1>
-    <p>Analytics &amp; Player Props</p>
-    <div class="spinner"></div>
+  <!-- ─── NAV ─────────────────────────────────────────────── -->
+  <nav id="nav">
+    <a href="#" class="nav-brand" aria-label="The MLB Edge home">
+      <div class="nav-logo" aria-hidden="true">⚾</div>
+      <span class="nav-name">The <em>MLB</em> Edge</span>
+    </a>
+    <a href="https://mrbets850.streamlit.app/" class="nav-cta" target="_blank" rel="noopener noreferrer" aria-label="Open the app">
+      Launch App <span class="arr" aria-hidden="true">→</span>
+    </a>
+  </nav>
+
+  <!-- ─── HERO ─────────────────────────────────────────────── -->
+  <section id="hero" aria-label="Hero">
+    <div class="hero-left">
+      <div class="hero-eye">Ranked Analytics · Daily HR Picks · Matchup Intel</div>
+      <h1 class="h1">Your Edge in<br>Every <em>At‑Bat</em></h1>
+      <p class="hero-sub">
+        Hand-ranked HR plays backed by ISO, Barrel%, Exit Velocity, and xwOBA.
+        Real matchup intelligence — updated daily — for the modern bettor.
+      </p>
+      <div class="hero-actions">
+        <a href="https://mrbets850.streamlit.app/" class="btn-primary" target="_blank" rel="noopener noreferrer">
+          <span>Launch App</span>
+          <span class="arr" aria-hidden="true">→</span>
+        </a>
+        <a href="#picks" class="btn-ghost">See Today's Picks</a>
+      </div>
+      <div class="hero-kpis" aria-label="Quick stats">
+        <div class="kpi">
+          <span class="kpi-n">25+</span>
+          <span class="kpi-l">Daily Ranked Picks</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi-n">8</span>
+          <span class="kpi-l">Advanced Metrics</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi-n">Live</span>
+          <span class="kpi-l">Matchup Data</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-right">
+      <div class="rank-panel" role="region" aria-label="Today's top ranked picks">
+        <div class="rp-head">
+          <span class="rp-title">Today's Top Ranked Edges</span>
+          <span class="live-badge" aria-label="Live data">
+            <span class="live-dot" aria-hidden="true"></span>Live
+          </span>
+        </div>
+        <div class="rank-list" id="rank-list" aria-live="polite"></div>
+        <div class="rp-foot">
+          <a href="https://mrbets850.streamlit.app/" target="_blank" rel="noopener noreferrer">
+            View full leaderboard in app →
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── METRICS STRIP ────────────────────────────────────── -->
+  <div id="strip" aria-hidden="true" role="presentation">
+    <div class="strip-inner" id="strip-inner"></div>
   </div>
 
-  <!-- Android install banner -->
-  <div id="install-banner">
-    <img src="icons/icon-192.png" alt="icon" />
-    <div class="text">
+  <!-- ─── TOP PICKS PREVIEW ─────────────────────────────────── -->
+  <section id="picks" class="sec" aria-labelledby="picks-title">
+    <div class="sec-eye reveal">Today's Leaderboard</div>
+    <h2 class="sec-h reveal d1" id="picks-title">Top Ranked <em>HR Edges</em></h2>
+    <p class="sec-sub reveal d2">
+      Every pick is scored across a composite edge model — blending ISO, Barrel%, EV, xwOBA,
+      and pitcher-matchup quality into a single ranked signal. No noise. Just edge.
+    </p>
+    <div class="picks-blur">
+      <div class="picks-grid" id="picks-grid"></div>
+    </div>
+    <div style="text-align:center;margin-top:36px;" class="reveal d3">
+      <a href="https://mrbets850.streamlit.app/" class="btn-primary" target="_blank" rel="noopener noreferrer" style="display:inline-flex;">
+        <span>See All 25+ Picks in App</span>
+        <span class="arr" aria-hidden="true">→</span>
+      </a>
+    </div>
+  </section>
+
+  <!-- ─── DIFFERENTIATORS ──────────────────────────────────── -->
+  <section id="diff" class="sec" aria-labelledby="diff-title">
+    <div class="sec-eye reveal">Why MLB Edge</div>
+    <h2 class="sec-h reveal d1" id="diff-title">Metrics That<br><em>Actually Matter</em></h2>
+    <p class="sec-sub reveal d2">
+      We don't guess. Every edge is backed by Statcast-level data, pitcher matchup
+      analysis, and performance trajectory — ranked so you can act fast before first pitch.
+    </p>
+    <div class="diff-grid">
+      <div class="diff-card reveal d1">
+        <div class="diff-icon" aria-hidden="true">📊</div>
+        <div class="diff-title">Advanced Metrics</div>
+        <div class="diff-body">
+          Pull from the same Statcast data as front offices. ISO, Barrel%, Exit Velocity, xwOBA,
+          and Hard Hit% — every metric chosen because it predicts future performance.
+        </div>
+        <div class="diff-tags">
+          <span class="dtag">ISO</span>
+          <span class="dtag">Barrel%</span>
+          <span class="dtag">EV</span>
+          <span class="dtag">xwOBA</span>
+          <span class="dtag">HH%</span>
+        </div>
+      </div>
+      <div class="diff-card reveal d2">
+        <div class="diff-icon" aria-hidden="true">🏆</div>
+        <div class="diff-title">Ranked Intelligence</div>
+        <div class="diff-body">
+          Not a list of names — a ranked leaderboard with an edge score per player.
+          Curated daily by combining metric signals into a single high-conviction rank.
+        </div>
+        <div class="diff-tags">
+          <span class="dtag">Daily Rank</span>
+          <span class="dtag">Edge Score</span>
+          <span class="dtag">Tier Labels</span>
+        </div>
+      </div>
+      <div class="diff-card reveal d3">
+        <div class="diff-icon" aria-hidden="true">⚡</div>
+        <div class="diff-title">Matchup Analysis</div>
+        <div class="diff-body">
+          Pitcher-vs-batter breakdowns, park factor adjustments, confirmed lineups,
+          and day-vs-night splits — every pick is contextually aware.
+        </div>
+        <div class="diff-tags">
+          <span class="dtag">Pitcher Data</span>
+          <span class="dtag">Park Factor</span>
+          <span class="dtag">Lineup</span>
+          <span class="dtag">Splits</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── HOW IT WORKS ─────────────────────────────────────── -->
+  <section id="hiw" class="sec" aria-labelledby="hiw-title">
+    <div class="sec-eye reveal">How It Works</div>
+    <h2 class="sec-h reveal d1" id="hiw-title">From Raw Data to<br><em>Actionable Edge</em></h2>
+    <div class="steps">
+      <div class="step reveal d1">
+        <div class="step-n">Step 01</div>
+        <div class="step-t">Data Ingestion</div>
+        <div class="step-b">Statcast, lineup confirmations, and pitcher matchup data are ingested and refreshed daily before lineups lock.</div>
+      </div>
+      <div class="step reveal d2">
+        <div class="step-n">Step 02</div>
+        <div class="step-t">Metric Scoring</div>
+        <div class="step-b">Each player is scored across 8 advanced metrics. The model weights recent trajectory, barrel rates, and matchup quality.</div>
+      </div>
+      <div class="step reveal d3">
+        <div class="step-n">Step 03</div>
+        <div class="step-t">Edge Ranking</div>
+        <div class="step-b">Players are ranked into tiers — Elite, Strong, OK — so you can scan the board in seconds and build a high-conviction slate.</div>
+      </div>
+      <div class="step reveal d4">
+        <div class="step-n">Step 04</div>
+        <div class="step-t">Launch &amp; Win</div>
+        <div class="step-b">Open the app any morning, see today's ranked plays, review matchup breakdowns, and act before first pitch.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── CTA BAND ──────────────────────────────────────────── -->
+  <section id="cta" aria-labelledby="cta-title">
+    <h2 class="cta-h reveal" id="cta-title">Stop Guessing.<br>Start <em>Edging</em>.</h2>
+    <p class="cta-sub reveal d1">
+      Daily ranked HR plays, advanced Statcast metrics, and real-time matchup intelligence —
+      everything you need to gain a sharper edge before first pitch.
+    </p>
+    <div class="cta-actions reveal d2">
+      <a href="https://mrbets850.streamlit.app/" class="btn-cta" target="_blank" rel="noopener noreferrer">
+        <span>Launch App — It's Free</span>
+        <span class="arr" aria-hidden="true">→</span>
+      </a>
+      <span class="cta-note">Updated daily · No account required</span>
+    </div>
+  </section>
+
+  <!-- ─── FOOTER ────────────────────────────────────────────── -->
+  <footer>
+    <div class="f-brand">⚾ The <em>MLB</em> Edge — Ranked Baseball Analytics</div>
+    <div class="f-note">For entertainment and informational purposes only. Not financial or gambling advice. MLB trademarks belong to their respective owners.</div>
+  </footer>
+
+  <!-- ─── INSTALL BANNER (Android) ─────────────────────────── -->
+  <div id="install-banner" role="dialog" aria-label="Install MLB Edge app">
+    <img src="icons/icon-192.png" alt="" aria-hidden="true" onerror="this.style.display='none'" />
+    <div class="ib-txt">
       <strong>THE MLB EDGE</strong>
-      <span>Install for quick access</span>
+      <span>Install for one-tap access</span>
     </div>
     <button id="install-btn">Install</button>
     <button id="dismiss-btn" aria-label="Dismiss">✕</button>
   </div>
 
-  <!-- iOS install tip -->
-  <div id="ios-tip">
-    <p>To install <span>THE MLB EDGE</span> on your iPhone:<br>
-    Tap the <span>Share ⬆</span> button in Safari, then choose <span>"Add to Home Screen"</span>.</p>
+  <!-- ─── iOS TIP ───────────────────────────────────────────── -->
+  <div id="ios-tip" role="dialog" aria-label="iOS install instructions">
+    <p>To install <em>THE MLB EDGE</em> on iPhone:<br>
+    Tap <em>Share ⬆</em> in Safari, then choose <em>"Add to Home Screen"</em>.</p>
     <button id="ios-close">Got it</button>
   </div>
 
-  <!-- Streamlit app -->
-  <iframe
-    id="app-frame"
-    src="https://mrbets850.streamlit.app/?embed=true&embed_options=hide_loading_screen,show_colored_line"
-    title="THE MLB EDGE"
-    allow="fullscreen"
-    loading="eager"
-  ></iframe>
-
   <script>
-    // ── Service worker ──
+    /* ── Service worker ── */
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./service-worker.js');
     }
 
-    // ── Hide splash when iframe loads ──
-    const frame = document.getElementById('app-frame');
-    const splash = document.getElementById('splash');
-    frame.addEventListener('load', () => {
-      setTimeout(() => splash.classList.add('hidden'), 600);
-    });
-    // Fallback: hide splash after 6s regardless
-    setTimeout(() => splash.classList.add('hidden'), 6000);
+    /* ── App URL — update when domain is live ── */
+    const APP = 'https://mrbets850.streamlit.app/';
 
-    // ── Install prompt (Android / Chrome) ──
-    let deferredPrompt;
-    const banner = document.getElementById('install-banner');
+    /* ── Sample picks data ── */
+    const PICKS = [
+      { rank:1, name:'J. Ramirez',     team:'CLE · 3B', tier:'elite',  iso:'.318', brl:'19.2%', ev:'95.4', xwoba:'.430', edge:97 },
+      { rank:2, name:'A. Judge',       team:'NYY · RF', tier:'elite',  iso:'.302', brl:'22.1%', ev:'96.8', xwoba:'.445', edge:94 },
+      { rank:3, name:'V. Guerrero Jr', team:'TOR · 1B', tier:'elite',  iso:'.278', brl:'15.6%', ev:'92.7', xwoba:'.392', edge:89 },
+      { rank:4, name:'K. Tucker',      team:'HOU · RF', tier:'strong', iso:'.265', brl:'16.3%', ev:'91.9', xwoba:'.378', edge:84 },
+      { rank:5, name:'M. Olson',       team:'ATL · 1B', tier:'strong', iso:'.258', brl:'14.8%', ev:'90.5', xwoba:'.371', edge:81 },
+      { rank:6, name:'P. Alonso',      team:'NYM · 1B', tier:'strong', iso:'.251', brl:'17.4%', ev:'93.2', xwoba:'.365', edge:77 },
+    ];
+    const TIER = {
+      elite:  { cls:'t-elite',  lbl:'⚡ Elite'  },
+      strong: { cls:'t-strong', lbl:'🔥 Strong' },
+      ok:     { cls:'t-ok',     lbl:'OK'        },
+    };
+
+    /* ── Metrics strip data ── */
+    const METRICS = [
+      { lbl:'ISO Leader',    val:'.318',    delta:'+.021', dir:'up'   },
+      { lbl:'Barrel% Top',   val:'22.1%',   delta:'+2.3%', dir:'up'   },
+      { lbl:'Exit Velo Max', val:'96.8 mph', delta:'+1.2',  dir:'up'   },
+      { lbl:'xwOBA Best',    val:'.445',    delta:'+.032', dir:'up'   },
+      { lbl:'HR Rate Top',   val:'8.4%',    delta:'+0.9%', dir:'up'   },
+      { lbl:'Hard Hit% Max', val:'61.2%',   delta:'+3.1%', dir:'up'   },
+      { lbl:'Picks Today',   val:'25+',     delta:'Live',  dir:'up'   },
+      { lbl:'K Rate Low',    val:'14.2%',   delta:'-2.1%', dir:'down' },
+    ];
+
+    /* ── Build rank panel ── */
+    function buildRankPanel() {
+      document.getElementById('rank-list').innerHTML = PICKS.map(p => `
+        <div class="rank-item">
+          <div class="rank-n">${p.rank}</div>
+          <div class="rank-info">
+            <div class="rank-name">${p.name}</div>
+            <div class="rank-team">${p.team}</div>
+            <div class="rank-chips">
+              <span class="rc">ISO ${p.iso}</span>
+              <span class="rc">Brl ${p.brl}</span>
+              <span class="rc">EV ${p.ev}</span>
+            </div>
+          </div>
+          <span class="tier ${TIER[p.tier].cls}">${TIER[p.tier].lbl}</span>
+        </div>
+      `).join('');
+    }
+
+    /* ── Build picks grid ── */
+    function buildPicksGrid() {
+      const grid = document.getElementById('picks-grid');
+      grid.innerHTML = PICKS.map((p, i) => `
+        <div class="pick-card reveal d${Math.min(i + 1, 4)}" data-edge="${p.edge}">
+          <div class="pc-head">
+            <div class="pc-rank"><span class="h">#</span>${p.rank}</div>
+            <span class="tier ${TIER[p.tier].cls}">${TIER[p.tier].lbl}</span>
+          </div>
+          <div class="pc-name">${p.name}</div>
+          <div class="pc-team">${p.team}</div>
+          <div class="pc-metrics">
+            <div class="pc-m"><span class="pc-mk">ISO</span><span class="pc-mv hi">${p.iso}</span></div>
+            <div class="pc-m"><span class="pc-mk">Barrel%</span><span class="pc-mv">${p.brl}</span></div>
+            <div class="pc-m"><span class="pc-mk">Exit Velo</span><span class="pc-mv">${p.ev} mph</span></div>
+            <div class="pc-m"><span class="pc-mk">xwOBA</span><span class="pc-mv hi">${p.xwoba}</span></div>
+          </div>
+          <div class="pc-foot">
+            <div class="pc-bar-wrap"><div class="pc-bar" data-w="${p.edge}%"></div></div>
+            <span class="pc-score">Edge ${p.edge}</span>
+          </div>
+        </div>
+      `).join('');
+      grid.querySelectorAll('.reveal').forEach(el => revealObs.observe(el));
+    }
+
+    /* ── Build metrics strip ── */
+    function buildStrip() {
+      const html = METRICS.map(m => `
+        <div class="s-item">
+          <span class="s-lbl">${m.lbl}</span>
+          <span class="s-val">${m.val}</span>
+          <span class="s-delta ${m.dir}">${m.dir === 'up' ? '↑' : '↓'} ${m.delta}</span>
+        </div>
+      `).join('');
+      const inner = document.getElementById('strip-inner');
+      const grp = `<div class="strip-group">${html}</div>`;
+      inner.innerHTML = grp + grp; /* doubled for seamless loop */
+    }
+
+    /* ── Scroll reveal ── */
+    const revealObs = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (!e.isIntersecting) return;
+        e.target.classList.add('in');
+        const bar = e.target.querySelector('.pc-bar');
+        if (bar) requestAnimationFrame(() => { bar.style.width = bar.dataset.w; });
+        revealObs.unobserve(e.target);
+      });
+    }, { threshold: 0.12 });
+
+    document.querySelectorAll('.reveal').forEach(el => revealObs.observe(el));
+
+    /* ── Nav scroll tint ── */
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('scrolled', window.scrollY > 36);
+    }, { passive: true });
+
+    /* ── PWA install (Android / Chrome) ── */
+    let deferred;
+    const banner     = document.getElementById('install-banner');
     const installBtn = document.getElementById('install-btn');
     const dismissBtn = document.getElementById('dismiss-btn');
 
     window.addEventListener('beforeinstallprompt', e => {
       e.preventDefault();
-      deferredPrompt = e;
-      banner.classList.add('visible');
+      deferred = e;
+      setTimeout(() => banner.classList.add('on'), 5000);
     });
-
     installBtn.addEventListener('click', async () => {
-      banner.classList.remove('visible');
-      if (deferredPrompt) {
-        deferredPrompt.prompt();
-        await deferredPrompt.userChoice;
-        deferredPrompt = null;
-      }
+      banner.classList.remove('on');
+      if (deferred) { deferred.prompt(); await deferred.userChoice; deferred = null; }
     });
+    dismissBtn.addEventListener('click', () => banner.classList.remove('on'));
 
-    dismissBtn.addEventListener('click', () => banner.classList.remove('visible'));
-
-    // ── iOS tip (Safari) ──
-    const iosTip = document.getElementById('ios-tip');
+    /* ── iOS install tip ── */
+    const tip      = document.getElementById('ios-tip');
     const iosClose = document.getElementById('ios-close');
-    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isIOS    = /iphone|ipad|ipod/i.test(navigator.userAgent);
     const isSafari = /safari/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent);
-    const isStandalone = window.navigator.standalone === true;
+    const isStand  = window.navigator.standalone === true;
+    if (isIOS && isSafari && !isStand) setTimeout(() => tip.classList.add('on'), 5500);
+    iosClose.addEventListener('click', () => tip.classList.remove('on'));
 
-    if (isIOS && isSafari && !isStandalone) {
-      setTimeout(() => iosTip.classList.add('visible'), 3000);
-    }
-    iosClose.addEventListener('click', () => iosTip.classList.remove('visible'));
+    /* ── Init ── */
+    buildRankPanel();
+    buildStrip();
+    buildPicksGrid();
   </script>
 </body>
 </html>

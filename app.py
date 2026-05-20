@@ -745,9 +745,8 @@ html, body, [class*="css"] {
     padding: 10px 16px;
     background: #0c1a2e;
     border: 1px solid rgba(0,200,150,0.18);
-    border-bottom: none;
-    border-radius: 6px 6px 0 0;
-    margin-bottom: 0;
+    border-radius: 6px;
+    margin-bottom: 10px;
 }
 .cmd-bar-left { display: flex; align-items: center; gap: 10px; }
 .cmd-bar-logo {
@@ -795,9 +794,8 @@ html, body, [class*="css"] {
 .live-ticker {
     background: #0c1a2e;
     border: 1px solid rgba(255,255,255,0.06);
-    border-top: none;
-    border-radius: 0 0 5px 5px;
-    padding: 5px 10px; margin-bottom: 10px;
+    border-radius: 5px;
+    padding: 5px 10px; margin-bottom: 8px;
     overflow-x: auto; -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
 }
@@ -837,8 +835,7 @@ html, body, [class*="css"] {
 .carousel-wrap {
     background: #0c1a2e;
     border: 1px solid rgba(255,255,255,0.06);
-    border-top: none;
-    border-radius: 0 0 5px 5px;
+    border-radius: 5px;
     padding: 6px 4px; margin-bottom: 10px;
 }
 .carousel-strip {
@@ -10669,8 +10666,8 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
     era_tone     = _pp_tone(era_v,     2.50, 5.50,   reverse=True)
     hr9_tone     = _pp_tone(hr9_v,     0.80, 1.60,   reverse=True)
 
-    color_bg = {"elite": "#fef2f2", "strong": "#fffbeb", "ok": "#f8fafc", "avoid": "#f0fdf4"}[key]
-    border = {"elite": "#ef4444", "strong": "#f59e0b", "ok": "#94a3b8", "avoid": "#16a34a"}[key]
+    color_bg = {"elite": "#0f1f2e", "strong": "#0f1f2e", "ok": "#0c1a2e", "avoid": "#0f1f2e"}[key]
+    border = {"elite": "#ef4444", "strong": "#f59e0b", "ok": "#4e6a8a", "avoid": "#10b981"}[key]
 
     # Live "PITCHING CHANGE DETECTED" badge — surfaced when the live current
     # pitcher differs from the pregame probable starter. Tooltip names the
@@ -10705,33 +10702,32 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
     if hr_level == "hard":
         hr_badge_html = (
             f'<span title="HR-target pitcher: {hr_reason}" '
-            f'style="display:inline-block; padding:3px 9px; border-radius:999px; '
-            f'background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; '
-            f'font-size:.72rem; font-weight:800; letter-spacing:.02em; '
-            f'margin-left:8px;">💣 HR Target</span>'
+            f'style="display:inline-block; padding:2px 7px; border-radius:3px; '
+            f'background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.3); '
+            f'font-size:.62rem; font-weight:700; letter-spacing:.06em; '
+            f'margin-left:6px; text-transform:uppercase;">HR Target</span>'
         )
     elif hr_level == "soft":
         hr_badge_html = (
             f'<span title="HR-target pitcher: {hr_reason}" '
-            f'style="display:inline-block; padding:3px 9px; border-radius:999px; '
-            f'background:#ffedd5; color:#9a3412; border:1px solid #fed7aa; '
-            f'font-size:.72rem; font-weight:800; letter-spacing:.02em; '
-            f'margin-left:8px;">💥 HR Target</span>'
+            f'style="display:inline-block; padding:2px 7px; border-radius:3px; '
+            f'background:rgba(245,158,11,0.12); color:#f59e0b; border:1px solid rgba(245,158,11,0.25); '
+            f'font-size:.62rem; font-weight:700; letter-spacing:.06em; '
+            f'margin-left:6px; text-transform:uppercase;">HR Watch</span>'
         )
 
-    # Tone -> text color for the metric value. Background is left alone so the
-    # panel keeps its existing tier-driven look; the metric numbers themselves
-    # carry the green/yellow/red signal.
-    tone_color = {"good": "#15803d", "mid": "#92400e", "bad": "#b91c1c", "": "#0f172a"}
+    tone_color = {"good": "#10b981", "mid": "#f59e0b", "bad": "#ef4444", "": "#b0c8e4"}
     def _stat_block(lbl, val, tone):
-        c = tone_color.get(tone, "#0f172a")
+        c = tone_color.get(tone, "#b0c8e4")
         return (
-            f'<div><div style="font-size:0.66rem; color:#64748b; '
-            f'text-transform:uppercase; font-weight:700;">{lbl}</div>'
-            f'<div style="font-weight:800; color:{c};">{val}</div></div>'
+            f'<div>'
+            f'<div style="font-size:0.58rem; color:#3a5a7a; text-transform:uppercase; '
+            f'font-weight:700; letter-spacing:0.08em;">{lbl}</div>'
+            f'<div style="font-weight:700; color:{c}; font-family:\'DM Mono\',monospace;">{val}</div>'
+            f'</div>'
         )
 
-    mix_html = render_pitch_mix_block(pitch_mix_df, surface_bg="#ffffff") if pitch_mix_df is not None else ""
+    mix_html = render_pitch_mix_block(pitch_mix_df, surface_bg="#0a1628") if pitch_mix_df is not None else ""
     _tier_key = ('elite' if key == 'elite'
                  else 'strong' if key == 'strong'
                  else 'ok' if key == 'ok' else 'avoid')
@@ -10740,32 +10736,23 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
     _hand_html = _html.escape(pitch_hand_s)
     _verdict_html = _html.escape(_safe_str(verdict, ""))
     _score_html = _html.escape(_safe_str(score, "—"))
-    # Render the card body without leading per-line indentation. CommonMark
-    # treats a blank line followed by 4+-space-indented lines as an indented
-    # code block — so a single empty f-string slot inside an indented HTML
-    # template (e.g. the "replaced …" hint when the pitcher hasn't changed)
-    # is enough to dump the rest of the card as raw HTML text. Keep this
-    # template flush-left so an empty slot can never trigger that.
     panel_html = (
-        f'<div style="background:{color_bg}; border:1px solid #e2e8f0; '
-        f'border-left:6px solid {border}; border-radius:14px; '
-        f'padding:12px 14px;">'
-        f'<div style="display:flex; justify-content:space-between; '
-        f'align-items:flex-start;">'
+        f'<div style="background:{color_bg}; border:1px solid rgba(255,255,255,0.08); '
+        f'border-left:4px solid {border}; border-radius:6px; '
+        f'padding:10px 12px;">'
+        f'<div style="display:flex; justify-content:space-between; align-items:flex-start;">'
         f'<div>'
-        f'<div style="font-size:0.7rem; color:#64748b; '
-        f'text-transform:uppercase; letter-spacing:0.1em; '
-        f'font-weight:800;">{_label_html}</div>'
-        f'<div style="font-size:1.05rem; font-weight:900; '
-        f'color:#0f172a;">{_name_html} '
-        f'<span style="color:#64748b; font-weight:700; '
-        f'font-size:0.85rem;">({_hand_html})</span>'
+        f'<div style="font-size:0.6rem; color:#3a5a7a; text-transform:uppercase; '
+        f'letter-spacing:0.1em; font-weight:700;">{_label_html}</div>'
+        f'<div style="font-size:0.95rem; font-weight:800; color:#e2eeff; margin-top:2px;">'
+        f'{_name_html} '
+        f'<span style="color:#4e6a8a; font-weight:600; font-size:0.82rem;">({_hand_html})</span>'
         f'{change_badge_html}{hr_badge_html}</div>'
         f'{replaced_html}'
         f'</div>'
         f'<div style="text-align:right;">'
-        f'<div style="font-size:1.5rem; font-weight:900; '
-        f'color:#0f172a; line-height:1;">{_score_html}</div>'
+        f'<div style="font-size:1.4rem; font-weight:800; color:#eef4ff; line-height:1; '
+        f'font-family:\'DM Mono\',monospace;">{_score_html}</div>'
         f'<span class="tier tier-{_tier_key}">{_verdict_html}</span>'
         f'</div>'
         f'</div>'
@@ -16528,13 +16515,13 @@ if _is_games_view:
     st.markdown(
         "<div style='display:flex;align-items:center;gap:10px;"
         "margin:10px 0 0;padding:7px 12px;"
-        "background:rgba(12,26,46,0.9);"
-        "border:1px solid rgba(0,200,150,0.15);"
-        "border-bottom:none;"
-        "border-radius:5px 5px 0 0;'>"
-        "<span style='font-weight:700;font-size:0.62rem;color:#4e6a8a;"
+        "background:rgba(12,26,46,0.85);"
+        "border:1px solid rgba(0,200,150,0.14);"
+        "border-radius:5px 5px 0 0;"
+        "border-bottom:none;'>"
+        "<span style='font-weight:700;font-size:0.6rem;color:#4e6a8a;"
         "letter-spacing:0.12em;text-transform:uppercase;'>Game Analysis</span>"
-        "<span class='game-views-sub' style='color:#3a5a7a;font-weight:500;font-size:0.72rem;"
+        "<span class='game-views-sub' style='color:#3a5a7a;font-weight:500;font-size:0.7rem;"
         "margin-left:auto;'>Matchup &middot; Injuries</span>"
         "</div>",
         unsafe_allow_html=True,

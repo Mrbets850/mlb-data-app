@@ -1,0 +1,70 @@
+# ENV TEMPLATE: mlb-data-app (THE MLB EDGE)
+# Railway service: streamlit-app
+# Last updated: 2026-05-20
+#
+# Instructions:
+#   1. Copy only the variables you have real values for.
+#   2. Add each one in Railway: Service > Variables > New Variable.
+#   3. Do NOT set PORT — Railway provides it automatically.
+#   4. Do NOT commit real secret values to this file.
+#   5. Leave a variable out entirely if you do not have a value for it.
+#
+# The app will boot and run with no variables set.
+# Premium features degrade gracefully when keys are absent.
+
+# =============================================================================
+# ODDS API
+# Use only ONE of the names below — whichever name your Odds API provider uses.
+# ODDS_API_KEY is the recommended canonical name for new setups.
+# =============================================================================
+ODDS_API_KEY=
+# THE_ODDS_API_KEY=     (alias — use if this is the name you already use)
+# THE_ODDS_API=          (alias — use if this is the name you already use)
+# ODDSAPI_KEY=           (alias — use if this is the name you already use)
+# odds_api_key=          (lowercase legacy alias — use only if needed)
+
+# =============================================================================
+# LINEUP PROVIDERS (optional premium lineup sources)
+# App falls back to free MLB StatsAPI lineups if these are not set.
+# =============================================================================
+SPORTRADAR_MLB_API_KEY=
+SPORTSDATAIO_MLB_API_KEY=
+
+# =============================================================================
+# HR PICKS EDITOR
+# Controls the admin PIN for the MRBETS850 HR Picks editor.
+# Use MRBETS850_ADMIN_PIN (recommended). MLB_EDGE_ADMIN_PIN is an alias.
+# =============================================================================
+MRBETS850_ADMIN_PIN=
+# MLB_EDGE_ADMIN_PIN=    (alias — use if this is the name you already use)
+
+# =============================================================================
+# GITHUB PICKS SYNC
+# Enables durable HR picks persistence via GitHub Contents API.
+# Required because Railway's file system is ephemeral — local writes are lost
+# on restart. Set all four variables below to enable GitHub sync.
+#
+# MRBETS850_GITHUB_TOKEN: a GitHub personal access token with repo write scope.
+# MRBETS850_PICKS_REPO:   the repo that owns the picks file (e.g. Mrbets850/mlb-data-app).
+# MRBETS850_PICKS_PATH:   the file path inside the repo (e.g. data/mrbets850_hr_picks.json).
+# MRBETS850_PICKS_BRANCH: the branch to read/write (e.g. main).
+# =============================================================================
+MRBETS850_GITHUB_TOKEN=
+MRBETS850_PICKS_REPO=Mrbets850/mlb-data-app
+MRBETS850_PICKS_PATH=data/mrbets850_hr_picks.json
+MRBETS850_PICKS_BRANCH=main
+# GITHUB_TOKEN=          (alias — use only if MRBETS850_GITHUB_TOKEN does not work)
+
+# =============================================================================
+# DEVELOPMENT / TEST OVERRIDE
+# DO NOT SET IN PRODUCTION.
+# Forces the app to treat a specific date as today's slate date.
+# Format: YYYY-MM-DD
+# =============================================================================
+# MRBETS850_TODAY_OVERRIDE=
+
+# =============================================================================
+# PORT — DO NOT SET
+# Railway provides PORT automatically. Setting it manually will conflict.
+# =============================================================================
+# PORT=   ← DO NOT SET THIS

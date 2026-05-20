@@ -11234,6 +11234,7 @@ _TOP_VIEW_OPTIONS = [
     "💣 HR Milestones",
     "☀️🌙 Day vs Night HR",
     "🥎 Pitcher Breakdown",
+    "🎯 Pitcher Weak Spots",
     "💎 HR Sleepers",
     "📊 Total Bases 1.5+",
     "🎯 HRR 1.5+",
@@ -15830,6 +15831,442 @@ if _view == "👑 MRBETS850 HOMERUN PICKS OF DAY":
         _render_mrbets850(batters_df)
     except Exception as _mrbets_err:
         st.error(f"MRBETS850 Homerun Picks tab failed to load: {_mrbets_err}")
+    st.stop()
+
+
+# ===========================================================================
+# 🎯 Pitcher Weak Spots — slot-based attack-zone intelligence
+# ---------------------------------------------------------------------------
+# Identifies where each starter is most vulnerable inside the opposing
+# batting order. Scores live on the slot (1..9) so they remain valid as
+# projected lineups roll over to confirmed lineups; confirmed hitters
+# inherit the slot score and get a stronger highlight when their slot
+# falls inside an attack zone. All data sourced from the app's existing
+# schedule + pitcher CSV + lineup service caches — no extra feeds.
+# ===========================================================================
+if _view == "🎯 Pitcher Weak Spots":
+    from services import pitcher_weak_spots as pws
+    try:
+        from services.lineup_service import (
+            get_daily_lineups as _lineup_daily,
+            lineup_to_dict_rows as _lineup_to_rows,
+            LINEUP_STATUS_CONFIRMED as _LS_CONFIRMED,
+            LINEUP_STATUS_EXPECTED as _LS_EXPECTED,
+        )
+    except Exception:
+        _lineup_daily = None
+        _lineup_to_rows = None
+        _LS_CONFIRMED = "confirmed"
+        _LS_EXPECTED = "expected"
+
+    st.markdown(
+        '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
+        '🎯 Pitcher Weak Spots'
+        '</div>'
+        '<div style="color:#64748b; font-size:.92rem; margin:-4px 0 12px 0;">'
+        'Daily matchup intelligence: each starter\'s most attackable opposing batting-order slots, '
+        'with projected lineups locked in by position until MLB posts the confirmed order.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if schedule_df is None or schedule_df.empty:
+        st.info("No games scheduled for the selected date.")
+        st.stop()
+
+    # ---- Build one card per starting pitcher (away then home for each game) ----
+    @st.cache_data(ttl=180, show_spinner=False)
+    def _pws_lineups_for_date(date_iso: str):
+        """Pull daily lineups via the shared lineup service. Cached for 3 min
+        so the tab refreshes on the same cadence as the rest of the slate.
+        Returns a {game_pk: GameLineups} dict (best-effort; empty on error)."""
+        if _lineup_daily is None:
+            return {}
+        try:
+            data = _lineup_daily(date_iso) or []
+        except Exception:
+            return {}
+        return {int(getattr(g, "game_pk", 0) or 0): g for g in data}
+
+    _slate_iso = selected_date.isoformat() if hasattr(selected_date, "isoformat") else str(selected_date)
+    _lineups_by_pk = _pws_lineups_for_date(_slate_iso)
+
+    def _lineup_for_side(game_pk, side_team_abbr, opp_team_id, opp_team_abbr):
+        """Return (LineupBatter list, status). Confirmed > projected > anonymous."""
+        gl = _lineups_by_pk.get(int(game_pk) if game_pk else -1)
+        if gl is not None and _lineup_to_rows is not None:
+            # Pick the side that ISN'T the pitcher's team — we score the
+            # batting order opposite to the pitcher we're profiling.
+            opp_side = None
+            if str(gl.away.team_abbr or "").upper() == str(opp_team_abbr or "").upper():
+                opp_side = gl.away
+            elif str(gl.home.team_abbr or "").upper() == str(opp_team_abbr or "").upper():
+                opp_side = gl.home
+            if opp_side is not None and opp_side.starters:
+                rows = _lineup_to_rows(opp_side)
+                status = opp_side.status or _LS_EXPECTED
+                is_proj = status != _LS_CONFIRMED
+                return pws.lineup_from_rows(rows, is_projected=is_proj), status
+        # Fall back to the app's projected lineup (recent-starts greedy assign).
+        if opp_team_id:
+            try:
+                proj_df = get_projected_lineup(int(opp_team_id), opp_team_abbr, _slate_iso)
+                if proj_df is not None and not proj_df.empty:
+                    rows = proj_df.to_dict(orient="records")
+                    return pws.lineup_from_rows(rows, is_projected=True), _LS_EXPECTED
+            except Exception:
+                pass
+        # Last resort — anonymous 1..9 slots, projected.
+        return [pws.make_projected_batter(s) for s in range(1, 10)], "not_posted"
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _pws_build_cards(date_iso: str):
+        """Build every card for the slate. Cached so filter/sort interactions
+        don't trigger a rebuild on each rerun."""
+        cards: list[pws.WeakSpotCard] = []
+        for _, gr in schedule_df.iterrows():
+            game_pk = gr.get("game_pk")
+            time_label = gr.get("time_short") or gr.get("game_time_ct", "")
+            away_abbr = gr.get("away_abbr", "")
+            home_abbr = gr.get("home_abbr", "")
+            away_team_id = gr.get("away_id")
+            home_team_id = gr.get("home_id")
+            for side in ("away", "home"):
+                pitcher_name = gr.get(f"{side}_probable", "TBD") or "TBD"
+                if not pitcher_name or str(pitcher_name).upper() == "TBD":
+                    continue
+                pitcher_id = gr.get(f"{side}_probable_id")
+                pitcher_team_abbr = away_abbr if side == "away" else home_abbr
+                opponent_abbr = home_abbr if side == "away" else away_abbr
+                opp_team_id = home_team_id if side == "away" else away_team_id
+                # Find pitcher row from existing pitcher CSV (graceful None).
+                p_row = find_pitcher_row(pitchers_df, pitcher_name, pitcher_id) \
+                    if pitchers_df is not None and not pitchers_df.empty else None
+                # Pitch hand from roster (statsapi) — best-effort, default R.
+                pitcher_hand = "R"
+                try:
+                    box = get_boxscore(game_pk) if game_pk else {}
+                    side_box = box.get("teams", {}).get(side, {})
+                    roster = roster_df_from_box(side_box, pitcher_team_abbr)
+                    pitcher_hand = lookup_pitch_hand(roster, pitcher_name) or "R"
+                except Exception:
+                    pitcher_hand = "R"
+                prof = pws.build_pitcher_profile(
+                    p_row,
+                    pitcher_name=pitcher_name,
+                    pitcher_id=int(pitcher_id) if pitcher_id else None,
+                    pitcher_hand=pitcher_hand,
+                    is_home=(side == "home"),
+                )
+                lineup, lstatus = _lineup_for_side(
+                    game_pk, pitcher_team_abbr, opp_team_id, opponent_abbr,
+                )
+                # Enrich each batter with batter CSV stats so card-level
+                # scoring isn't purely slot-based when we have identities.
+                if batters_df is not None and not batters_df.empty:
+                    for b in lineup:
+                        if b.name and not b.name.startswith("Projected #"):
+                            try:
+                                b_row = find_player_row(
+                                    batters_df, clean_name(b.name),
+                                    pitcher_team_abbr,  # team not strictly required
+                                    player_id=b.player_id,
+                                )
+                                if b_row is not None:
+                                    pws.enrich_batter_from_row(b, b_row)
+                            except Exception:
+                                continue
+                card = pws.assemble_card(
+                    game_pk=int(game_pk) if game_pk else 0,
+                    game_time_label=str(time_label or ""),
+                    away_abbr=away_abbr,
+                    home_abbr=home_abbr,
+                    pitcher_name=pitcher_name,
+                    pitcher_hand=pitcher_hand,
+                    pitcher_team_abbr=pitcher_team_abbr,
+                    opponent_abbr=opponent_abbr,
+                    pitcher_profile=prof,
+                    lineup=lineup,
+                    lineup_status=lstatus,
+                )
+                cards.append(card)
+        return cards
+
+    with st.spinner("Scoring tonight's pitcher weak spots…"):
+        _all_cards = _pws_build_cards(_slate_iso)
+
+    if not _all_cards:
+        st.info("No probable starters posted yet for this slate. Check back closer to first pitch.")
+        st.stop()
+
+    # ---- Filters + sort ----
+    _filter_options = [
+        "All games", "Confirmed only", "Lefty weakness", "Righty weakness",
+        "Top-order targets", "Middle-order targets", "Value bats",
+        "High-confidence spots",
+    ]
+    _sort_options = [
+        "Highest overall pitcher weakness",
+        "Most targetable top-4 hitters",
+        "Best value stack",
+        "Highest platoon edge",
+        "Confirmed lineups first",
+        "Earliest game time",
+    ]
+    _filter_col, _sort_col = st.columns([1.3, 1.3])
+    with _filter_col:
+        _flt = st.multiselect(
+            "Filter",
+            _filter_options,
+            default=["All games"],
+            key="pws_filter",
+        )
+    with _sort_col:
+        _sort_choice = st.selectbox(
+            "Sort by",
+            _sort_options,
+            index=0,
+            key="pws_sort",
+        )
+
+    def _passes_filters(card: pws.WeakSpotCard, flt: list[str]) -> bool:
+        if not flt or "All games" in flt:
+            base = True
+        else:
+            base = True
+        if "Confirmed only" in flt and not card.is_lineup_confirmed:
+            return False
+        if "Lefty weakness" in flt and not card.has_lefty_weakness:
+            return False
+        if "Righty weakness" in flt and not card.has_righty_weakness:
+            return False
+        if "Top-order targets" in flt and not card.has_top_order_target:
+            return False
+        if "Middle-order targets" in flt and not card.has_middle_order_target:
+            return False
+        if "Value bats" in flt:
+            # Value bats = at least 2 attack-zone hits outside the top-3.
+            value = sum(
+                1 for s in card.slot_scores
+                if s["slot"] >= 4 and s["zone"] in (pws.ZONE_PRIMARY, pws.ZONE_SECONDARY)
+            )
+            if value < 2:
+                return False
+        if "High-confidence spots" in flt and card.confidence < 60.0:
+            return False
+        return base
+
+    _filtered = [c for c in _all_cards if _passes_filters(c, _flt)]
+
+    def _sort_key(card: pws.WeakSpotCard):
+        if _sort_choice == "Highest overall pitcher weakness":
+            return (-card.overall_score,)
+        if _sort_choice == "Most targetable top-4 hitters":
+            return (-card.top4_targetable, -card.overall_score)
+        if _sort_choice == "Best value stack":
+            adj_value = sum(
+                1 for s in card.slot_scores
+                if s["slot"] >= 4 and s["zone"] in (pws.ZONE_PRIMARY, pws.ZONE_SECONDARY)
+            )
+            return (-adj_value, -card.overall_score)
+        if _sort_choice == "Highest platoon edge":
+            edges = sum(1 for s in card.slot_scores if s.get("platoon_edge"))
+            return (-edges, -card.overall_score)
+        if _sort_choice == "Confirmed lineups first":
+            return (0 if card.is_lineup_confirmed else 1, -card.overall_score)
+        if _sort_choice == "Earliest game time":
+            return (card.game_time_label or "ZZ",)
+        return (-card.overall_score,)
+
+    _filtered.sort(key=_sort_key)
+
+    # ---- Tab-scoped CSS ----
+    st.markdown(
+        "<style>"
+        ".pws-card { background:#ffffff; border-radius:16px; padding:14px 16px; "
+        "  margin-bottom:14px; border:1.5px solid #e2e8f0; "
+        "  box-shadow:0 2px 10px rgba(15,23,42,.06); }"
+        ".pws-card.confirmed { border-color:#15803d; "
+        "  box-shadow:0 2px 12px rgba(21,128,61,.18); }"
+        ".pws-header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; "
+        "  justify-content:space-between; margin-bottom:8px; }"
+        ".pws-matchup { font-weight:900; font-size:1.05rem; color:#0f172a; }"
+        ".pws-matchup .time { color:#64748b; font-weight:600; margin-left:8px; "
+        "  font-size:.86rem; }"
+        ".pws-pitcher { font-size:.95rem; color:#1e293b; font-weight:700; }"
+        ".pws-pitcher .hand { display:inline-block; padding:1px 6px; border-radius:6px; "
+        "  background:#e0e7ff; color:#3730a3; font-weight:800; font-size:.74rem; "
+        "  margin-left:6px; }"
+        ".pws-badge { display:inline-block; padding:3px 9px; border-radius:999px; "
+        "  font-weight:800; font-size:.74rem; letter-spacing:.03em; "
+        "  text-transform:uppercase; }"
+        ".pws-badge.confirmed { background:#dcfce7; color:#166534; border:1.5px solid #15803d; }"
+        ".pws-badge.expected { background:#fef3c7; color:#92400e; border:1.5px solid #d97706; }"
+        ".pws-badge.pending  { background:#e2e8f0; color:#475569; border:1.5px solid #94a3b8; }"
+        ".pws-overall { background:#0f172a; color:#facc15; padding:6px 12px; "
+        "  border-radius:12px; font-weight:900; font-size:.92rem; "
+        "  display:inline-flex; align-items:center; gap:6px; }"
+        ".pws-meta { color:#475569; font-size:.84rem; margin-top:2px; }"
+        ".pws-tagrow { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 8px; }"
+        ".pws-tag { padding:2px 8px; border-radius:8px; font-size:.72rem; "
+        "  font-weight:800; letter-spacing:.02em; }"
+        ".pws-tag.top { background:#fee2e2; color:#991b1b; }"
+        ".pws-tag.mid { background:#ffedd5; color:#9a3412; }"
+        ".pws-tag.bot { background:#f3e8ff; color:#6b21a8; }"
+        ".pws-tag.lefty { background:#dbeafe; color:#1e40af; }"
+        ".pws-tag.righty { background:#fce7f3; color:#9d174d; }"
+        ".pws-tag.ttop { background:#fef9c3; color:#854d0e; }"
+        ".pws-tag.power { background:#fecaca; color:#7f1d1d; }"
+        ".pws-tag.lowk { background:#cffafe; color:#155e75; }"
+        ".pws-tag.platoon { background:#dcfce7; color:#166534; }"
+        ".pws-target-list { background:#f8fafc; border-left:4px solid #f59e0b; "
+        "  padding:8px 12px; border-radius:8px; margin:6px 0 10px; "
+        "  font-size:.86rem; color:#1e293b; }"
+        ".pws-target-list b { color:#0f172a; }"
+        ".pws-reason { background:#f1f5f9; border-radius:8px; padding:8px 12px; "
+        "  margin-top:6px; font-size:.85rem; color:#334155; }"
+        ".pws-slot-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); "
+        "  gap:8px; margin-top:10px; }"
+        "@media (max-width: 720px) { .pws-slot-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } }"
+        "@media (max-width: 480px) { .pws-slot-grid { grid-template-columns:1fr; } }"
+        ".pws-slot { border:1.5px solid; border-radius:10px; padding:8px 10px; "
+        "  display:flex; flex-direction:column; gap:2px; position:relative; }"
+        ".pws-slot.projected { opacity:.86; }"
+        ".pws-slot.confirmed-target { box-shadow:0 0 0 3px rgba(22,163,74,.45); "
+        "  border-color:#15803d; }"
+        ".pws-slot .row1 { display:flex; align-items:center; justify-content:space-between; "
+        "  gap:6px; }"
+        ".pws-slot .spot { font-weight:900; font-size:.84rem; }"
+        ".pws-slot .score { font-weight:900; font-size:.92rem; }"
+        ".pws-slot .name { font-weight:700; font-size:.94rem; color:#0f172a; "
+        "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+        ".pws-slot .meta { font-size:.74rem; color:#475569; }"
+        ".pws-slot .target-icon { font-size:.92rem; }"
+        ".pws-confidence-bar { height:6px; border-radius:3px; background:#e2e8f0; "
+        "  margin-top:6px; overflow:hidden; }"
+        ".pws-confidence-bar > span { display:block; height:100%; background:#22c55e; }"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+    _tag_class = {
+        pws.TAG_TOP_ORDER: "top", pws.TAG_MIDDLE_ORDER: "mid",
+        pws.TAG_BOTTOM_ORDER: "bot",
+        pws.TAG_LEFTY_CLUSTER: "lefty", pws.TAG_RIGHTY_CLUSTER: "righty",
+        pws.TAG_SECOND_TIME_THROUGH: "ttop", pws.TAG_THIRD_TIME_THROUGH: "ttop",
+        pws.TAG_POWER_RISK: "power", pws.TAG_LOW_K_ZONE: "lowk",
+        pws.TAG_PLATOON_EDGE: "platoon",
+    }
+
+    def _render_card(card: pws.WeakSpotCard):
+        # Header
+        if card.is_lineup_confirmed:
+            badge_cls = "confirmed"
+        elif card.lineup_status == _LS_EXPECTED:
+            badge_cls = "expected"
+        else:
+            badge_cls = "pending"
+        card_cls = "pws-card confirmed" if card.is_lineup_confirmed else "pws-card"
+        html = [f'<div class="{card_cls}">']
+        html.append('<div class="pws-header">')
+        html.append(
+            f'<div><div class="pws-matchup">{card.away_abbr} @ {card.home_abbr}'
+            f'<span class="time">{card.game_time_label}</span></div>'
+            f'<div class="pws-pitcher">{card.pitcher_name} '
+            f'<span class="hand">{card.pitcher_hand or "R"}HP</span>'
+            f' <span style="color:#64748b; font-weight:600;">'
+            f'vs {card.opponent_abbr} lineup</span></div></div>'
+        )
+        html.append(
+            f'<div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">'
+            f'<span class="pws-overall">⚡ {card.overall_score:.0f} weak-spot</span>'
+            f'<span class="pws-badge {badge_cls}">{card.lineup_status_label}</span>'
+            f'</div>'
+        )
+        html.append('</div>')
+
+        # Ranked target list — top 3 slots by score
+        sorted_scores = sorted(card.slot_scores, key=lambda s: -s["score"])
+        target_pieces = []
+        for s in sorted_scores[:3]:
+            name = card.batters[s["slot"] - 1].name if 1 <= s["slot"] <= 9 else f"#{s['slot']}"
+            target_pieces.append(
+                f"#{s['slot']} <b>{name}</b> "
+                f"({pws.ZONE_LABEL.get(s['zone'], s['zone'])}, {s['score']:.0f})"
+            )
+        if target_pieces:
+            html.append(
+                '<div class="pws-target-list">🎯 <b>Best slots to attack:</b> '
+                + " · ".join(target_pieces) + '</div>'
+            )
+
+        # Tags (collect from top 3 slot scores)
+        top_tags: list[str] = []
+        for s in sorted_scores[:3]:
+            for t in s.get("tags", []):
+                if t not in top_tags:
+                    top_tags.append(t)
+        if top_tags:
+            tag_html = []
+            for t in top_tags[:6]:
+                cls = _tag_class.get(t, "mid")
+                tag_html.append(f'<span class="pws-tag {cls}">{t}</span>')
+            html.append('<div class="pws-tagrow">' + "".join(tag_html) + '</div>')
+
+        # "Why this spot?" — show the top slot's reasons
+        if sorted_scores:
+            top = sorted_scores[0]
+            reasons = top.get("reasons", [])
+            if reasons:
+                top_name = card.batters[top["slot"] - 1].name if 1 <= top["slot"] <= 9 else ""
+                html.append(
+                    f'<div class="pws-reason"><b>Why slot #{top["slot"]} '
+                    f'({top_name})?</b><br>• ' + "<br>• ".join(reasons) + '</div>'
+                )
+
+        # Confidence bar
+        pct = max(0, min(100, int(round(card.confidence))))
+        html.append(
+            f'<div class="pws-meta">Confidence: <b>{card.confidence:.0f}%</b></div>'
+            f'<div class="pws-confidence-bar"><span style="width:{pct}%;"></span></div>'
+        )
+
+        # 9-slot grid
+        html.append('<div class="pws-slot-grid">')
+        for row in pws.card_to_slot_rows(card):
+            zone = row["zone"]
+            bg = pws.ZONE_COLOR_BG.get(zone, "#f1f5f9")
+            bd = pws.ZONE_COLOR_BORDER.get(zone, "#94a3b8")
+            tx = pws.ZONE_COLOR_TEXT.get(zone, "#334155")
+            cls = ["pws-slot"]
+            if row["is_projected"]:
+                cls.append("projected")
+            if (not row["is_projected"]) and zone in (pws.ZONE_PRIMARY, pws.ZONE_SECONDARY):
+                cls.append("confirmed-target")
+            target_icon = "🎯" if zone in (pws.ZONE_PRIMARY, pws.ZONE_SECONDARY) else ""
+            proj_label = "Projected target" if row["is_projected"] else "Confirmed"
+            html.append(
+                f'<div class="{" ".join(cls)}" '
+                f'style="background:{bg}; border-color:{bd}; color:{tx};">'
+                f'<div class="row1"><span class="spot">#{row["slot"]} '
+                f'<span style="color:#64748b; font-weight:600;">'
+                f'{(row["bat_side"] or "R")[:1]}HB</span></span>'
+                f'<span class="score">{row["score"]:.0f}</span></div>'
+                f'<div class="name">{target_icon} {row["name"] or "—"}</div>'
+                f'<div class="meta">{pws.ZONE_LABEL.get(zone, zone)} · {proj_label}</div>'
+                f'</div>'
+            )
+        html.append('</div>')
+        html.append('</div>')
+        st.markdown("".join(html), unsafe_allow_html=True)
+
+    st.caption(
+        f"Showing **{len(_filtered)}** of {len(_all_cards)} pitcher-vs-lineup cards · "
+        f"refreshes with the rest of the slate."
+    )
+    for _card in _filtered:
+        _render_card(_card)
+
     st.stop()
 
 

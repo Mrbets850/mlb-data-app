@@ -11301,7 +11301,6 @@ _TOP_VIEW_OPTIONS = [
     "🌬️ Ballpark Weather",
     "🥎 AI 1+ Hits Parlay",
     "🏟️ Live HR Tracker",
-    "👑 MRBETS850 HOMERUN PICKS OF DAY",
 ]
 
 st.markdown(
@@ -11451,149 +11450,211 @@ def _build_top_tab_href(idx: int) -> str:
     return "?" + "&".join(_parts)
 
 # ===========================================================================
-# 👑 MRBETS850 HOMERUN PICKS — top-of-page hero CTA
-# Promoted out of the Apps & Generators grid into a bold, color-schemed,
-# mobile-first call-to-action that is the first thing users see when the
-# app opens. Clicking the CTA selects the same "👑 MRBETS850 HOMERUN PICKS
-# OF DAY" view via the existing ?top_view=<idx> deep-link handler, so all
-# underlying navigation/data logic in mrbets850_hr_picks.py is unchanged.
+# ⚾ MLB SLATE TICKER — scrolling scoreboard for today's games
+# Shows all games on the current slate with team logos, scores, and status.
+# Live games pulse with a red dot; final games show an "F" badge; pregame
+# games show the scheduled start time. The strip auto-scrolls horizontally
+# so all games are visible even on narrow mobile screens.
 # ===========================================================================
-_MRBETS_OPTION = "👑 MRBETS850 HOMERUN PICKS OF DAY"
-try:
-    _mrbets_idx = _TOP_VIEW_OPTIONS.index(_MRBETS_OPTION)
-except ValueError:
-    _mrbets_idx = None
+def _render_slate_ticker(sched_df):
+    """Render a premium auto-scrolling MLB scoreboard ticker."""
+    if sched_df is None or sched_df.empty:
+        return
+    cards = []
+    _n_live = 0
+    _n_final = 0
+    _n_preview = 0
+    for _, g in sched_df.iterrows():
+        try:
+            snap = _live_state_snapshot(g.get("game_pk"))
+        except Exception:
+            snap = None
+        phase = _game_phase(g.get("status", ""), snap)
+        away_ab = g.get("away_abbr", "")
+        home_ab = g.get("home_abbr", "")
+        away_id = g.get("away_id", 0)
+        home_id = g.get("home_id", 0)
+        away_logo = logo_url(away_id) if away_id else ""
+        home_logo = logo_url(home_id) if home_id else ""
+        away_score = (snap or {}).get("away_score")
+        home_score = (snap or {}).get("home_score")
 
-if _mrbets_idx is not None:
-    _mrbets_logo_html = (
-        f'<img src="{LOGO_URI}" alt="MRBETS850" '
-        'style="width:64px;height:64px;border-radius:14px;object-fit:cover;'
-        'border:2px solid #facc15;box-shadow:0 2px 8px rgba(0,0,0,.35);'
-        'flex:0 0 auto;background:#0b0420;" />'
-        if LOGO_URI else
-        '<div style="width:64px;height:64px;border-radius:14px;background:#facc15;'
-        'color:#3b1f6b;font-size:2rem;font-weight:900;display:flex;align-items:center;'
-        'justify-content:center;flex:0 0 auto;border:2px solid #facc15;'
-        'box-shadow:0 2px 8px rgba(0,0,0,.35);">👑</div>'
-    )
+        if phase == "live":
+            _n_live += 1
+            inn = _inning_label(snap)
+            status_html = (
+                '<div class="stk-status live">'
+                '<span class="stk-live-dot"></span>'
+                f'<span>{inn if inn else "Live"}</span>'
+                '</div>'
+            )
+            away_s = "—" if away_score is None else str(away_score)
+            home_s = "—" if home_score is None else str(home_score)
+            score_html = (
+                f'<div class="stk-scores">'
+                f'<span class="stk-score">{away_s}</span>'
+                f'<span class="stk-score-sep">-</span>'
+                f'<span class="stk-score">{home_s}</span>'
+                f'</div>'
+            )
+        elif phase == "final":
+            _n_final += 1
+            status_html = '<div class="stk-status final"><span>Final</span></div>'
+            away_s = "—" if away_score is None else str(away_score)
+            home_s = "—" if home_score is None else str(home_score)
+            score_html = (
+                f'<div class="stk-scores">'
+                f'<span class="stk-score">{away_s}</span>'
+                f'<span class="stk-score-sep">-</span>'
+                f'<span class="stk-score">{home_s}</span>'
+                f'</div>'
+            )
+        elif phase == "postponed":
+            status_html = '<div class="stk-status ppd"><span>PPD</span></div>'
+            score_html = ''
+        else:
+            _n_preview += 1
+            time_short = g.get("time_short", "")
+            status_html = f'<div class="stk-status preview"><span>{time_short}</span></div>'
+            score_html = ''
+
+        cards.append(
+            f'<div class="stk-game {phase}">'
+            f'<div class="stk-team">'
+            f'<img class="stk-logo" src="{away_logo}" alt="{away_ab}" />'
+            f'<span class="stk-abbr">{away_ab}</span>'
+            f'</div>'
+            f'{score_html}'
+            f'<div class="stk-team">'
+            f'<img class="stk-logo" src="{home_logo}" alt="{home_ab}" />'
+            f'<span class="stk-abbr">{home_ab}</span>'
+            f'</div>'
+            f'{status_html}'
+            f'</div>'
+        )
+
+    if _n_live > 0:
+        summary = f"{_n_live} Live"
+        if _n_final:
+            summary += f" · {_n_final} Final"
+    elif _n_final > 0:
+        summary = f"{_n_final} Final"
+        if _n_preview:
+            summary += f" · {_n_preview} Upcoming"
+    else:
+        summary = f"{_n_preview} Games Today"
+
+    n = len(cards)
+    scroll_dur = max(20, n * 4)
+    cards_dup = "".join(cards) + "".join(cards)
+
     st.markdown(
         "<style>"
-        "@keyframes mrbetsGlow { "
-        "  0%, 100% { box-shadow: 0 10px 36px rgba(20,5,50,.60), "
-        "    0 0 0 1px rgba(250,204,21,.30), 0 0 24px rgba(250,204,21,.08); } "
-        "  50%       { box-shadow: 0 14px 44px rgba(20,5,50,.70), "
-        "    0 0 0 2px rgba(250,204,21,.55), 0 0 40px rgba(250,204,21,.16); } }"
-        "@keyframes mrbetsShimmer { "
-        "  0%   { background-position: -200% center; } "
-        "  100% { background-position:  200% center; } }"
-        "@keyframes mrLiveFlash { "
-        "  0%, 100% { opacity: 1; } 50% { opacity: .45; } }"
-        ".mrbets-hero-cta { display:block; text-decoration:none !important; "
-        "  margin: 2px 0 18px 0; padding: 20px 20px; "
-        "  background: linear-gradient(125deg, #080220 0%, #1e0b4a 35%, #3b1f6b 65%, #5b21a8 100%); "
-        "  border: 1px solid rgba(250,204,21,.55); border-radius: 22px; "
-        "  animation: mrbetsGlow 3s ease-in-out infinite; "
-        "  position: relative; overflow: hidden; "
-        "  transition: transform .2s cubic-bezier(.22,1,.36,1); }"
-        # dot grid texture in CTA
-        ".mrbets-hero-cta::before { content:''; position:absolute; inset:0; pointer-events:none; z-index:0; "
-        "  background-image: radial-gradient(circle, rgba(250,204,21,.04) 1px, transparent 1px); "
-        "  background-size: 18px 18px; }"
-        # shimmer sweep
-        ".mrbets-hero-cta::after { content:''; position:absolute; top:0; bottom:0; width:40%; "
-        "  pointer-events:none; z-index:1; "
-        "  background: linear-gradient(90deg, transparent, rgba(255,255,255,.04), transparent); "
-        "  background-size: 200% auto; animation: mrbetsShimmer 3.5s linear infinite; }"
-        ".mrbets-hero-cta:hover { transform: translateY(-2px); animation: none; "
-        "  box-shadow: 0 18px 50px rgba(20,5,50,.75), 0 0 0 2px rgba(250,204,21,.70), "
-        "    0 0 48px rgba(250,204,21,.18); }"
-        ".mrbets-hero-inner { display:flex; align-items:center; gap:18px; "
-        "  position:relative; z-index:2; }"
-        ".mrbets-hero-text { flex:1 1 auto; min-width:0; }"
-        ".mrbets-hero-eyebrow { display:flex; align-items:center; gap:8px; "
-        "  font-size:.70rem; font-weight:900; "
-        "  letter-spacing:.18em; text-transform:uppercase; color:#facc15; "
-        "  margin-bottom: 5px; }"
-        ".mrbets-live-dot { width:7px; height:7px; border-radius:50%; "
-        "  background:#22c55e; flex-shrink:0; "
-        "  animation: mrLiveFlash 1.8s ease-in-out infinite; }"
-        ".mrbets-hero-title { font-size:1.60rem; font-weight:900; color:#ffffff; "
-        "  line-height:1.05; letter-spacing:.01em; "
-        "  text-shadow: 0 2px 8px rgba(0,0,0,.55); margin: 0; }"
-        ".mrbets-hero-title .crown { color:#facc15; "
-        "  text-shadow: 0 0 12px rgba(250,204,21,.65), 0 2px 4px rgba(0,0,0,.5); }"
-        ".mrbets-hero-title .accent { color:#facc15; "
-        "  text-shadow: 0 0 10px rgba(250,204,21,.40); }"
-        ".mrbets-hero-sub { color:#c4b5fd; font-size:.90rem; font-weight:600; "
-        "  margin-top:7px; line-height:1.35; }"
-        ".mrbets-hero-cta-btn { display:inline-flex; align-items:center; gap:8px; "
-        "  margin-top:13px; padding:11px 22px; border-radius:999px; "
-        "  background: linear-gradient(135deg, #ffe042 0%, #facc15 50%, #f59e0b 100%); "
-        "  color:#1e0b4a !important; font-weight:900; font-size:.94rem; "
-        "  letter-spacing:.04em; text-transform:uppercase; "
-        "  box-shadow: 0 4px 16px rgba(250,204,21,.45), inset 0 1px 0 rgba(255,255,255,.55); "
-        "  border: 1px solid rgba(255,255,255,.35); position: relative; overflow: hidden; }"
-        ".mrbets-hero-cta-btn::before { content:''; position:absolute; inset:0; "
-        "  background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); "
-        "  background-size: 200% auto; animation: mrbetsShimmer 2.2s linear infinite; }"
-        ".mrbets-hero-cta-btn > span, .mrbets-hero-cta-btn .arrow { position: relative; z-index:1; }"
-        ".mrbets-hero-cta-btn .arrow { transition: transform .18s ease; }"
-        ".mrbets-hero-cta:hover .mrbets-hero-cta-btn .arrow { transform: translateX(4px); }"
-        ".mrbets-hero-sparkle { position:absolute; top:-40%; right:-8%; "
-        "  width:50%; height:180%; pointer-events:none; z-index:1; "
-        "  background: radial-gradient(closest-side, rgba(250,204,21,.18) 0%, "
-        "    rgba(250,204,21,0) 70%); transform: rotate(15deg); }"
-        "@media (max-width: 640px) { "
-        "  .mrbets-hero-cta { padding: 16px 14px; border-radius:18px; margin-bottom: 14px; } "
-        "  .mrbets-hero-inner { gap:12px; } "
-        "  .mrbets-hero-title { font-size:1.22rem; } "
-        "  .mrbets-hero-sub { font-size:.82rem; } "
-        "  .mrbets-hero-cta-btn { padding:10px 16px; font-size:.86rem; "
-        "    width:100%; justify-content:center; margin-top:11px; } "
+        "@keyframes stkScroll { "
+        "  0%   { transform: translateX(0); } "
+        "  100% { transform: translateX(-50%); } "
         "}"
-        "@media (max-width: 380px) { "
-        "  .mrbets-hero-title { font-size:1.06rem; } "
-        "  .mrbets-hero-eyebrow { font-size:.66rem; letter-spacing:.14em; } "
+        "@keyframes stkLivePulse { "
+        "  0%, 100% { opacity: 1; } 50% { opacity: .35; } "
+        "}"
+        ".stk-wrap { "
+        "  margin: 2px 0 16px 0; padding: 0; "
+        "  background: linear-gradient(180deg, #0a1628 0%, #0e1f38 100%); "
+        "  border: 1px solid rgba(255,255,255,.08); border-radius: 14px; "
+        "  overflow: hidden; position: relative; "
+        "}"
+        ".stk-header { "
+        "  display: flex; align-items: center; justify-content: space-between; "
+        "  padding: 8px 14px 4px; "
+        "}"
+        ".stk-header-left { display: flex; align-items: center; gap: 8px; }"
+        ".stk-header-title { "
+        "  font-size: .72rem; font-weight: 800; letter-spacing: .14em; "
+        "  text-transform: uppercase; color: #64b5f6; "
+        "  font-family: 'DM Mono', monospace; "
+        "}"
+        ".stk-header-summary { "
+        "  font-size: .68rem; font-weight: 600; color: #4a6a8a; "
+        "  font-family: 'DM Mono', monospace; "
+        "}"
+        ".stk-rail { "
+        "  overflow: hidden; padding: 6px 0 10px; "
+        "}"
+        ".stk-strip { "
+        "  display: flex; gap: 10px; width: max-content; "
+        f"  animation: stkScroll {scroll_dur}s linear infinite; "
+        "  padding: 0 10px; "
+        "}"
+        ".stk-strip:hover { animation-play-state: paused; }"
+        ".stk-game { "
+        "  flex: 0 0 auto; display: flex; flex-direction: column; "
+        "  align-items: center; gap: 3px; "
+        "  background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); "
+        "  border-radius: 10px; padding: 8px 14px 7px; min-width: 88px; "
+        "  transition: background .2s, border-color .2s; "
+        "}"
+        ".stk-game:hover { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.12); }"
+        ".stk-game.live { border-color: rgba(239,68,68,.35); }"
+        ".stk-game.live:hover { border-color: rgba(239,68,68,.55); }"
+        ".stk-team { display: flex; align-items: center; gap: 5px; }"
+        ".stk-logo { width: 18px; height: 18px; object-fit: contain; }"
+        ".stk-abbr { "
+        "  font-size: .74rem; font-weight: 700; color: #c8ddf0; "
+        "  font-family: 'DM Mono', monospace; letter-spacing: .04em; "
+        "}"
+        ".stk-scores { "
+        "  display: flex; align-items: center; gap: 4px; margin: 1px 0; "
+        "}"
+        ".stk-score { "
+        "  font-size: .88rem; font-weight: 800; color: #ffffff; "
+        "  font-family: 'DM Mono', monospace; min-width: 14px; text-align: center; "
+        "}"
+        ".stk-score-sep { color: #3a5a7a; font-weight: 600; font-size: .78rem; }"
+        ".stk-game.final .stk-score { color: #7a9bbf; }"
+        ".stk-status { "
+        "  display: flex; align-items: center; gap: 4px; "
+        "  font-size: .58rem; font-weight: 700; letter-spacing: .06em; "
+        "  text-transform: uppercase; "
+        "  font-family: 'DM Mono', monospace; "
+        "}"
+        ".stk-status.live { color: #ef4444; }"
+        ".stk-status.final { color: #f59e0b; }"
+        ".stk-status.preview { color: #4a6a8a; }"
+        ".stk-status.ppd { color: #6b7280; }"
+        ".stk-live-dot { "
+        "  width: 6px; height: 6px; border-radius: 50%; background: #ef4444; "
+        "  animation: stkLivePulse 1.6s ease-in-out infinite; flex-shrink: 0; "
+        "}"
+        "@media (max-width: 640px) { "
+        "  .stk-wrap { border-radius: 10px; margin-bottom: 12px; } "
+        "  .stk-game { padding: 6px 10px 5px; min-width: 76px; border-radius: 8px; } "
+        "  .stk-logo { width: 15px; height: 15px; } "
+        "  .stk-abbr { font-size: .68rem; } "
+        "  .stk-score { font-size: .80rem; } "
+        "  .stk-header { padding: 6px 10px 3px; } "
         "}"
         "</style>",
         unsafe_allow_html=True,
     )
-    _mrbets_href = _build_top_tab_href(_mrbets_idx)
     st.markdown(
-        f'<a class="mrbets-hero-cta" href="{_mrbets_href}" target="_self">'
-        '<div class="mrbets-hero-sparkle"></div>'
-        '<div class="mrbets-hero-inner">'
-        f'{_mrbets_logo_html}'
-        '<div class="mrbets-hero-text">'
-        '<div class="mrbets-hero-eyebrow">'
-        '<span class="mrbets-live-dot"></span>'
-        '⭐ Today\'s Premium Picks'
+        '<div class="stk-wrap">'
+        '<div class="stk-header">'
+        '<div class="stk-header-left">'
+        '<span class="stk-header-title">⚾ MLB Scoreboard</span>'
         '</div>'
-        '<div class="mrbets-hero-title">'
-        '<span class="crown">👑</span> MRBETS850 '
-        '<span class="accent">HOMERUN PICKS</span> OF THE DAY'
+        f'<span class="stk-header-summary">{summary}</span>'
         '</div>'
-        '<div class="mrbets-hero-sub">'
-        'Hand-picked Top 25 home-run plays for tonight\'s slate — '
-        'ranked, stats-backed, updated daily.'
+        '<div class="stk-rail">'
+        f'<div class="stk-strip">{cards_dup}</div>'
         '</div>'
-        '<span class="mrbets-hero-cta-btn">'
-        '<span>View Today\'s Picks</span>'
-        '<span class="arrow">→</span>'
-        '</span>'
-        '</div>'
-        '</div>'
-        '</a>',
+        '</div>',
         unsafe_allow_html=True,
     )
 
-# Apps & Generators pill grid — the MRBETS850 entry is intentionally excluded
-# from this list because it has been promoted to the hero CTA above. Keeping
-# it in _TOP_VIEW_OPTIONS preserves the deep-link handler + view-render logic.
+_render_slate_ticker(schedule_df)
+
 _pills_html = []
 for _i, _opt in enumerate(_TOP_VIEW_OPTIONS):
-    if _opt == _MRBETS_OPTION:
-        continue
     _active = " active" if _opt == _view else ""
     _href = _build_top_tab_href(_i)
     _pills_html.append(
@@ -15918,21 +15979,6 @@ if _view == "🏟️ Live HR Tracker":
         _render_lhrt()
     except Exception as _lhrt_err:
         st.error(f"Live HR Tracker failed to load: {_lhrt_err}")
-    st.stop()
-
-
-# ============== MRBETS850 HOMERUN PICKS OF DAY view ==============
-# Developer-managed daily Top 25 homerun picks. Public users see the
-# logo + ranked player cards (stats sourced from the same batters_df the
-# rest of the app uses). Developer unlock is gated by a PIN configured
-# via st.secrets / env (MRBETS850_ADMIN_PIN or MLB_EDGE_ADMIN_PIN);
-# without unlock no editing controls render. See mrbets850_hr_picks.py.
-if _view == "👑 MRBETS850 HOMERUN PICKS OF DAY":
-    try:
-        from mrbets850_hr_picks import render_mrbets850_hr_picks as _render_mrbets850
-        _render_mrbets850(batters_df)
-    except Exception as _mrbets_err:
-        st.error(f"MRBETS850 Homerun Picks tab failed to load: {_mrbets_err}")
     st.stop()
 
 

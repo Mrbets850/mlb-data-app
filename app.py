@@ -9558,13 +9558,13 @@ def render_lineup_banner(team_id, team_abbr, opp_pitcher, status, *,
     )
     st.markdown(banner_html, unsafe_allow_html=True)
 
-def render_pitch_mix_block(mix_df: pd.DataFrame, surface_bg: str = "#ffffff") -> str:
+def render_pitch_mix_block(mix_df: pd.DataFrame, surface_bg: str = "#0a1628") -> str:
     """Build the 'Pitch Mix' mini-table HTML for a pitcher.
     Columns: pitch (emoji+name), Use%, wOBA allowed, Whiff%, RV/100.
     Color-codes wOBA allowed: green = strong (low), red = vulnerable (high)."""
     if mix_df is None or mix_df.empty:
         return (
-            '<div style="margin-top:10px; font-size:0.78rem; color:#64748b; '
+            '<div style="margin-top:10px; font-size:0.78rem; color:#94a3b8; '
             'font-weight:700;">No pitch-mix data yet — may not have enough '
             "pitches thrown this season.</div>"
         )
@@ -9580,41 +9580,51 @@ def render_pitch_mix_block(mix_df: pd.DataFrame, surface_bg: str = "#ffffff") ->
         # color the wOBA cell: <.300 great (green), >.360 leaky (red)
         try:
             w = float(woba)
-            if w <= 0.300: woba_col = "#16a34a"
-            elif w <= 0.340: woba_col = "#65a30d"
-            elif w <= 0.380: woba_col = "#d97706"
-            else: woba_col = "#dc2626"
+            if w <= 0.300: woba_col = "#4ade80"
+            elif w <= 0.340: woba_col = "#a3e635"
+            elif w <= 0.380: woba_col = "#fbbf24"
+            else: woba_col = "#f87171"
             woba_str = f"{w:.3f}"
         except Exception:
-            woba_col, woba_str = "#475569", "—"
+            woba_col, woba_str = "#94a3b8", "—"
         use_str = f"{float(use):.0f}%" if pd.notna(use) else "—"
         whiff_str = f"{float(whiff):.0f}%" if pd.notna(whiff) else "—"
         try: rv_str = f"{float(rv100):+.1f}"
         except Exception: rv_str = "—"
         rows_html.append(
             f'<tr>'
-            f'<td style="padding:5px 6px; font-weight:800; color:#0f172a; white-space:nowrap;">{emoji} {name}</td>'
-            f'<td style="padding:5px 6px; text-align:right; font-weight:800; color:#0f172a;">{use_str}</td>'
-            f'<td style="padding:5px 6px; text-align:right; font-weight:900; color:{woba_col};">{woba_str}</td>'
-            f'<td style="padding:5px 6px; text-align:right; font-weight:700; color:#475569;">{whiff_str}</td>'
-            f'<td style="padding:5px 6px; text-align:right; font-weight:700; color:#475569;">{rv_str}</td>'
+            f'<td style="padding:6px 8px; font-weight:800; color:#f1f5f9; white-space:nowrap; font-size:0.86rem;">{emoji} {name}</td>'
+            f'<td style="padding:6px 8px; text-align:right; font-weight:800; color:#e2e8f0; font-size:0.86rem;">{use_str}</td>'
+            f'<td style="padding:6px 8px; text-align:right; font-weight:900; color:{woba_col}; font-size:0.88rem;">{woba_str}</td>'
+            f'<td style="padding:6px 8px; text-align:right; font-weight:700; color:#cbd5e1; font-size:0.84rem;">{whiff_str}</td>'
+            f'<td style="padding:6px 8px; text-align:right; font-weight:700; color:#cbd5e1; font-size:0.84rem;">{rv_str}</td>'
             f'</tr>'
         )
     return (
-        '<div style="margin-top:12px; background:' + surface_bg + '; border:1px solid #e2e8f0; '
-        'border-radius:10px; padding:6px 4px;">'
-        '<div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; '
-        'letter-spacing:.08em; font-weight:800; padding:2px 8px 4px;">Pitch Mix — what they throw &amp; results allowed</div>'
+        '<div style="margin-top:12px; background:rgba(255,255,255,0.05); '
+        'border:1px solid rgba(255,255,255,0.1); '
+        'border-radius:10px; padding:6px 4px; overflow:hidden;">'
+        '<div style="font-size:0.64rem; color:#7dd3fc; text-transform:uppercase; '
+        'letter-spacing:.1em; font-weight:900; padding:4px 10px 6px; '
+        'border-bottom:1px solid rgba(255,255,255,0.07);">'
+        'Pitch Mix — What They Throw &amp; Results Allowed</div>'
         '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">'
-        '<thead><tr style="color:#64748b; font-size:0.66rem; font-weight:800; text-transform:uppercase;">'
-        '<th style="text-align:left; padding:3px 6px;">Pitch</th>'
-        '<th style="text-align:right; padding:3px 6px;">Use</th>'
-        '<th style="text-align:right; padding:3px 6px;">wOBA</th>'
-        '<th style="text-align:right; padding:3px 6px;">Whiff</th>'
-        '<th style="text-align:right; padding:3px 6px;" title="Run value per 100 pitches — negative is better for the pitcher">RV/100</th>'
+        '<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.06);">'
+        '<th style="text-align:left; padding:5px 8px; font-size:0.64rem; font-weight:900; '
+        'color:#94a3b8; text-transform:uppercase; letter-spacing:.08em;">Pitch</th>'
+        '<th style="text-align:right; padding:5px 8px; font-size:0.64rem; font-weight:900; '
+        'color:#94a3b8; text-transform:uppercase; letter-spacing:.08em;">Use</th>'
+        '<th style="text-align:right; padding:5px 8px; font-size:0.64rem; font-weight:900; '
+        'color:#94a3b8; text-transform:uppercase; letter-spacing:.08em;">wOBA</th>'
+        '<th style="text-align:right; padding:5px 8px; font-size:0.64rem; font-weight:900; '
+        'color:#94a3b8; text-transform:uppercase; letter-spacing:.08em;">Whiff</th>'
+        '<th style="text-align:right; padding:5px 8px; font-size:0.64rem; font-weight:900; '
+        'color:#94a3b8; text-transform:uppercase; letter-spacing:.08em;" '
+        'title="Run value per 100 pitches — negative is better for the pitcher">RV/100</th>'
         '</tr></thead>'
         '<tbody>' + "".join(rows_html) + '</tbody></table>'
-        '<div style="font-size:0.7rem; color:#64748b; padding:4px 8px 2px;">'
+        '<div style="font-size:0.68rem; color:#64748b; padding:5px 10px 3px; '
+        'border-top:1px solid rgba(255,255,255,0.05);">'
         'Green wOBA = pitch is dominant · Red = batters punish it.</div>'
         '</div>'
     )
@@ -10706,13 +10716,13 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
         change_badge_html = (
             f'<span title="{_title}" '
             f'style="display:inline-block; padding:3px 9px; border-radius:999px; '
-            f'background:#fef3c7; color:#7c2d12; border:1px solid #f59e0b; '
+            f'background:rgba(245,158,11,0.15); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); '
             f'font-size:.7rem; font-weight:900; letter-spacing:.04em; '
             f'margin-left:8px; text-transform:uppercase;">⚠️ Pitching Change</span>'
         )
         if _orig_esc:
             replaced_html = (
-                f'<div style="font-size:.72rem; color:#7c2d12; '
+                f'<div style="font-size:.72rem; color:#94a3b8; '
                 f'font-weight:700; margin-top:2px;">replaced {_orig_esc}</div>'
             )
 
@@ -10736,14 +10746,14 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
             f'margin-left:6px; text-transform:uppercase;">HR Watch</span>'
         )
 
-    tone_color = {"good": "#10b981", "mid": "#f59e0b", "bad": "#ef4444", "": "#b0c8e4"}
+    tone_color = {"good": "#4ade80", "mid": "#fbbf24", "bad": "#f87171", "": "#b0c8e4"}
     def _stat_block(lbl, val, tone):
         c = tone_color.get(tone, "#b0c8e4")
         return (
             f'<div>'
-            f'<div style="font-size:0.58rem; color:#3a5a7a; text-transform:uppercase; '
-            f'font-weight:700; letter-spacing:0.08em;">{lbl}</div>'
-            f'<div style="font-weight:700; color:{c}; font-family:\'DM Mono\',monospace;">{val}</div>'
+            f'<div style="font-size:0.58rem; color:#7dd3fc; text-transform:uppercase; '
+            f'font-weight:800; letter-spacing:0.08em;">{lbl}</div>'
+            f'<div style="font-weight:800; color:{c}; font-family:\'DM Mono\',monospace; font-size:0.95rem;">{val}</div>'
             f'</div>'
         )
 
@@ -10762,9 +10772,10 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
         f'padding:10px 12px;">'
         f'<div style="display:flex; justify-content:space-between; align-items:flex-start;">'
         f'<div>'
-        f'<div style="font-size:0.6rem; color:#3a5a7a; text-transform:uppercase; '
-        f'letter-spacing:0.1em; font-weight:700;">{_label_html}</div>'
-        f'<div style="font-size:0.95rem; font-weight:800; color:#e2eeff; margin-top:2px;">'
+        f'<div style="font-size:0.6rem; color:#7dd3fc; text-transform:uppercase; '
+        f'letter-spacing:0.1em; font-weight:800;">{_label_html}</div>'
+        f'<div style="font-size:0.95rem; font-weight:900; color:#ffffff; margin-top:2px; '
+        f'text-shadow:0 1px 3px rgba(0,0,0,0.5);">'
         f'{_name_html} '
         f'<span style="color:#4e6a8a; font-weight:600; font-size:0.82rem;">({_hand_html})</span>'
         f'{change_badge_html}{hr_badge_html}</div>'

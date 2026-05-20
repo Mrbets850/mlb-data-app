@@ -1288,7 +1288,7 @@ div[data-testid="element-container"]:has(.mhm-cta-click) +
     font-size: 0.62rem; font-weight: 700; color: #00c896;
     letter-spacing: 0.12em; text-transform: uppercase; font-family: 'DM Sans', sans-serif;
 }
-.insights-panel-sub { font-size: 0.6rem; font-weight: 500; color: #3a5a7a; }
+.insights-panel-sub { font-size: 0.6rem; font-weight: 600; color: #7dd3fc; }
 .insight-row {
     display: flex; align-items: center; gap: 10px;
     padding: 9px 14px;
@@ -1300,23 +1300,28 @@ div[data-testid="element-container"]:has(.mhm-cta-click) +
 .insight-rank {
     flex: 0 0 22px; width: 22px; height: 22px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.68rem; font-weight: 800; color: #3a5a7a;
+    font-size: 0.68rem; font-weight: 800; color: #5a7a9c;
     font-family: 'DM Mono', monospace;
 }
 .insight-rank.rank-1 { color: #10b981; }
 .insight-rank.rank-2 { color: #00c896; }
 .insight-rank.rank-3 { color: #5a7a9c; }
+.insight-photo-wrap {
+    position: relative; width: 38px; height: 38px; flex-shrink: 0;
+}
 .insight-photo {
-    width: 34px; height: 34px; border-radius: 50%;
-    object-fit: cover; background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08); flex-shrink: 0;
+    position: absolute; inset: 0;
+    width: 38px; height: 38px; border-radius: 50%;
+    object-fit: cover; background: transparent;
+    border: 2px solid rgba(0,200,150,0.3);
 }
 .insight-photo-fallback {
-    width: 34px; height: 34px; border-radius: 50%;
-    background: rgba(0,200,150,0.08); color: #00c896;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 800; font-size: 0.82rem;
-    border: 1px solid rgba(0,200,150,0.14); flex-shrink: 0;
+    position: absolute; inset: 0;
+    width: 38px; height: 38px; border-radius: 50%;
+    background: linear-gradient(135deg, rgba(0,200,150,0.15), rgba(0,100,80,0.2));
+    color: #00c896; display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 0.9rem; letter-spacing: -0.02em;
+    border: 2px solid rgba(0,200,150,0.25);
 }
 .insight-player { flex: 0 0 150px; min-width: 0; }
 .insight-player-name {
@@ -1324,7 +1329,7 @@ div[data-testid="element-container"]:has(.mhm-cta-click) +
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     font-family: 'DM Sans', sans-serif; line-height: 1.2;
 }
-.insight-player-meta { font-size: 0.62rem; font-weight: 500; color: #3a5a7a; margin-top: 2px; }
+.insight-player-meta { font-size: 0.62rem; font-weight: 600; color: #7dd3fc; margin-top: 2px; }
 .insight-stats { display: flex; gap: 8px; flex: 1 1 auto; align-items: center; flex-wrap: wrap; }
 .insight-stat { display: flex; flex-direction: column; min-width: 42px; }
 .insight-stat-val {
@@ -1332,7 +1337,7 @@ div[data-testid="element-container"]:has(.mhm-cta-click) +
     font-family: 'DM Mono', monospace;
 }
 .insight-stat-label {
-    font-size: 0.56rem; font-weight: 600; color: #3a5a7a;
+    font-size: 0.56rem; font-weight: 700; color: #94a3b8;
     text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px;
 }
 .insight-score-bar { flex: 1 1 auto; min-width: 55px; max-width: 110px; }
@@ -1359,8 +1364,14 @@ div[data-testid="element-container"]:has(.mhm-cta-click) +
 @media (max-width: 640px) {
     .insight-player { flex-basis: 95px; }
     .insight-stats { gap: 5px; }
-    .insight-score-bar { display: none; }
+    .insight-score-bar-track { display: none; }
+    .insight-score-num {
+        font-size: 0.82rem; font-weight: 900; color: #00c896;
+        background: rgba(0,200,150,0.1); border-radius: 4px;
+        padding: 2px 6px; white-space: nowrap;
+    }
     .insight-stat-val { font-size: 0.78rem; }
+    .insight-player-meta { color: #7dd3fc; }
 }
 
 /* ====================================================================
@@ -16810,15 +16821,22 @@ if _render_matchup:
             ops_v  = r.get("OPS")
 
             photo_url = player_headshot_url(r.get("_player_id"))
+            initials = "".join([p[:1] for p in name.split()[:2]]).upper() or "?"
             if photo_url:
+                # Wrap: fallback div sits behind; img overlays it if it loads.
+                # No onerror JS needed — Streamlit's sanitizer strips JS attributes.
                 photo_html = (
-                    f'<img class="insight-photo" src="{photo_url}" alt="{name}" '
-                    f'onerror="this.outerHTML=\'<div class=\\\"insight-photo-fallback\\\">'
-                    f'{(name[:1] or "?").upper()}</div>\'" />'
+                    f'<div class="insight-photo-wrap">'
+                    f'<div class="insight-photo-fallback">{initials}</div>'
+                    f'<img class="insight-photo" src="{photo_url}" alt="{name}">'
+                    f'</div>'
                 )
             else:
-                initials = "".join([p[:1] for p in name.split()[:2]]).upper() or "?"
-                photo_html = f'<div class="insight-photo-fallback">{initials}</div>'
+                photo_html = (
+                    f'<div class="insight-photo-wrap">'
+                    f'<div class="insight-photo-fallback">{initials}</div>'
+                    f'</div>'
+                )
 
             # Crush chips
             crush_chips_html = ""

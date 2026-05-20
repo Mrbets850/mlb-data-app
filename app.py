@@ -4943,7 +4943,7 @@ def render_matchup_player_card_html(row, display_cols):
     _mv_safe = float(matchup_v) if (
         matchup_v is not None and not (isinstance(matchup_v, float) and pd.isna(matchup_v))
     ) else 0
-    tier_key, tier_label = _matchup_tier(_mv_safe)
+    tier_key, tier_label = score_tier(_mv_safe)
     matchup_disp = f"{_mv_safe:.1f}" if _mv_safe else "—"
 
     # 5-metric strip shown as compact blocks with mini progress bars

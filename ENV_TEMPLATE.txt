@@ -1,0 +1,24 @@
+# Railway environment variable template for THE MLB EDGE
+# Copy only the variables you already use.
+# Do not paste real secrets into this file.
+
+# Optional: The Odds API integration
+ODDS_API_KEY=replace_with_existing_value
+
+# Optional: admin unlock for MRBETS850 HR picks
+MRBETS850_ADMIN_PIN=replace_with_existing_value
+MLB_EDGE_ADMIN_PIN=replace_with_existing_value
+
+# Optional: persist HR picks edits back to GitHub
+MRBETS850_GITHUB_TOKEN=replace_with_existing_value
+GITHUB_TOKEN=replace_with_existing_value
+MRBETS850_PICKS_REPO=replace_with_existing_value
+MRBETS850_PICKS_PATH=replace_with_existing_value
+MRBETS850_PICKS_BRANCH=replace_with_existing_value
+
+# Optional: premium lineup providers
+SPORTRADAR_MLB_API_KEY=replace_with_existing_value
+SPORTSDATAIO_MLB_API_KEY=replace_with_existing_value
+
+# Testing only; leave unset in production unless intentionally testing a date
+MRBETS850_TODAY_OVERRIDE=replace_with_existing_value

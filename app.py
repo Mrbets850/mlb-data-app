@@ -317,8 +317,8 @@ def render_source_chips(keys: "list[str]") -> str:
                     f"{age/(60*24):.1f}d"))
         chips.append(
             f'<span style="display:inline-block;margin:2px 6px 2px 0;'
-            f'background:#f1f5f9;border-radius:8px;padding:2px 8px;'
-            f'font-size:.74rem;color:#0f172a;">'
+            f'background:rgba(255,255,255,.06);border-radius:8px;padding:2px 8px;'
+            f'font-size:.74rem;color:#e2e8f0;">'
             f'<span style="background:{bg};color:{fg};border-radius:999px;'
             f'padding:1px 6px;margin-right:6px;font-weight:800;font-size:.65rem;'
             f'letter-spacing:.04em;">{txt}</span>'
@@ -418,15 +418,15 @@ html, body,
 section.main,
 .main,
 .stApp {
-    background: #08111f !important;
-    background-color: #08111f !important;
+    background: #0a1628 !important;
+    background-color: #0a1628 !important;
     background-image: none !important;
 }
-body, html { background: #08111f !important; }
+body, html { background: #0a1628 !important; }
 body::before {
     content: "";
     position: fixed; inset: 0;
-    background: #08111f;
+    background: #0a1628;
     z-index: -1;
     pointer-events: none;
 }
@@ -1112,12 +1112,13 @@ html, body, [class*="css"] {
 }
 @media (max-width: 640px) { .scout-player { flex-basis: 120px; } }
 .scout-player-name {
-    font-size: 0.85rem; font-weight: 700; color: #e2eeff;
+    font-size: 0.95rem; font-weight: 800; color: #ffffff;
     display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     font-family: 'DM Sans', sans-serif; line-height: 1.2;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.5);
 }
 .scout-player-meta {
-    font-size: 0.6rem; font-weight: 500; color: #3a5a7a;
+    font-size: 0.62rem; font-weight: 600; color: #7dd3fc;
     display: block; margin-top: 2px; letter-spacing: 0.02em;
 }
 .scout-player-crush {
@@ -1178,8 +1179,20 @@ html, body, [class*="css"] {
 }
 .scout-row-spacer { height: 8px; }
 @media (max-width: 640px) {
-    .scout-metrics { display: none; }
-    .scout-row { padding: 7px 9px; }
+    .scout-metrics {
+        display: flex;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        flex-wrap: nowrap;
+        gap: 3px;
+        padding-bottom: 2px;
+    }
+    .scout-metrics::-webkit-scrollbar { display: none; }
+    .scout-metric { min-width: 42px; padding: 3px 5px; flex-shrink: 0; }
+    .scout-metric-label { font-size: 0.48rem; }
+    .scout-metric-val { font-size: 0.72rem; }
+    .scout-row { padding: 7px 9px; flex-wrap: wrap; }
     .scout-player { flex-basis: auto; flex: 1 1 auto; }
     .scout-outcome { min-width: 65px; }
     .scout-likely { font-size: 0.62rem; max-width: 75px; }
@@ -4084,11 +4097,11 @@ def style_matchup_table(df):
         "SweetSpot%": "{:.1f}%",
     })
     base_text = [
-        {"selector": "th", "props": [("color", "#0f172a"), ("font-size", "12px"),
-                                     ("font-weight", "800"), ("background-color", "#f1f5f9"),
+        {"selector": "th", "props": [("color", "#7dd3fc"), ("font-size", "12px"),
+                                     ("font-weight", "800"), ("background-color", "#1a2744"),
                                      ("text-transform", "uppercase"), ("letter-spacing", "0.04em"),
                                      ("padding", "8px 10px")]},
-        {"selector": "td", "props": [("color", "#0f172a"), ("font-size", "13px"),
+        {"selector": "td", "props": [("color", "#e2e8f0"), ("font-size", "13px"),
                                      ("font-weight", "700"), ("padding", "6px 10px")]},
     ]
     styler = styler.set_table_styles(base_text)
@@ -4109,10 +4122,10 @@ def style_rolling_table(df):
     if df.empty: return df
     styler = df.style.format(precision=1)
     base_text = [
-        {"selector": "th", "props": [("color", "#0f172a"), ("font-size", "12px"),
-                                     ("font-weight", "800"), ("background-color", "#f1f5f9"),
+        {"selector": "th", "props": [("color", "#7dd3fc"), ("font-size", "12px"),
+                                     ("font-weight", "800"), ("background-color", "#1a2744"),
                                      ("text-transform", "uppercase"), ("letter-spacing", "0.04em")]},
-        {"selector": "td", "props": [("color", "#0f172a"), ("font-size", "13px"), ("font-weight", "700")]},
+        {"selector": "td", "props": [("color", "#e2e8f0"), ("font-size", "13px"), ("font-weight", "700")]},
     ]
     styler = styler.set_table_styles(base_text)
     for c in df.columns:
@@ -4946,13 +4959,15 @@ def render_matchup_player_card_html(row, display_cols):
     tier_key, tier_label = score_tier(_mv_safe)
     matchup_disp = f"{_mv_safe:.1f}" if _mv_safe else "—"
 
-    # 5-metric strip shown as compact blocks with mini progress bars
+    # 7-metric heat-map strip: barrel, flyball, EV, hard-hit, HR/FB, ISO, pull-air
     STRIP_COLS = [
-        ("ISO",      "ISO",   "{:.3f}"),
-        ("Brl/BIP%", "Brl%",  "{:.1f}"),
-        ("EV",       "EV",    "{:.1f}"),
-        ("HH%",      "HH%",   "{:.1f}"),
-        ("xwOBA",    "xwOBA", "{:.3f}"),
+        ("ISO",      "ISO",    "{:.3f}"),
+        ("Brl/BIP%", "BARREL", "{:.1f}"),
+        ("FB%",      "FLYBALL","{:.1f}"),
+        ("EV",       "EV",     "{:.1f}"),
+        ("HH%",      "HARDHIT","{:.1f}"),
+        ("HR/FB%",   "HR/FB",  "{:.1f}"),
+        ("PullAir%", "PULLAIR","{:.1f}"),
     ]
     metric_tiles = []
     for col, label, fmt in STRIP_COLS:
@@ -7030,37 +7045,37 @@ def render_slate_pitcher_html(df, schedule_df=None):
     show_cols = [c for c in PREFERRED if c in available] + [c for c in available if c not in PREFERRED]
     css = (
         "<style>"
-        ".sp-wrap { overflow-x:auto; border-radius:14px; border:1px solid #e2e8f0; "
-        "  background:#fff; box-shadow: 0 2px 8px rgba(15,23,42,.04); margin: 6px 0 14px 0; }"
+        ".sp-wrap { overflow-x:auto; border-radius:14px; border:1px solid rgba(255,255,255,.07); "
+        "  background:#0b1220; box-shadow: 0 2px 8px rgba(0,0,0,.35); margin: 6px 0 14px 0; }"
         ".sp-table { border-collapse: separate; border-spacing:0; width:100%; "
-        "  font-size: 0.86rem; color:#0f172a; font-family: inherit; }"
-        ".sp-table thead th { background:#f1f5f9; color:#334155; font-weight:800; "
-        "  text-align:center; padding: 10px 8px; border-bottom:1px solid #e2e8f0; "
+        "  font-size: 0.86rem; color:#e2e8f0; font-family: inherit; }"
+        ".sp-table thead th { background:#1a2744; color:#7dd3fc; font-weight:800; "
+        "  text-align:center; padding: 10px 8px; border-bottom:1px solid rgba(255,255,255,.07); "
         "  position: sticky; top: 0; z-index: 1; white-space: nowrap; }"
-        ".sp-table thead th.sp-sort { color:#0f172a; }"
-        ".sp-table tbody td { padding: 8px 8px; border-bottom:1px solid #f1f5f9; "
+        ".sp-table thead th.sp-sort { color:#ffffff; }"
+        ".sp-table tbody td { padding: 8px 8px; border-bottom:1px solid rgba(255,255,255,.05); "
         "  text-align:center; white-space: nowrap; }"
-        ".sp-table tbody tr:hover td { background:#f8fafc; }"
+        ".sp-table tbody tr:hover td { background:rgba(0,200,150,.04); }"
         ".sp-team-cell { display:flex; align-items:center; gap:8px; justify-content:flex-start; "
         "  text-align:left; padding-left:6px; }"
         ".sp-team-cell img { width:24px; height:24px; object-fit:contain; }"
-        ".sp-loc { color:#64748b; font-weight:800; width: 28px; }"
+        ".sp-loc { color:#7dd3fc; font-weight:800; width: 28px; }"
         ".sp-pitcher { text-align:left; font-weight:700; }"
-        ".sp-pitcher-link { color:#0f172a; text-decoration:none; border-bottom: 1px dashed #94a3b8; }"
-        ".sp-pitcher-link:hover { color:#0a4ea2; border-bottom-color:#0a4ea2; }"
-        ".sp-pitcher-link:hover::after { color:#0a4ea2; }"
+        ".sp-pitcher-link { color:#e2e8f0; text-decoration:none; border-bottom: 1px dashed rgba(255,255,255,.3); }"
+        ".sp-pitcher-link:hover { color:#00c896; border-bottom-color:#00c896; }"
+        ".sp-pitcher-link:hover::after { color:#00c896; }"
         ".sp-num { font-variant-numeric: tabular-nums; font-weight:700; }"
-        ".sp-na { color:#94a3b8; }"
-        ".sp-empty { padding:14px 18px; color:#64748b; background:#f8fafc; border-radius:14px; "
-        "  border:1px dashed #cbd5e1; }"
+        ".sp-na { color:#4e6a8a; }"
+        ".sp-empty { padding:14px 18px; color:#94a3b8; background:rgba(255,255,255,.03); border-radius:14px; "
+        "  border:1px dashed rgba(255,255,255,.1); }"
         ".sp-src { display:inline-block; padding: 2px 8px; border-radius: 999px; "
         "  font-size: .68rem; font-weight: 800; letter-spacing: .04em; "
         "  text-transform: uppercase; line-height: 1.4; }"
-        ".sp-src-savant   { background:#dcfce7; color:#166534; border:1px solid #86efac; }"
-        ".sp-src-savant-sm{ background:#fef3c7; color:#854d0e; border:1px solid #fde68a; }"
-        ".sp-src-savant-xs{ background:#ffedd5; color:#9a3412; border:1px solid #fed7aa; }"
-        ".sp-src-statsapi { background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe; }"
-        ".sp-src-none     { background:#f1f5f9; color:#64748b; border:1px solid #cbd5e1; }"
+        ".sp-src-savant   { background:rgba(34,197,94,.18); color:#4ade80; border:1px solid rgba(34,197,94,.3); }"
+        ".sp-src-savant-sm{ background:rgba(250,204,21,.12); color:#fde68a; border:1px solid rgba(250,204,21,.3); }"
+        ".sp-src-savant-xs{ background:rgba(251,146,60,.12); color:#fb923c; border:1px solid rgba(251,146,60,.3); }"
+        ".sp-src-statsapi { background:rgba(59,130,246,.12); color:#93c5fd; border:1px solid rgba(59,130,246,.3); }"
+        ".sp-src-none     { background:rgba(255,255,255,.06); color:#94a3b8; border:1px solid rgba(255,255,255,.1); }"
         "</style>"
     )
 
@@ -7586,38 +7601,42 @@ def render_slate_pitcher_explainer():
     css = (
         "<style>"
         ".spc-row { display:flex; gap:12px; flex-wrap:wrap; margin: 4px 0 14px 0; }"
-        ".spc-card { flex:1 1 0; min-width: 280px; background:#fff; border:2px solid #e2e8f0; "
-        "  border-radius:14px; padding: 12px 14px; box-shadow: 0 2px 8px rgba(15,23,42,.05); "
+        ".spc-card { flex:1 1 0; min-width: 280px; "
+        "  background:linear-gradient(180deg,#111827 0%,#0b1220 100%); "
+        "  border:2px solid rgba(255,255,255,.08); "
+        "  border-radius:14px; padding: 12px 14px; box-shadow: 0 2px 12px rgba(0,0,0,.45); "
         "  position: relative; }"
-        ".spc-tier-elite  { border-color:#16a34a; background: linear-gradient(180deg,#f0fdf4 0%,#fff 60%); }"
-        ".spc-tier-strong { border-color:#84cc16; }"
-        ".spc-tier-ok     { border-color:#facc15; }"
-        ".spc-tier-soft   { border-color:#f97316; }"
-        ".spc-tier-poor   { border-color:#ef4444; background: linear-gradient(180deg,#fef2f2 0%,#fff 60%); }"
-        ".spc-tag { position:absolute; top:-10px; left:14px; background:#0f172a; color:#fff; "
-        "  font-size:.68rem; font-weight:800; padding:3px 9px; border-radius:999px; letter-spacing:.06em; }"
+        ".spc-tier-elite  { border-color:rgba(22,163,74,.5); }"
+        ".spc-tier-strong { border-color:rgba(132,204,22,.4); }"
+        ".spc-tier-ok     { border-color:rgba(250,204,21,.4); }"
+        ".spc-tier-soft   { border-color:rgba(249,115,22,.4); }"
+        ".spc-tier-poor   { border-color:rgba(239,68,68,.4); }"
+        ".spc-tag { position:absolute; top:-10px; left:14px; background:#1a2744; color:#7dd3fc; "
+        "  font-size:.68rem; font-weight:800; padding:3px 9px; border-radius:999px; "
+        "  letter-spacing:.06em; border:1px solid rgba(125,211,252,.2); }"
         ".spc-head { display:flex; align-items:center; gap:10px; margin-top:2px; }"
         ".spc-logo { width: 36px; height: 36px; object-fit: contain; flex: 0 0 36px; }"
-        ".spc-name { font-size: 1.02rem; font-weight: 900; color:#0f172a; line-height:1.1; }"
-        ".spc-name a { color: inherit; text-decoration: none; border-bottom: 1px dashed #94a3b8; }"
-        ".spc-name a:hover { color:#0a4ea2; border-bottom-color:#0a4ea2; }"
-        ".spc-meta { color:#64748b; font-size:.78rem; font-weight:700; letter-spacing:.02em; }"
+        ".spc-name { font-size: 1.02rem; font-weight: 900; color:#ffffff; line-height:1.1; "
+        "  text-shadow:0 1px 3px rgba(0,0,0,.5); }"
+        ".spc-name a { color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,.3); }"
+        ".spc-name a:hover { color:#00c896; border-bottom-color:#00c896; }"
+        ".spc-meta { color:#7dd3fc; font-size:.78rem; font-weight:700; letter-spacing:.02em; }"
         ".spc-scores { display:flex; gap:14px; align-items:flex-end; margin-top:8px; }"
         ".spc-bigscore { display:flex; flex-direction:column; }"
-        ".spc-bigscore .lab { color:#64748b; font-size:.62rem; font-weight:800; "
+        ".spc-bigscore .lab { color:#94a3b8; font-size:.62rem; font-weight:800; "
         "  text-transform:uppercase; letter-spacing:.08em; }"
-        ".spc-bigscore .val { font-size: 1.55rem; font-weight: 900; color:#0f172a; line-height:1; }"
+        ".spc-bigscore .val { font-size: 1.55rem; font-weight: 900; color:#00c896; line-height:1; }"
         ".spc-pill { display:inline-block; padding: 3px 10px; border-radius: 999px; "
         "  font-weight: 800; font-size: .78rem; }"
-        ".spc-pill.elite  { background:#dcfce7; color:#065f46; }"
-        ".spc-pill.strong { background:#ecfccb; color:#365314; }"
-        ".spc-pill.ok     { background:#fef9c3; color:#713f12; }"
-        ".spc-pill.soft   { background:#ffedd5; color:#9a3412; }"
-        ".spc-pill.poor   { background:#fee2e2; color:#991b1b; }"
+        ".spc-pill.elite  { background:rgba(34,197,94,.18); color:#4ade80; border:1px solid rgba(34,197,94,.3); }"
+        ".spc-pill.strong { background:rgba(0,200,150,.15); color:#34d399; border:1px solid rgba(0,200,150,.3); }"
+        ".spc-pill.ok     { background:rgba(250,204,21,.12); color:#fde68a; border:1px solid rgba(250,204,21,.3); }"
+        ".spc-pill.soft   { background:rgba(251,146,60,.12); color:#fb923c; border:1px solid rgba(251,146,60,.3); }"
+        ".spc-pill.poor   { background:rgba(239,68,68,.12); color:#fca5a5; border:1px solid rgba(239,68,68,.3); }"
         ".spc-stats { display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; margin-top:12px; }"
-        ".spc-stat .lab { color:#64748b; font-size:.62rem; font-weight:800; "
+        ".spc-stat .lab { color:#94a3b8; font-size:.62rem; font-weight:800; "
         "  text-transform:uppercase; letter-spacing:.06em; }"
-        ".spc-stat .val { color:#0f172a; font-size: .98rem; font-weight: 800; }"
+        ".spc-stat .val { color:#e2e8f0; font-size: .98rem; font-weight: 800; }"
         ".spc-empty { color:#64748b; font-size:.85rem; font-style:italic; }"
         "</style>"
     )
@@ -8150,23 +8169,23 @@ def render_hr_sleepers_html(df):
         "<style>"
         ".hrs-wrap { margin: 6px 0 14px 0; }"
         ".hrs-table { width:100%; border-collapse: separate; border-spacing: 0; "
-        "  font-size:.92rem; background:#fff; border-radius:12px; overflow:hidden; "
-        "  box-shadow: 0 2px 10px rgba(15,23,42,.06); }"
+        "  font-size:.92rem; background:#0b1220; border-radius:12px; overflow:hidden; "
+        "  box-shadow: 0 2px 10px rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.07); }"
         ".hrs-table th { background:#3b1f6b; color:#fcd34d; text-align:left; "
         "  font-weight:800; padding:9px 10px; letter-spacing:.03em; font-size:.78rem; "
         "  text-transform:uppercase; }"
-        ".hrs-table td { padding:8px 10px; border-bottom:1px solid #f1f5f9; "
-        "  color:#0f172a; }"
-        ".hrs-table tr:nth-child(even) td { background:#fafafa; }"
+        ".hrs-table td { padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.06); "
+        "  color:#e2e8f0; }"
+        ".hrs-table tr:nth-child(even) td { background:rgba(255,255,255,.03); }"
         ".hrs-pill { display:inline-block; padding:3px 9px; border-radius:999px; "
         "  font-weight:800; font-size:.74rem; letter-spacing:.04em; }"
-        ".hrs-pill.elite  { background:#dcfce7; color:#065f46; }"
-        ".hrs-pill.strong { background:#ecfccb; color:#365314; }"
-        ".hrs-pill.ok     { background:#fef9c3; color:#713f12; }"
-        ".hrs-pill.soft   { background:#ffedd5; color:#9a3412; }"
-        ".hrs-score { font-weight:900; font-size:1.05rem; color:#0f172a; }"
-        ".hrs-name { font-weight:800; color:#0f172a; }"
-        ".hrs-meta { color:#64748b; font-size:.78rem; }"
+        ".hrs-pill.elite  { background:rgba(34,197,94,.18); color:#4ade80; border:1px solid rgba(34,197,94,.3); }"
+        ".hrs-pill.strong { background:rgba(0,200,150,.15); color:#34d399; border:1px solid rgba(0,200,150,.3); }"
+        ".hrs-pill.ok     { background:rgba(250,204,21,.12); color:#fde68a; border:1px solid rgba(250,204,21,.3); }"
+        ".hrs-pill.soft   { background:rgba(251,146,60,.12); color:#fb923c; border:1px solid rgba(251,146,60,.3); }"
+        ".hrs-score { font-weight:900; font-size:1.05rem; color:#00c896; }"
+        ".hrs-name { font-weight:800; color:#ffffff; text-shadow:0 1px 2px rgba(0,0,0,.4); }"
+        ".hrs-meta { color:#7dd3fc; font-size:.78rem; }"
         ".hrs-num { font-variant-numeric: tabular-nums; }"
         "</style>"
     )
@@ -8542,37 +8561,37 @@ def render_targets_html(df, mode="tb"):
         "<style>"
         ".tg-wrap { margin: 6px 0 14px 0; }"
         ".tg-table { width:100%; border-collapse: separate; border-spacing: 0; "
-        "  font-size:.92rem; background:#fff; border-radius:12px; overflow:hidden; "
-        "  box-shadow: 0 2px 10px rgba(15,23,42,.06); }"
+        "  font-size:.92rem; background:#0b1220; border-radius:12px; overflow:hidden; "
+        "  box-shadow: 0 2px 10px rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.07); }"
         ".tg-table th { background:#3b1f6b; color:#fcd34d; text-align:left; "
         "  font-weight:800; padding:9px 10px; letter-spacing:.03em; font-size:.78rem; "
         "  text-transform:uppercase; }"
-        ".tg-table td { padding:8px 10px; border-bottom:1px solid #f1f5f9; "
-        "  color:#0f172a; }"
-        ".tg-table tr:nth-child(even) td { background:#fafafa; }"
+        ".tg-table td { padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.06); "
+        "  color:#e2e8f0; }"
+        ".tg-table tr:nth-child(even) td { background:rgba(255,255,255,.03); }"
         ".tg-pill { display:inline-block; padding:3px 9px; border-radius:999px; "
         "  font-weight:800; font-size:.74rem; letter-spacing:.04em; }"
-        ".tg-pill.elite  { background:#dcfce7; color:#065f46; }"
-        ".tg-pill.strong { background:#ecfccb; color:#365314; }"
-        ".tg-pill.ok     { background:#fef9c3; color:#713f12; }"
-        ".tg-pill.soft   { background:#ffedd5; color:#9a3412; }"
-        ".tg-score { font-weight:900; font-size:1.05rem; color:#0f172a; }"
-        ".tg-name { font-weight:800; color:#0f172a; }"
-        ".tg-meta { color:#64748b; font-size:.78rem; }"
+        ".tg-pill.elite  { background:rgba(34,197,94,.18); color:#4ade80; border:1px solid rgba(34,197,94,.3); }"
+        ".tg-pill.strong { background:rgba(0,200,150,.15); color:#34d399; border:1px solid rgba(0,200,150,.3); }"
+        ".tg-pill.ok     { background:rgba(250,204,21,.12); color:#fde68a; border:1px solid rgba(250,204,21,.3); }"
+        ".tg-pill.soft   { background:rgba(251,146,60,.12); color:#fb923c; border:1px solid rgba(251,146,60,.3); }"
+        ".tg-score { font-weight:900; font-size:1.05rem; color:#00c896; }"
+        ".tg-name { font-weight:800; color:#ffffff; text-shadow:0 1px 2px rgba(0,0,0,.4); }"
+        ".tg-meta { color:#7dd3fc; font-size:.78rem; }"
         ".tg-num { font-variant-numeric: tabular-nums; }"
         # Lineup-status mini-pills shown inline next to player name.
         ".tg-lp { display:inline-block; padding:1px 7px; border-radius:999px; "
         "  font-weight:800; font-size:.66rem; letter-spacing:.04em; "
         "  margin-left:6px; vertical-align: middle; }"
-        ".tg-lp.confirmed { background:#dcfce7; color:#065f46; }"
-        ".tg-lp.projected { background:#dbeafe; color:#1e3a8a; }"
-        ".tg-lp.notposted { background:#fee2e2; color:#7f1d1d; }"
+        ".tg-lp.confirmed { background:rgba(34,197,94,.18); color:#4ade80; border:1px solid rgba(34,197,94,.3); }"
+        ".tg-lp.projected { background:rgba(59,130,246,.15); color:#93c5fd; border:1px solid rgba(59,130,246,.3); }"
+        ".tg-lp.notposted { background:rgba(239,68,68,.12); color:#fca5a5; border:1px solid rgba(239,68,68,.3); }"
         # Park-factor pill colored by neutral / hitter-friendly / pitcher-friendly.
         ".tg-park { display:inline-block; padding:1px 7px; border-radius:6px; "
         "  font-weight:700; font-size:.7rem; }"
-        ".tg-park.hot   { background:#fee2e2; color:#7f1d1d; }"
-        ".tg-park.neut  { background:#f1f5f9; color:#334155; }"
-        ".tg-park.cold  { background:#dbeafe; color:#1e3a8a; }"
+        ".tg-park.hot   { background:rgba(239,68,68,.15); color:#fca5a5; border:1px solid rgba(239,68,68,.3); }"
+        ".tg-park.neut  { background:rgba(148,163,184,.12); color:#cbd5e1; border:1px solid rgba(148,163,184,.2); }"
+        ".tg-park.cold  { background:rgba(59,130,246,.12); color:#93c5fd; border:1px solid rgba(59,130,246,.3); }"
         "</style>"
     )
 
@@ -9195,33 +9214,33 @@ def _render_ou_strip(ou: dict) -> str:
     line = ou.get("line")
     avg = ou.get("avg")
     n = ou.get("n")
-    line_str = (f"line: <span style='color:#0f172a; font-weight:900;'>{line:.1f}</span>"
+    line_str = (f"line: <span style='color:#e2e8f0; font-weight:900;'>{line:.1f}</span>"
                 if line is not None else
                 "<span style='color:#94a3b8;'>line: not set · add ODDS_API_KEY in Streamlit secrets</span>")
-    avg_str = (f"hist. avg: <span style='color:#0f172a; font-weight:900;'>{avg:.1f}</span>"
+    avg_str = (f"hist. avg: <span style='color:#e2e8f0; font-weight:900;'>{avg:.1f}</span>"
                if avg is not None else "")
     # If we have a line, draw the Under/Push/Over distribution bar
     if ou.get("under") is not None:
         u, p, o = ou["under"], ou["push"] or 0, ou["over"]
         bar_html = (
             f'<div style="display:flex; height:36px; border-radius:999px; overflow:hidden; '
-            f'border:1px solid #e2e8f0; margin-top:6px;">'
-            f'<div style="flex:{u}; background:linear-gradient(180deg,#fde2e2 0%,#fecaca 100%); '
+            f'border:1px solid rgba(255,255,255,.1); margin-top:6px;">'
+            f'<div style="flex:{u}; background:linear-gradient(180deg,rgba(239,68,68,.35) 0%,rgba(220,38,38,.5) 100%); '
             f'display:flex; align-items:center; justify-content:center; '
-            f'color:#7c2d12; font-weight:900; font-size:0.85rem;">'
+            f'color:#fca5a5; font-weight:900; font-size:0.85rem;">'
             f'<span style="margin-right:6px; opacity:.7; font-size:0.7rem;">UNDER</span>{u}%</div>'
         )
         if p > 0:
             bar_html += (
-                f'<div style="flex:{p}; background:#f1f5f9; '
+                f'<div style="flex:{p}; background:rgba(255,255,255,.06); '
                 f'display:flex; align-items:center; justify-content:center; '
-                f'color:#475569; font-weight:800; font-size:0.72rem;">'
+                f'color:#94a3b8; font-weight:800; font-size:0.72rem;">'
                 f'<span style="opacity:.7; font-size:0.6rem; margin-right:3px;">PUSH</span>{p}%</div>'
             )
         bar_html += (
-            f'<div style="flex:{o}; background:linear-gradient(180deg,#dcfce7 0%,#bbf7d0 100%); '
+            f'<div style="flex:{o}; background:linear-gradient(180deg,rgba(34,197,94,.35) 0%,rgba(22,163,74,.5) 100%); '
             f'display:flex; align-items:center; justify-content:center; '
-            f'color:#14532d; font-weight:900; font-size:0.85rem;">'
+            f'color:#4ade80; font-weight:900; font-size:0.85rem;">'
             f'{o}%<span style="margin-left:6px; opacity:.7; font-size:0.7rem;">OVER</span></div>'
             f'</div>'
         )
@@ -9264,9 +9283,10 @@ def render_weather_impact_card(weather: dict, park_factor, home_abbr: str,
     elif imp["sample"] == "Stable sample": dot = "#22d3ee"
     else: dot = "#94a3b8"
     return (
-        '<div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; '
+        '<div style="background:linear-gradient(180deg,#111827 0%,#0b1220 100%); '
+        'border:1px solid rgba(255,255,255,.08); border-radius:14px; '
         'padding:0; margin-top:14px; overflow:hidden; '
-        'box-shadow:0 2px 8px rgba(15,23,42,.06);">'
+        'box-shadow:0 2px 12px rgba(0,0,0,.45);">'
         # ---- Top chip strip: temp, dew, wind, rain, sky, sample ----
         '<div style="background:linear-gradient(180deg,#3b1f6b 0%,#1a0b3a 100%); '
         'color:#fef3c7; padding:10px 14px; display:flex; flex-wrap:wrap; gap:10px 18px; '
@@ -9307,7 +9327,7 @@ def render_weather_impact_card(weather: dict, park_factor, home_abbr: str,
         + _avg_bar("K’s", imp["k_pct"])
         + (_render_ou_strip(ou_summary) if ou_summary is not None else "")
         + '<div style="font-size:0.68rem; color:#94a3b8; font-weight:700; '
-        'margin-top:8px; padding-top:6px; border-top:1px dashed #e2e8f0;">'
+        'margin-top:8px; padding-top:6px; border-top:1px dashed rgba(255,255,255,.1);">'
         'Model blends park factor, temp, wind to/from CF, and dew point. Tunable in code — '
         f'weather: <b>{weather.get("source_label", "Open-Meteo")}</b> '
         '(RotoGrinders preferred · Open-Meteo fallback) · MLB StatsAPI · The Odds API.</div>'
@@ -11172,26 +11192,27 @@ def _render_rbi_hero_strip():
         ".rbi-hero-rail::-webkit-scrollbar { height:5px; }"
         ".rbi-hero-rail::-webkit-scrollbar-thumb { background:rgba(251,191,36,.50); border-radius:3px; }"
         ".rbi-card { flex: 0 0 auto; min-width: 180px; max-width: 200px; "
-        "  background:#fff; border-radius:14px; padding:11px 13px; "
+        "  background:linear-gradient(180deg,#111827 0%,#0b1220 100%); "
+        "  border-radius:14px; padding:11px 13px; "
         "  scroll-snap-align: start; "
-        "  box-shadow: 0 4px 14px rgba(0,0,0,.18); "
-        "  border: 1px solid #f1f5f9; "
+        "  box-shadow: 0 4px 14px rgba(0,0,0,.45); "
+        "  border: 1px solid rgba(255,255,255,.08); "
         "  transition: transform .15s, box-shadow .15s; }"
-        ".rbi-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.22); }"
+        ".rbi-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.55); }"
         ".rbi-card-rank { display:inline-block; background: linear-gradient(135deg,#3b1f6b,#1e0b4a); "
         "  color:#facc15; "
         "  font-weight:900; font-size:.70rem; padding:2px 9px; border-radius:999px; "
         "  letter-spacing:.05em; }"
         ".rbi-card-score { float:right; font-weight:900; font-size:1.08rem; "
-        "  color:#dc2626; font-variant-numeric:tabular-nums; }"
-        ".rbi-card-name { font-weight:800; color:#0f172a; font-size:.96rem; "
-        "  margin-top:7px; line-height:1.15; }"
-        ".rbi-card-meta { color:#64748b; font-size:.73rem; margin-top:2px; font-weight:600; }"
-        ".rbi-card-game { color:#475569; font-size:.73rem; margin-top:7px; "
-        "  border-top:1px solid #f1f5f9; padding-top:6px; font-weight:600; }"
+        "  color:#f87171; font-variant-numeric:tabular-nums; }"
+        ".rbi-card-name { font-weight:900; color:#ffffff; font-size:.96rem; "
+        "  margin-top:7px; line-height:1.15; text-shadow:0 1px 3px rgba(0,0,0,.5); }"
+        ".rbi-card-meta { color:#7dd3fc; font-size:.73rem; margin-top:2px; font-weight:600; }"
+        ".rbi-card-game { color:#94a3b8; font-size:.73rem; margin-top:7px; "
+        "  border-top:1px solid rgba(255,255,255,.07); padding-top:6px; font-weight:600; }"
         ".rbi-card-stats { display:flex; gap:8px; margin-top:6px; "
-        "  font-variant-numeric: tabular-nums; font-size:.72rem; color:#0f172a; font-weight:700; }"
-        ".rbi-card-stats span b { color:#b91c1c; }"
+        "  font-variant-numeric: tabular-nums; font-size:.72rem; color:#e2e8f0; font-weight:700; }"
+        ".rbi-card-stats span b { color:#f87171; }"
         "</style>"
     )
 
@@ -11328,8 +11349,8 @@ st.markdown(
     "  .top-tab-pill { padding:12px 8px; min-height:58px; font-size:.88rem; } "
     "}"
     ".sp-legend { color:#64748b; font-size:.78rem; margin: 4px 0 12px 0; }"
-    ".sp-legend code { background:#f1f5f9; padding: 1px 6px; border-radius:6px; "
-    "  font-family: inherit; font-weight:700; color:#334155; }"
+    ".sp-legend code { background:rgba(255,255,255,.07); padding: 1px 6px; border-radius:6px; "
+    "  font-family: inherit; font-weight:700; color:#94a3b8; }"
     "</style>",
     unsafe_allow_html=True,
 )
@@ -12920,47 +12941,49 @@ if _view == "🤖 AI HR Parlay":
 
     css = (
         "<style>"
-        ".aip-card { background:#fff; border-radius:14px; padding:14px 14px 8px 14px; "
-        "  box-shadow:0 2px 12px rgba(15,23,42,.07); margin: 8px 0 16px 0; "
-        "  border-left:5px solid #3b1f6b; }"
-        ".aip-card.aip-empty { border-left-color:#cbd5e1; padding:14px; }"
+        ".aip-card { background:linear-gradient(180deg,#111827 0%,#0b1220 100%); "
+        "  border-radius:14px; padding:14px 14px 8px 14px; "
+        "  box-shadow:0 2px 16px rgba(0,0,0,.45); margin: 8px 0 16px 0; "
+        "  border-left:5px solid #7c3aed; border:1px solid rgba(124,58,237,.25); "
+        "  border-left:5px solid #7c3aed; }"
+        ".aip-card.aip-empty { border-left-color:#334155; padding:14px; }"
         ".aip-card-head { display:flex; align-items:center; justify-content:space-between; "
         "  gap:10px; margin-bottom:6px; flex-wrap:wrap; }"
-        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#3b1f6b; "
+        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#e2e8f0; "
         "  letter-spacing:.01em; }"
-        ".aip-card-sub { color:#64748b; font-size:.82rem; margin-top:2px; }"
+        ".aip-card-sub { color:#94a3b8; font-size:.82rem; margin-top:2px; }"
         ".aip-badge { font-size:.74rem; }"
-        ".aip-leg { padding:10px 0; border-top:1px dashed #e2e8f0; }"
+        ".aip-leg { padding:10px 0; border-top:1px dashed rgba(255,255,255,.08); }"
         ".aip-leg:first-of-type { border-top:none; }"
         ".aip-leg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }"
         ".aip-leg-num { font-size:.72rem; font-weight:800; letter-spacing:.06em; "
         "  text-transform:uppercase; color:#fcd34d; background:#3b1f6b; "
         "  padding:3px 8px; border-radius:6px; }"
-        ".aip-leg-name { font-weight:800; color:#0f172a; flex:1 1 200px; "
-        "  font-size:.98rem; }"
-        ".aip-meta { color:#64748b; font-weight:500; font-size:.82rem; }"
+        ".aip-leg-name { font-weight:900; color:#ffffff; flex:1 1 200px; "
+        "  font-size:1rem; text-shadow:0 1px 3px rgba(0,0,0,.5); }"
+        ".aip-meta { color:#7dd3fc; font-weight:600; font-size:.82rem; }"
         ".aip-leg-score { display:flex; align-items:center; gap:6px; }"
-        ".aip-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
+        ".aip-score { font-weight:900; font-size:1.05rem; color:#00c896; "
         "  font-variant-numeric: tabular-nums; }"
-        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 4px 0; }"
+        ".aip-ctx { color:#94a3b8; font-size:.84rem; margin: 4px 0 4px 0; }"
         ".aip-bpw-line { display:block; margin: 4px 0 6px 0; padding:6px 10px; "
         "  border-radius:8px; font-size:.86rem; font-weight:700; line-height:1.35; "
         "  border:1px solid transparent; }"
         ".aip-bpw-line b { font-weight:800; }"
         ".aip-bpw-pct { font-weight:700; margin-left:4px; "
         "  font-variant-numeric: tabular-nums; }"
-        ".aip-bpw-good { background:#dcfce7; color:#065f46; border-color:#86efac; }"
-        ".aip-bpw-ok   { background:#fef9c3; color:#713f12; border-color:#fde68a; }"
-        ".aip-bpw-bad  { background:#fee2e2; color:#7f1d1d; border-color:#fecaca; }"
-        ".aip-stats { color:#0f172a; font-size:.84rem; margin: 0 0 4px 0; "
-        "  background:#f8fafc; border-radius:6px; padding:5px 8px; "
-        "  font-variant-numeric: tabular-nums; }"
-        ".aip-reasons { margin: 4px 0 2px 18px; padding:0; color:#0f172a; "
+        ".aip-bpw-good { background:rgba(34,197,94,.15); color:#4ade80; border-color:rgba(34,197,94,.3); }"
+        ".aip-bpw-ok   { background:rgba(250,204,21,.12); color:#fde68a; border-color:rgba(250,204,21,.3); }"
+        ".aip-bpw-bad  { background:rgba(239,68,68,.12); color:#fca5a5; border-color:rgba(239,68,68,.3); }"
+        ".aip-stats { color:#e2e8f0; font-size:.84rem; margin: 0 0 4px 0; "
+        "  background:rgba(255,255,255,.05); border-radius:6px; padding:5px 8px; "
+        "  font-variant-numeric: tabular-nums; border:1px solid rgba(255,255,255,.07); }"
+        ".aip-reasons { margin: 4px 0 2px 18px; padding:0; color:#cbd5e1; "
         "  font-size:.88rem; }"
         ".aip-reasons li { margin: 1px 0; line-height:1.35; }"
         ".aip-disclaimer { color:#64748b; font-size:.78rem; margin: 6px 2px 12px 2px; "
         "  font-style:italic; }"
-        "@media (max-width:520px) { .aip-leg-name { font-size:.92rem; } "
+        "@media (max-width:520px) { .aip-leg-name { font-size:.94rem; } "
         "  .aip-card-title { font-size:1rem; } .aip-reasons { font-size:.84rem; } "
         "  .aip-stats { font-size:.80rem; } }"
         "</style>"
@@ -13091,22 +13114,23 @@ if _view == "👑 HR Round Robin":
         "  .rr-hero .rr-title { font-size:1.15rem; } "
         "  .rr-hero .rr-sub   { font-size:.84rem; } }"
         # Player cards
-        ".rr-card { background:#fff; border-radius:14px; padding:12px 14px; "
-        "  box-shadow:0 2px 12px rgba(15,23,42,.08); margin: 8px 0; "
-        "  border-left:6px solid #facc15; }"
+        ".rr-card { background:linear-gradient(180deg,#111827 0%,#0b1220 100%); "
+        "  border-radius:14px; padding:12px 14px; "
+        "  box-shadow:0 2px 16px rgba(0,0,0,.45); margin: 8px 0; "
+        "  border:1px solid rgba(250,204,21,.2); border-left:6px solid #facc15; }"
         ".rr-card .rr-rank { display:inline-block; min-width:28px; "
         "  text-align:center; font-weight:900; color:#facc15; "
         "  background:#3b1f6b; border-radius:6px; padding:3px 8px; "
         "  font-size:.78rem; letter-spacing:.06em; }"
-        ".rr-card .rr-name { font-weight:900; color:#0f172a; font-size:1.04rem; "
-        "  margin-left:8px; }"
-        ".rr-card .rr-meta { color:#475569; font-size:.84rem; margin-top:2px; }"
-        ".rr-card .rr-score { float:right; font-weight:900; color:#3b1f6b; "
+        ".rr-card .rr-name { font-weight:900; color:#ffffff; font-size:1.04rem; "
+        "  margin-left:8px; text-shadow:0 1px 3px rgba(0,0,0,.5); }"
+        ".rr-card .rr-meta { color:#94a3b8; font-size:.84rem; margin-top:2px; }"
+        ".rr-card .rr-score { float:right; font-weight:900; color:#00c896; "
         "  font-size:1.06rem; font-variant-numeric: tabular-nums; }"
-        ".rr-card .rr-stats { color:#0f172a; font-size:.84rem; "
-        "  background:#f8fafc; border-radius:6px; padding:6px 9px; margin-top:6px; "
-        "  font-variant-numeric: tabular-nums; }"
-        ".rr-card .rr-why { margin: 6px 0 2px 18px; padding:0; color:#0f172a; "
+        ".rr-card .rr-stats { color:#e2e8f0; font-size:.84rem; "
+        "  background:rgba(255,255,255,.05); border-radius:6px; padding:6px 9px; margin-top:6px; "
+        "  font-variant-numeric: tabular-nums; border:1px solid rgba(255,255,255,.07); }"
+        ".rr-card .rr-why { margin: 6px 0 2px 18px; padding:0; color:#cbd5e1; "
         "  font-size:.86rem; }"
         ".rr-card .rr-why li { margin: 1px 0; line-height:1.35; }"
         # Combos panel
@@ -13197,8 +13221,8 @@ if _view == "👑 HR Round Robin":
 
     st.markdown(
         f'<div style="margin:0 0 10px 0; padding:8px 12px; '
-        f'border-left:3px solid #facc15; background:#fffbeb; '
-        f'border-radius:6px; color:#713f12; font-size:0.88rem;">'
+        f'border-left:3px solid #facc15; background:rgba(250,204,21,0.1); '
+        f'border-radius:6px; color:#fde68a; font-size:0.88rem;">'
         f'🔒 Locked ticket for <b>{selected_date}</b> · '
         f'using <b>{len(rr_schedule)}</b> pre-game matchup'
         f'{"s" if len(rr_schedule) != 1 else ""}'
@@ -14333,34 +14357,35 @@ if _view == "🎯 AI K Generator":
 
     css = (
         "<style>"
-        ".kgen-card { background:#fff; border-radius:14px; padding:14px 14px 8px 14px; "
-        "  box-shadow:0 2px 12px rgba(15,23,42,.07); margin: 8px 0 16px 0; "
-        "  border-left:5px solid #1d4ed8; }"
-        ".kgen-card.kgen-empty { border-left-color:#cbd5e1; padding:14px; }"
+        ".kgen-card { background:linear-gradient(180deg,#0d1b2e 0%,#091220 100%); "
+        "  border-radius:14px; padding:14px 14px 8px 14px; "
+        "  box-shadow:0 2px 16px rgba(0,0,0,.45); margin: 8px 0 16px 0; "
+        "  border:1px solid rgba(29,78,216,.3); border-left:5px solid #3b82f6; }"
+        ".kgen-card.kgen-empty { border-left-color:#334155; padding:14px; }"
         ".kgen-card-head { display:flex; align-items:center; justify-content:space-between; "
         "  gap:10px; margin-bottom:6px; flex-wrap:wrap; }"
-        ".kgen-card-title { font-weight:900; font-size:1.08rem; color:#1e3a8a; "
+        ".kgen-card-title { font-weight:900; font-size:1.08rem; color:#e2e8f0; "
         "  letter-spacing:.01em; }"
-        ".kgen-card-sub { color:#64748b; font-size:.82rem; margin-top:2px; }"
+        ".kgen-card-sub { color:#94a3b8; font-size:.82rem; margin-top:2px; }"
         ".kgen-badge { font-size:.74rem; }"
-        ".kgen-leg { padding:10px 0; border-top:1px dashed #e2e8f0; }"
+        ".kgen-leg { padding:10px 0; border-top:1px dashed rgba(255,255,255,.08); }"
         ".kgen-leg:first-of-type { border-top:none; }"
         ".kgen-leg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }"
         ".kgen-leg-num { font-size:.72rem; font-weight:800; letter-spacing:.06em; "
         "  text-transform:uppercase; color:#fde68a; background:#1e3a8a; "
         "  padding:3px 8px; border-radius:6px; }"
-        ".kgen-leg-name { font-weight:800; color:#0f172a; flex:1 1 200px; "
-        "  font-size:.98rem; }"
-        ".kgen-meta { color:#64748b; font-weight:500; font-size:.82rem; }"
+        ".kgen-leg-name { font-weight:900; color:#ffffff; flex:1 1 200px; "
+        "  font-size:1rem; text-shadow:0 1px 3px rgba(0,0,0,.5); }"
+        ".kgen-meta { color:#7dd3fc; font-weight:600; font-size:.82rem; }"
         ".kgen-leg-score { display:flex; align-items:center; gap:6px; }"
-        ".kgen-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
+        ".kgen-score { font-weight:900; font-size:1.05rem; color:#60a5fa; "
         "  font-variant-numeric: tabular-nums; }"
-        ".kgen-ctx { color:#1e3a8a; font-size:.86rem; margin: 4px 0 4px 0; "
+        ".kgen-ctx { color:#7dd3fc; font-size:.86rem; margin: 4px 0 4px 0; "
         "  font-variant-numeric: tabular-nums; }"
-        ".kgen-stats { color:#0f172a; font-size:.84rem; margin: 0 0 4px 0; "
-        "  background:#f8fafc; border-radius:6px; padding:5px 8px; "
-        "  font-variant-numeric: tabular-nums; }"
-        ".kgen-reasons { margin: 4px 0 2px 18px; padding:0; color:#0f172a; "
+        ".kgen-stats { color:#e2e8f0; font-size:.84rem; margin: 0 0 4px 0; "
+        "  background:rgba(255,255,255,.05); border-radius:6px; padding:5px 8px; "
+        "  font-variant-numeric: tabular-nums; border:1px solid rgba(255,255,255,.07); }"
+        ".kgen-reasons { margin: 4px 0 2px 18px; padding:0; color:#cbd5e1; "
         "  font-size:.88rem; }"
         ".kgen-reasons li { margin: 1px 0; line-height:1.35; }"
         ".kgen-disclaimer { color:#64748b; font-size:.78rem; margin: 6px 2px 12px 2px; "
@@ -15679,47 +15704,48 @@ if _view == "🥎 AI 1+ Hits Parlay":
     # Reuse the AI HR Parlay card CSS — same .aip-* class names.
     h_css = (
         "<style>"
-        ".aip-card { background:#fff; border-radius:14px; padding:14px 14px 8px 14px; "
-        "  box-shadow:0 2px 12px rgba(15,23,42,.07); margin: 8px 0 16px 0; "
-        "  border-left:5px solid #3b1f6b; }"
-        ".aip-card.aip-empty { border-left-color:#cbd5e1; padding:14px; }"
+        ".aip-card { background:linear-gradient(180deg,#111827 0%,#0b1220 100%); "
+        "  border-radius:14px; padding:14px 14px 8px 14px; "
+        "  box-shadow:0 2px 16px rgba(0,0,0,.45); margin: 8px 0 16px 0; "
+        "  border:1px solid rgba(124,58,237,.25); border-left:5px solid #7c3aed; }"
+        ".aip-card.aip-empty { border-left-color:#334155; padding:14px; }"
         ".aip-card-head { display:flex; align-items:center; justify-content:space-between; "
         "  gap:10px; margin-bottom:6px; flex-wrap:wrap; }"
-        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#3b1f6b; "
+        ".aip-card-title { font-weight:900; font-size:1.08rem; color:#e2e8f0; "
         "  letter-spacing:.01em; }"
-        ".aip-card-sub { color:#64748b; font-size:.82rem; margin-top:2px; }"
+        ".aip-card-sub { color:#94a3b8; font-size:.82rem; margin-top:2px; }"
         ".aip-badge { font-size:.74rem; }"
-        ".aip-leg { padding:10px 0; border-top:1px dashed #e2e8f0; }"
+        ".aip-leg { padding:10px 0; border-top:1px dashed rgba(255,255,255,.08); }"
         ".aip-leg:first-of-type { border-top:none; }"
         ".aip-leg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }"
         ".aip-leg-num { font-size:.72rem; font-weight:800; letter-spacing:.06em; "
         "  text-transform:uppercase; color:#fcd34d; background:#3b1f6b; "
         "  padding:3px 8px; border-radius:6px; }"
-        ".aip-leg-name { font-weight:800; color:#0f172a; flex:1 1 200px; "
-        "  font-size:.98rem; }"
-        ".aip-meta { color:#64748b; font-weight:500; font-size:.82rem; }"
+        ".aip-leg-name { font-weight:900; color:#ffffff; flex:1 1 200px; "
+        "  font-size:1rem; text-shadow:0 1px 3px rgba(0,0,0,.5); }"
+        ".aip-meta { color:#7dd3fc; font-weight:600; font-size:.82rem; }"
         ".aip-leg-score { display:flex; align-items:center; gap:6px; }"
-        ".aip-score { font-weight:900; font-size:1.05rem; color:#0f172a; "
+        ".aip-score { font-weight:900; font-size:1.05rem; color:#00c896; "
         "  font-variant-numeric: tabular-nums; }"
-        ".aip-ctx { color:#475569; font-size:.84rem; margin: 4px 0 4px 0; }"
+        ".aip-ctx { color:#94a3b8; font-size:.84rem; margin: 4px 0 4px 0; }"
         ".aip-bpw-line { display:block; margin: 4px 0 6px 0; padding:6px 10px; "
         "  border-radius:8px; font-size:.86rem; font-weight:700; line-height:1.35; "
         "  border:1px solid transparent; }"
         ".aip-bpw-line b { font-weight:800; }"
         ".aip-bpw-pct { font-weight:700; margin-left:4px; "
         "  font-variant-numeric: tabular-nums; }"
-        ".aip-bpw-good { background:#dcfce7; color:#065f46; border-color:#86efac; }"
-        ".aip-bpw-ok   { background:#fef9c3; color:#713f12; border-color:#fde68a; }"
-        ".aip-bpw-bad  { background:#fee2e2; color:#7f1d1d; border-color:#fecaca; }"
-        ".aip-stats { color:#0f172a; font-size:.84rem; margin: 0 0 4px 0; "
-        "  background:#f8fafc; border-radius:6px; padding:5px 8px; "
-        "  font-variant-numeric: tabular-nums; }"
-        ".aip-reasons { margin: 4px 0 2px 18px; padding:0; color:#0f172a; "
+        ".aip-bpw-good { background:rgba(34,197,94,.15); color:#4ade80; border-color:rgba(34,197,94,.3); }"
+        ".aip-bpw-ok   { background:rgba(250,204,21,.12); color:#fde68a; border-color:rgba(250,204,21,.3); }"
+        ".aip-bpw-bad  { background:rgba(239,68,68,.12); color:#fca5a5; border-color:rgba(239,68,68,.3); }"
+        ".aip-stats { color:#e2e8f0; font-size:.84rem; margin: 0 0 4px 0; "
+        "  background:rgba(255,255,255,.05); border-radius:6px; padding:5px 8px; "
+        "  font-variant-numeric: tabular-nums; border:1px solid rgba(255,255,255,.07); }"
+        ".aip-reasons { margin: 4px 0 2px 18px; padding:0; color:#cbd5e1; "
         "  font-size:.88rem; }"
         ".aip-reasons li { margin: 1px 0; line-height:1.35; }"
         ".aip-disclaimer { color:#64748b; font-size:.78rem; margin: 6px 2px 12px 2px; "
         "  font-style:italic; }"
-        "@media (max-width:520px) { .aip-leg-name { font-size:.92rem; } "
+        "@media (max-width:520px) { .aip-leg-name { font-size:.94rem; } "
         "  .aip-card-title { font-size:1rem; } .aip-reasons { font-size:.84rem; } "
         "  .aip-stats { font-size:.80rem; } }"
         "</style>"
@@ -16186,15 +16212,16 @@ if _view == "🎯 Pitcher Weak Spots":
         "  font-weight:800 !important; font-size:.85rem !important; "
         "  letter-spacing:.04em; text-transform:uppercase; }"
         ".pws-controls [data-baseweb=\"select\"] > div { "
-        "  background:#ffffff !important; border-radius:10px !important; "
-        "  border:1.5px solid #facc15 !important; color:#0f172a !important; "
+        "  background:#1a2744 !important; border-radius:10px !important; "
+        "  border:1.5px solid #facc15 !important; color:#e2e8f0 !important; "
         "  font-weight:700 !important; }"
-        ".pws-controls [data-baseweb=\"select\"] svg { color:#3b1f6b !important; }"
+        ".pws-controls [data-baseweb=\"select\"] svg { color:#facc15 !important; }"
         ".pws-summary { color:#fde68a; font-weight:700; font-size:.92rem; "
         "  margin:0 4px 10px; }"
-        ".pws-card { background:#ffffff; border-radius:16px; padding:14px 16px; "
-        "  margin-bottom:14px; border:1.5px solid #e2e8f0; "
-        "  box-shadow:0 2px 12px rgba(15,23,42,.18); }"
+        ".pws-card { background:linear-gradient(180deg,#111827 0%,#0b1220 100%); "
+        "  border-radius:16px; padding:14px 16px; "
+        "  margin-bottom:14px; border:1.5px solid rgba(255,255,255,.08); "
+        "  box-shadow:0 2px 12px rgba(0,0,0,.4); }"
         ".pws-card.confirmed { border:2px solid var(--pws-confirmed); "
         "  box-shadow:0 0 0 2px rgba(34,197,94,.18), 0 4px 16px rgba(21,128,61,.22); }"
         ".pws-header { display:flex; align-items:flex-start; gap:12px; "
@@ -16202,10 +16229,11 @@ if _view == "🎯 Pitcher Weak Spots":
         ".pws-header .left { min-width:0; flex:1 1 auto; }"
         ".pws-header .right { display:flex; flex-direction:column; "
         "  align-items:flex-end; gap:6px; flex:0 0 auto; }"
-        ".pws-matchup { font-weight:900; font-size:1.05rem; color:#0f172a; "
-        "  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }"
-        ".pws-matchup .time { color:#475569; font-weight:700; font-size:.82rem; }"
-        ".pws-pitcher { font-size:.95rem; color:#1e293b; font-weight:700; "
+        ".pws-matchup { font-weight:900; font-size:1.05rem; color:#ffffff; "
+        "  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; "
+        "  text-shadow:0 1px 3px rgba(0,0,0,.5); }"
+        ".pws-matchup .time { color:#94a3b8; font-weight:700; font-size:.82rem; }"
+        ".pws-pitcher { font-size:.95rem; color:#e2e8f0; font-weight:700; "
         "  margin-top:2px; }"
         ".pws-pitcher .hand { display:inline-block; padding:1px 7px; "
         "  border-radius:6px; background:#1e1147; color:#facc15; "
@@ -16240,29 +16268,31 @@ if _view == "🎯 Pitcher Weak Spots":
         "  border-radius:12px; font-weight:900; font-size:.95rem; "
         "  display:inline-flex; align-items:center; gap:6px; "
         "  border:1.5px solid #facc15; }"
-        ".pws-meta { color:#475569; font-size:.84rem; margin-top:6px; "
+        ".pws-meta { color:#94a3b8; font-size:.84rem; margin-top:6px; "
         "  display:flex; align-items:center; gap:8px; flex-wrap:wrap; }"
-        ".pws-meta b { color:#0f172a; }"
+        ".pws-meta b { color:#e2e8f0; }"
         ".pws-tagrow { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 4px; }"
         ".pws-tag { padding:3px 9px; border-radius:8px; font-size:.72rem; "
         "  font-weight:800; letter-spacing:.02em; }"
-        ".pws-tag.top    { background:#fee2e2; color:#7f1d1d; }"
-        ".pws-tag.mid    { background:#ffedd5; color:#7c2d12; }"
-        ".pws-tag.bot    { background:#ede9fe; color:#5b21b6; }"
-        ".pws-tag.lefty  { background:#dbeafe; color:#1e3a8a; }"
-        ".pws-tag.righty { background:#fce7f3; color:#831843; }"
-        ".pws-tag.ttop   { background:#fef9c3; color:#713f12; }"
-        ".pws-tag.power  { background:#fecaca; color:#7f1d1d; }"
-        ".pws-tag.lowk   { background:#cffafe; color:#0e7490; }"
-        ".pws-tag.platoon{ background:#dcfce7; color:#14532d; }"
-        ".pws-target-list { background:#fffbeb; border-left:4px solid var(--pws-secondary); "
+        ".pws-tag.top    { background:rgba(239,68,68,.15); color:#fca5a5; border:1px solid rgba(239,68,68,.3); }"
+        ".pws-tag.mid    { background:rgba(251,146,60,.12); color:#fb923c; border:1px solid rgba(251,146,60,.3); }"
+        ".pws-tag.bot    { background:rgba(124,58,237,.15); color:#c4b5fd; border:1px solid rgba(124,58,237,.3); }"
+        ".pws-tag.lefty  { background:rgba(59,130,246,.12); color:#93c5fd; border:1px solid rgba(59,130,246,.3); }"
+        ".pws-tag.righty { background:rgba(236,72,153,.12); color:#f9a8d4; border:1px solid rgba(236,72,153,.3); }"
+        ".pws-tag.ttop   { background:rgba(250,204,21,.12); color:#fde68a; border:1px solid rgba(250,204,21,.3); }"
+        ".pws-tag.power  { background:rgba(239,68,68,.15); color:#fca5a5; border:1px solid rgba(239,68,68,.3); }"
+        ".pws-tag.lowk   { background:rgba(6,182,212,.12); color:#67e8f9; border:1px solid rgba(6,182,212,.3); }"
+        ".pws-tag.platoon{ background:rgba(34,197,94,.12); color:#4ade80; border:1px solid rgba(34,197,94,.3); }"
+        ".pws-target-list { background:rgba(245,158,11,.08); border-left:4px solid var(--pws-secondary); "
         "  padding:9px 12px; border-radius:8px; margin:8px 0 6px; "
-        "  font-size:.88rem; color:#1e293b; line-height:1.45; }"
-        ".pws-target-list b { color:#0f172a; }"
-        ".pws-reason { background:#f1f5f9; border-radius:8px; padding:9px 12px; "
-        "  margin-top:8px; font-size:.85rem; color:#334155; line-height:1.45; }"
-        ".pws-reason b { color:#0f172a; }"
-        ".pws-confidence-bar { height:6px; border-radius:3px; background:#e2e8f0; "
+        "  font-size:.88rem; color:#e2e8f0; line-height:1.45; "
+        "  border:1px solid rgba(245,158,11,.2); border-left:4px solid var(--pws-secondary); }"
+        ".pws-target-list b { color:#fde68a; }"
+        ".pws-reason { background:rgba(255,255,255,.05); border-radius:8px; padding:9px 12px; "
+        "  margin-top:8px; font-size:.85rem; color:#cbd5e1; line-height:1.45; "
+        "  border:1px solid rgba(255,255,255,.08); }"
+        ".pws-reason b { color:#e2e8f0; }"
+        ".pws-confidence-bar { height:6px; border-radius:3px; background:rgba(255,255,255,.1); "
         "  margin-top:6px; overflow:hidden; }"
         ".pws-confidence-bar > span { display:block; height:100%; background:var(--pws-confirmed); }"
         # Lineup grid: 3 cols on desktop / 2 on tablet / 1 (vertical list) on phones.
@@ -16270,26 +16300,27 @@ if _view == "🎯 Pitcher Weak Spots":
         "  gap:8px; margin-top:10px; }"
         ".pws-slot { border:1.5px solid; border-radius:10px; padding:8px 10px; "
         "  display:flex; flex-direction:column; gap:2px; position:relative; "
-        "  background:#ffffff; }"
+        "  background:rgba(255,255,255,.04); }"
         ".pws-slot.projected { opacity:.92; border-style:dashed; }"
-        ".pws-slot.zone-primary   { background:#fef2f2; border-color:var(--pws-primary); }"
-        ".pws-slot.zone-secondary { background:#fffbeb; border-color:var(--pws-secondary); }"
-        ".pws-slot.zone-neutral   { background:#f8fafc; border-color:var(--pws-neutral); }"
+        ".pws-slot.zone-primary   { background:rgba(239,68,68,.1); border-color:var(--pws-primary); }"
+        ".pws-slot.zone-secondary { background:rgba(245,158,11,.08); border-color:var(--pws-secondary); }"
+        ".pws-slot.zone-neutral   { background:rgba(255,255,255,.03); border-color:var(--pws-neutral); }"
         ".pws-slot.confirmed-target { box-shadow:inset 0 0 0 2px var(--pws-confirmed); }"
         ".pws-slot .row1 { display:flex; align-items:center; justify-content:space-between; "
         "  gap:6px; }"
-        ".pws-slot .spot { font-weight:900; font-size:.86rem; color:#1e293b; "
+        ".pws-slot .spot { font-weight:900; font-size:.86rem; color:#e2e8f0; "
         "  display:inline-flex; align-items:center; gap:5px; }"
-        ".pws-slot .spot .side { color:#475569; font-weight:700; font-size:.72rem; "
-        "  background:#e2e8f0; border-radius:6px; padding:1px 6px; }"
+        ".pws-slot .spot .side { color:#94a3b8; font-weight:700; font-size:.72rem; "
+        "  background:rgba(255,255,255,.08); border-radius:6px; padding:1px 6px; }"
         ".pws-slot .score-pill { font-weight:900; font-size:.84rem; padding:2px 8px; "
         "  border-radius:999px; }"
         ".pws-slot.zone-primary   .score-pill { background:var(--pws-primary);   color:#fff; }"
         ".pws-slot.zone-secondary .score-pill { background:var(--pws-secondary); color:#1e293b; }"
-        ".pws-slot.zone-neutral   .score-pill { background:#e2e8f0; color:#1e293b; }"
-        ".pws-slot .name { font-weight:800; font-size:.95rem; color:#0f172a; "
-        "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
-        ".pws-slot .meta { font-size:.74rem; color:#475569; display:flex; "
+        ".pws-slot.zone-neutral   .score-pill { background:rgba(255,255,255,.1); color:#cbd5e1; }"
+        ".pws-slot .name { font-weight:800; font-size:.95rem; color:#ffffff; "
+        "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; "
+        "  text-shadow:0 1px 2px rgba(0,0,0,.4); }"
+        ".pws-slot .meta { font-size:.74rem; color:#7dd3fc; display:flex; "
         "  align-items:center; gap:4px; }"
         ".pws-slot .meta .check { color:var(--pws-confirmed); font-weight:900; }"
         # Tablet: 2 columns.
@@ -18238,18 +18269,19 @@ def _render_data_status_table() -> str:
     css = (
         "<style>"
         ".ds-tbl { width:100%; border-collapse: separate; border-spacing:0; "
-        "  font-size:.92rem; background:#fff; border-radius:12px; overflow:hidden; "
-        "  box-shadow: 0 2px 10px rgba(15,23,42,.06); margin: 6px 0 4px 0; }"
+        "  font-size:.92rem; background:#0b1220; border-radius:12px; overflow:hidden; "
+        "  box-shadow: 0 2px 10px rgba(0,0,0,.4); margin: 6px 0 4px 0; "
+        "  border:1px solid rgba(255,255,255,.07); }"
         ".ds-tbl th { background:#3b1f6b; color:#fcd34d; text-align:left; "
         "  font-weight:800; padding:9px 10px; letter-spacing:.03em; font-size:.78rem; "
         "  text-transform:uppercase; }"
-        ".ds-tbl td { padding:8px 10px; border-bottom:1px solid #f1f5f9; "
-        "  color:#0f172a; vertical-align: top; }"
-        ".ds-tbl tr:nth-child(even) td { background:#fafafa; }"
+        ".ds-tbl td { padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.06); "
+        "  color:#e2e8f0; vertical-align: top; }"
+        ".ds-tbl tr:nth-child(even) td { background:rgba(255,255,255,.03); }"
         ".ds-pill { display:inline-block; padding:3px 9px; border-radius:999px; "
         "  font-weight:800; font-size:.74rem; letter-spacing:.04em; "
         "  white-space:nowrap; }"
-        ".ds-detail { color:#475569; font-size:.82rem; line-height:1.35; }"
+        ".ds-detail { color:#94a3b8; font-size:.82rem; line-height:1.35; }"
         "</style>"
     )
     rows_html = []

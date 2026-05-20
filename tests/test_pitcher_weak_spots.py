@@ -142,3 +142,80 @@ def test_safe_float_handles_garbage_inputs():
     assert pws.safe_float("abc", 2.0) == 2.0
     assert pws.safe_float("3.5", 0.0) == 3.5
     assert pws.safe_float(7, 0.0) == 7.0
+
+
+# --- Lineup status / label tests -------------------------------------------
+# These cover the polish PR: live and final games must not be misreported as
+# "Lineup pending", and the confirmed-style green outline applies to any
+# locked-in lineup (confirmed / live / final).
+
+
+def test_lineup_status_label_for_live_and_final_with_lineup():
+    assert pws.lineup_status_label(pws.LINEUP_STATUS_LIVE, has_lineup=True) == "Live"
+    assert pws.lineup_status_label(pws.LINEUP_STATUS_FINAL, has_lineup=True) == "Final"
+    assert pws.lineup_status_label(pws.LINEUP_STATUS_CONFIRMED) == "Lineup confirmed"
+    assert pws.lineup_status_label(pws.LINEUP_STATUS_EXPECTED) == "Projected lineup"
+    assert pws.lineup_status_label(pws.LINEUP_STATUS_POSTPONED) == "Postponed"
+    assert pws.lineup_status_label(pws.LINEUP_STATUS_NOT_POSTED) == "Lineup pending"
+
+
+def test_lineup_status_label_falls_back_when_lineup_unavailable():
+    # If the boxscore didn't carry a batting order, live/final games should
+    # admit so rather than claiming a confirmed lineup or showing "pending".
+    assert pws.lineup_status_label(pws.LINEUP_STATUS_LIVE, has_lineup=False) == "Live - lineup unavailable"
+    assert pws.lineup_status_label(pws.LINEUP_STATUS_FINAL, has_lineup=False) == "Final - lineup unavailable"
+
+
+def test_card_with_live_status_does_not_show_pending():
+    prof = _make_profile()
+    lineup = pws.lineup_from_rows(
+        [{"player_name": f"Hitter {i}", "lineup_spot": i, "bat_side": "R"}
+         for i in range(1, 10)],
+        is_projected=False,
+    )
+    card = pws.assemble_card(
+        game_pk=42, game_time_label="7:10 PM",
+        away_abbr="NYY", home_abbr="BOS",
+        pitcher_name="Live SP", pitcher_hand="R",
+        pitcher_team_abbr="BOS", opponent_abbr="NYY",
+        pitcher_profile=prof, lineup=lineup,
+        lineup_status=pws.LINEUP_STATUS_LIVE,
+    )
+    assert card.lineup_status == pws.LINEUP_STATUS_LIVE
+    assert card.lineup_status_label == "Live"
+    assert card.is_lineup_confirmed  # locked-in for UI styling
+
+
+def test_card_with_final_status_when_lineup_missing_says_unavailable():
+    # All slots are anonymous "Projected #N" -> has_named_lineup is False.
+    prof = _make_profile()
+    lineup = [pws.make_projected_batter(s) for s in range(1, 10)]
+    card = pws.assemble_card(
+        game_pk=43, game_time_label="1:05 PM",
+        away_abbr="LAA", home_abbr="OAK",
+        pitcher_name="Done SP", pitcher_hand="R",
+        pitcher_team_abbr="OAK", opponent_abbr="LAA",
+        pitcher_profile=prof, lineup=lineup,
+        lineup_status=pws.LINEUP_STATUS_FINAL,
+    )
+    assert card.lineup_status_label == "Final - lineup unavailable"
+    assert card.is_lineup_confirmed  # still treated as locked-in for styling
+
+
+def test_card_with_expected_status_stays_projected():
+    prof = _make_profile()
+    lineup = pws.lineup_from_rows(
+        [{"player_name": f"Hitter {i}", "lineup_spot": i, "bat_side": "R"}
+         for i in range(1, 10)],
+        is_projected=True,
+    )
+    card = pws.assemble_card(
+        game_pk=44, game_time_label="6:05 PM",
+        away_abbr="HOU", home_abbr="TEX",
+        pitcher_name="Pregame SP", pitcher_hand="R",
+        pitcher_team_abbr="TEX", opponent_abbr="HOU",
+        pitcher_profile=prof, lineup=lineup,
+        lineup_status=pws.LINEUP_STATUS_EXPECTED,
+    )
+    assert card.lineup_status_label == "Projected lineup"
+    assert not card.is_lineup_confirmed

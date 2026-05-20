@@ -457,6 +457,8 @@ def test_pitcher_breakdown_view_has_order_selectbox():
         "Pitcher Breakdown view must expose an Order picker dropdown"
     assert "Pitch Score (best to worst)" in block, \
         "Picker must offer Pitch Score best-to-worst sort"
+    assert "Pitch Score (worst to best)" in block, \
+        "Picker must offer Pitch Score worst-to-best sort"
     assert "Slate order" in block, "Picker must keep Slate order as a fallback"
     assert "Pitcher name (A-Z)" in block, "Picker must keep alpha sort as an option"
     # Best-to-worst must be the default (index=0 in the selectbox).

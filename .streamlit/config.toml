@@ -1,11 +1,8 @@
 [theme]
-# Modern minimal dark shell: solid deep-slate background across the whole
-# app, gold primary accent, bold off-white text. The previous light theme
-# was fighting our dark CSS overlay and washing out body text — this
-# aligns the Streamlit theme with the in-app CSS for consistent contrast.
+# Edge Intel design system — deep navy base, teal accent, no purple
 base = "dark"
-primaryColor = "#facc15"
-backgroundColor = "#0f172a"
-secondaryBackgroundColor = "#1e293b"
-textColor = "#f1f5f9"
+primaryColor = "#00c896"
+backgroundColor = "#08111f"
+secondaryBackgroundColor = "#0c1a2e"
+textColor = "#e2eeff"
 font = "sans serif"

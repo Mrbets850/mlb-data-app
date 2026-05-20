@@ -370,13 +370,17 @@ def score_tier(score):
     return ("avoid", "Avoid")
 
 # ===========================================================================
-# Global styles  (the look you wanted: horizontal carousel, heatmap tables)
+# Global styles — Edge Intel design system
+# New palette: deep navy base · teal accent · amber emphasis
+# Typography: DM Sans (UI) + DM Mono (data)
 # ===========================================================================
 st.markdown("""
 <style>
-/* ---- base ---- */
-/* Wide PC layout: bounded max-width (~1600px) centered, with neutral
-   background outside the content area so no green tint bleeds through. */
+/* ---- Google Fonts ---- */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700;9..40,800;9..40,900&family=DM+Mono:wght@400;500&display=swap');
+
+/* ---- base layout ---- */
+/* Wide PC layout: bounded max-width (~1600px) centered */
 .block-container {
     padding-top: 0.4rem;
     padding-bottom: 3rem;
@@ -414,38 +418,29 @@ html, body,
 section.main,
 .main,
 .stApp {
-    /* Modern minimal: a single solid deep-slate background across the
-       entire app. The previous radial gradient washed text into the
-       background mid-page (the "background is killing the read of font"
-       complaint). #0f172a is dark enough for white card surfaces to pop
-       and light enough that headings/captions in #f8fafc / #fde68a stay
-       crisp. */
-    background: #0a1120 !important;
-    background-color: #0a1120 !important;
+    background: #08111f !important;
+    background-color: #08111f !important;
     background-image: none !important;
 }
-/* Belt-and-suspenders: a body::before strip that paints any uncovered
-   pixel behind the iframe content. Sits at z-index:-1 so it never
-   overlaps actual UI. Solid color to match the app shell. */
-body, html { background: #0a1120 !important; }
+body, html { background: #08111f !important; }
 body::before {
     content: "";
     position: fixed; inset: 0;
-    background: #0a1120;
+    background: #08111f;
     z-index: -1;
     pointer-events: none;
 }
-/* Subtle dot grid texture behind the entire app */
+/* Subtle grid texture */
 body::after {
     content: "";
     position: fixed; inset: 0; z-index: -1; pointer-events: none;
-    background-image: radial-gradient(circle, rgba(250,204,21,.025) 1px, transparent 1px);
-    background-size: 24px 24px;
+    background-image:
+        linear-gradient(rgba(0,200,150,.012) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,200,150,.012) 1px, transparent 1px);
+    background-size: 48px 48px;
 }
-/* Streamlit's auto-injected header bar (top) — make it transparent so it
-   melts into the dark background, and lighten its icons. */
 [data-testid="stHeader"] { background: transparent !important; }
-[data-testid="stToolbar"] *, [data-testid="stHeader"] * { color: #e2e8f0 !important; }
+[data-testid="stToolbar"] *, [data-testid="stHeader"] * { color: #5a7a9c !important; }
 @media (min-width: 1200px) {
     .block-container { padding-left: 2rem; padding-right: 2rem; }
 }
@@ -479,109 +474,129 @@ body::after {
 .mobile-hide-swipe { display: inline; }
 @media (max-width: 640px) { .mobile-hide-swipe { display: none !important; } }
 html, body, [class*="css"] {
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Arial, sans-serif;
-    /* High-contrast off-white default — #f1f5f9 reads bolder on solid
-       #0f172a than the prior #e2e8f0, especially at small caption sizes. */
-    color: #f1f5f9;
-    font-size: 16px;
-    font-weight: 500;
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #e2eeff;
+    font-size: 15px;
+    font-weight: 400;
 }
-/* Bold, high-contrast headings on the solid dark background. */
 [data-testid="stMarkdownContainer"] h1,
 [data-testid="stMarkdownContainer"] h2,
 [data-testid="stMarkdownContainer"] h3,
 [data-testid="stMarkdownContainer"] h4,
 [data-testid="stMarkdownContainer"] h5,
 [data-testid="stMarkdownContainer"] h6 {
-    color: #f8fafc !important;
-    font-weight: 800 !important;
-    letter-spacing: 0.005em;
+    color: #eef4ff !important;
+    font-weight: 700 !important;
+    font-family: 'DM Sans', sans-serif !important;
+    letter-spacing: -0.02em;
 }
-/* Markdown paragraphs sitting directly on the dark shell need a brighter
-   tone than the legacy #cbd5e1 / #94a3b8 grays the codebase uses inline
-   — those wash out against #0f172a. */
 [data-testid="stMarkdownContainer"] > p,
 [data-testid="stMarkdownContainer"] > p > * {
-    color: #e2e8f0;
-    font-weight: 500;
+    color: #8aaccc;
+    font-weight: 400;
+    font-size: 0.88rem;
 }
 [data-testid="stMarkdownContainer"] strong,
 [data-testid="stMarkdownContainer"] b {
-    color: #f8fafc;
-    font-weight: 800;
+    color: #e2eeff;
+    font-weight: 700;
 }
-/* Streamlit caption text (st.caption) — bump from faint gray to a
-   readable slate-300 with stronger weight so help copy is actually
-   readable across the app. */
 [data-testid="stCaptionContainer"],
 [data-testid="stCaptionContainer"] * {
-    color: #cbd5e1 !important;
-    font-weight: 600 !important;
+    color: #4e6a8a !important;
+    font-weight: 400 !important;
+    font-size: 0.78rem !important;
 }
-/* Text inside content cards (white / light surfaces) keeps the dark
-   slate ink the rest of the app was designed around. We scope by the
-   common card containers used in app.py so charts/tables/forms stay
-   readable on white. */
-.section-card:not(.dark), .section-card:not(.dark) *,
+.section-card, .section-card *,
 .carousel-wrap, .carousel-wrap *,
 .mhm-wrap, .mhm-wrap *,
-.mhm-card, .mhm-card *,
+.scout-rows, .scout-rows *,
 .lineup-banner, .lineup-banner *,
 [data-testid="stDataFrame"] *, [data-testid="stTable"] * {
     color: inherit;
 }
-/* Streamlit form labels (radios, selectboxes, captions outside cards)
-   sit directly on the dark background — bump to bold light slate so
-   the user can read them. Per-widget components keep their own colors
-   when rendered inside a white card via [class*="css"] inheritance. */
 [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] *,
 [data-testid="stMarkdownContainer"] > p,
 [data-testid="stMarkdownContainer"] > p > strong,
 [data-testid="stRadio"] label, [data-testid="stRadio"] label * {
-    color: #f1f5f9 !important;
-    font-weight: 700 !important;
+    color: #7a9bbf !important;
+    font-weight: 500 !important;
+    font-size: 0.82rem !important;
 }
 
-/* ---- Streamlit tabs (used by Apps & Generators, Matchup/Injuries) ----
-   The default tab bar uses muted gray text that disappears on the solid
-   dark shell. Make selected tabs gold-on-purple and unselected tabs a
-   bold light-slate so they read at a glance. */
+/* ---- Streamlit tabs — clean underline style ---- */
 .stTabs [data-baseweb="tab-list"] {
-    gap: 6px !important;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.25) !important;
+    gap: 0 !important;
+    border-bottom: 1px solid rgba(255,255,255,0.07) !important;
+    background: transparent !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+    box-shadow: none !important;
+    overflow-x: auto;
+    scrollbar-width: none;
 }
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+.stTabs [data-baseweb="tab-list"]::after { display: none !important; }
 .stTabs [data-baseweb="tab"] {
-    color: #cbd5e1 !important;
-    font-weight: 700 !important;
-    background: rgba(30, 41, 59, 0.55) !important;
-    border-radius: 10px 10px 0 0 !important;
-    padding: 10px 16px !important;
+    color: #4e6a8a !important;
+    font-weight: 600 !important;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    padding: 9px 15px !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    transition: all 0.12s ease !important;
+    min-height: 38px !important;
+    white-space: nowrap;
 }
-.stTabs [data-baseweb="tab"]:hover { color: #f8fafc !important; }
+.stTabs [data-baseweb="tab"]:hover {
+    color: #b0c8e4 !important;
+    background: transparent !important;
+    border-bottom-color: rgba(0,200,150,0.3) !important;
+}
 .stTabs [data-baseweb="tab"][aria-selected="true"] {
-    color: #facc15 !important;
-    background: linear-gradient(180deg, #3b1f6b 0%, #1e1147 100%) !important;
-    border-bottom: 2px solid #facc15 !important;
+    color: #00c896 !important;
+    background: transparent !important;
+    border-bottom: 2px solid #00c896 !important;
+    font-weight: 700 !important;
+    box-shadow: none !important;
+    transform: none !important;
 }
-.stTabs [data-baseweb="tab"][aria-selected="true"] * { color: #facc15 !important; }
+.stTabs [data-baseweb="tab"][aria-selected="true"] * { color: #00c896 !important; }
+.stTabs [data-baseweb="tab-highlight"] { background: #00c896 !important; height: 2px !important; }
+@media (max-width: 640px) {
+    .stTabs [data-baseweb="tab-list"] {
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding: 8px 11px !important;
+        font-size: 0.72rem !important;
+        flex-shrink: 0 !important;
+    }
+    .game-views-sub { display: none !important; }
+}
 
-/* ---- Expanders ---- bold readable header on dark shell. */
+/* ---- Expanders ---- */
 [data-testid="stExpander"] {
-    background: rgba(30, 41, 59, 0.55) !important;
-    border: 1px solid rgba(148, 163, 184, 0.25) !important;
-    border-radius: 12px !important;
+    background: rgba(12, 26, 46, 0.85) !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    border-radius: 6px !important;
 }
 [data-testid="stExpander"] summary,
 [data-testid="stExpander"] summary * {
-    color: #f8fafc !important;
-    font-weight: 800 !important;
+    color: #b0c8e4 !important;
+    font-weight: 600 !important;
+    font-size: 0.85rem !important;
 }
 
-/* ---- Selectbox / multiselect / date-input / text-input / number-input ----
-   Streamlit's BaseWeb defaults render with white-on-dark or low-contrast
-   text on the dark shell. Force a readable dark-on-light look on BOTH
-   the closed control and the open dropdown menu so the picked value and
-   every option are always legible. */
+/* ---- Form controls ---- */
 [data-baseweb="select"] > div,
 [data-baseweb="select"] > div > div,
 [data-baseweb="select"] input,
@@ -590,30 +605,26 @@ html, body, [class*="css"] {
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
 [data-testid="stTextArea"] textarea {
-    background: #f8fafc !important;
-    color: #0f172a !important;
-    font-weight: 600 !important;
-    border: 1px solid rgba(148, 163, 184, 0.55) !important;
+    background: #0f1f35 !important;
+    color: #b0c8e4 !important;
+    font-weight: 500 !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    font-size: 0.85rem !important;
 }
 [data-baseweb="select"] > div *,
-[data-baseweb="select"] input::placeholder {
-    color: #0f172a !important;
-}
-[data-baseweb="select"] svg { color: #0f172a !important; fill: #0f172a !important; }
+[data-baseweb="select"] input::placeholder { color: #7a9bbf !important; }
+[data-baseweb="select"] svg { color: #4e6a8a !important; fill: #4e6a8a !important; }
 
-/* Open dropdown menu: BaseWeb renders the popover in a portal at the
-   document root, so high-specificity, attribute-based selectors are
-   required. Target the listbox, every <li> option, the inner div/span
-   wrappers BaseWeb nests text in, and the hover/selected states. */
+/* Dropdown menu */
 [data-baseweb="popover"],
 [data-baseweb="popover"] [data-baseweb="menu"],
 [data-baseweb="popover"] [role="listbox"],
 [data-baseweb="popover"] ul,
 [data-baseweb="menu"] [role="listbox"],
 [data-baseweb="menu"] ul {
-    background: #f8fafc !important;
-    border: 1px solid rgba(148, 163, 184, 0.55) !important;
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45) !important;
+    background: #0f1f35 !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.55) !important;
 }
 [data-baseweb="popover"] [role="option"],
 [data-baseweb="popover"] [role="option"] *,
@@ -623,673 +634,741 @@ html, body, [class*="css"] {
 [data-baseweb="menu"] [role="option"] *,
 [data-baseweb="menu"] li,
 [data-baseweb="menu"] li * {
-    color: #0f172a !important;
-    font-weight: 700 !important;
+    color: #b0c8e4 !important;
+    font-weight: 500 !important;
     background-color: transparent !important;
+    font-size: 0.85rem !important;
 }
 [data-baseweb="popover"] [role="option"]:hover,
 [data-baseweb="popover"] li:hover,
 [data-baseweb="menu"] [role="option"]:hover,
 [data-baseweb="menu"] li:hover {
-    background-color: #ede9fe !important;
+    background-color: rgba(0,200,150,0.10) !important;
 }
 [data-baseweb="popover"] [role="option"]:hover *,
 [data-baseweb="popover"] li:hover *,
 [data-baseweb="menu"] [role="option"]:hover *,
-[data-baseweb="menu"] li:hover * {
-    color: #1e1147 !important;
-}
+[data-baseweb="menu"] li:hover * { color: #00c896 !important; }
 [data-baseweb="popover"] [role="option"][aria-selected="true"],
 [data-baseweb="popover"] li[aria-selected="true"],
 [data-baseweb="menu"] [role="option"][aria-selected="true"],
 [data-baseweb="menu"] li[aria-selected="true"] {
-    background-color: #fef3c7 !important;
+    background-color: rgba(0,200,150,0.14) !important;
 }
 [data-baseweb="popover"] [role="option"][aria-selected="true"] *,
 [data-baseweb="popover"] li[aria-selected="true"] *,
 [data-baseweb="menu"] [role="option"][aria-selected="true"] *,
 [data-baseweb="menu"] li[aria-selected="true"] * {
-    color: #0f172a !important;
-    font-weight: 800 !important;
+    color: #00c896 !important; font-weight: 700 !important;
 }
-
-/* Multiselect chips inside the closed control */
 [data-baseweb="tag"] {
-    background: #1e1147 !important;
-    color: #facc15 !important;
+    background: rgba(0,200,150,0.12) !important;
+    color: #00c896 !important;
+    border: 1px solid rgba(0,200,150,0.25) !important;
 }
-[data-baseweb="tag"] * { color: #facc15 !important; }
-
-/* Calendar / date picker popover surface stays light too */
+[data-baseweb="tag"] * { color: #00c896 !important; }
 [data-baseweb="calendar"],
-[data-baseweb="calendar"] * {
-    color: #0f172a !important;
-}
-[data-baseweb="calendar"] { background: #f8fafc !important; }
+[data-baseweb="calendar"] * { color: #b0c8e4 !important; }
+[data-baseweb="calendar"] { background: #0f1f35 !important; }
 
-/* ---- Slider value label (bold gold on dark) ---- */
+/* ---- Slider ---- */
 [data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"] + div,
 [data-testid="stSlider"] [data-baseweb="tickmark"] {
-    color: #fde68a !important;
-    font-weight: 800 !important;
+    color: #00c896 !important; font-weight: 700 !important;
 }
 
-/* ---- Buttons (download/action) ---- gold accent, dark ink, bold. */
+/* ---- Buttons ---- */
 [data-testid="stDownloadButton"] button,
 [data-testid="stButton"] button {
-    background: linear-gradient(180deg, #facc15 0%, #eab308 100%) !important;
-    color: #0f172a !important;
-    font-weight: 800 !important;
-    border: 1px solid #ca8a04 !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.35) !important;
+    background: rgba(0,200,150,0.08) !important;
+    color: #00c896 !important;
+    font-weight: 700 !important;
+    border: 1px solid rgba(0,200,150,0.35) !important;
+    box-shadow: none !important;
+    font-size: 0.82rem !important;
+    letter-spacing: 0.02em !important;
+    border-radius: 4px !important;
+    transition: all 0.12s ease !important;
 }
 [data-testid="stDownloadButton"] button:hover,
 [data-testid="stButton"] button:hover {
-    background: linear-gradient(180deg, #fde047 0%, #facc15 100%) !important;
+    background: rgba(0,200,150,0.16) !important;
+    border-color: #00c896 !important;
+}
+.stButton > button {
+    border-radius: 4px !important; font-weight: 700; font-size: 0.82rem !important;
 }
 
-/* ---- Metric tiles (st.metric) ---- bold light text on dark. */
+/* ---- Metric tiles (st.metric) ---- */
 [data-testid="stMetric"] [data-testid="stMetricLabel"],
 [data-testid="stMetric"] [data-testid="stMetricLabel"] * {
-    color: #cbd5e1 !important;
-    font-weight: 700 !important;
+    color: #4e6a8a !important; font-weight: 600 !important;
+    font-size: 0.72rem !important; letter-spacing: 0.06em !important; text-transform: uppercase !important;
 }
 [data-testid="stMetric"] [data-testid="stMetricValue"],
 [data-testid="stMetric"] [data-testid="stMetricValue"] * {
-    color: #f8fafc !important;
-    font-weight: 900 !important;
+    color: #e2eeff !important; font-weight: 700 !important;
+    font-family: 'DM Mono', monospace !important;
 }
 
-/* ---- Inline gray "subtitle" copy used by many generator headers ----
-   The codebase frequently inlines style="color:#475569" or #64748b on
-   intro paragraphs. Those colors vanish on the dark shell — force a
-   readable slate-200 override when these styles sit outside a white
-   card surface. */
+/* ---- Inline style overrides ---- */
 [data-testid="stMarkdownContainer"] div[style*="color:#475569"],
 [data-testid="stMarkdownContainer"] div[style*="color: #475569"],
 [data-testid="stMarkdownContainer"] div[style*="color:#64748b"],
 [data-testid="stMarkdownContainer"] div[style*="color: #64748b"],
 [data-testid="stMarkdownContainer"] div[style*="color:#0f172a"] {
-    color: #e2e8f0 !important;
+    color: #7a9bbf !important;
 }
 [data-testid="stMarkdownContainer"] div[style*="color:#475569"] b,
-[data-testid="stMarkdownContainer"] div[style*="color:#64748b"] b {
-    color: #fde68a !important;
-}
+[data-testid="stMarkdownContainer"] div[style*="color:#64748b"] b { color: #00c896 !important; }
 
-/* ---- Re-assert dark-on-light text inside light card surfaces ----
-   Cards/panels with explicit white/#f8fafc backgrounds (e.g. .carousel-
-   wrap, .section-card, .top3-card, .mhm-card, .lineup-banner) MUST keep
-   dark ink so they remain readable. We re-scope here in case any of the
-   global dark-text rules above leaked in. */
-.section-card:not(.dark), .section-card:not(.dark) p,
-.section-card:not(.dark) span:not([class*="mc-"]),
-.section-card:not(.dark) div:not([style*="background"]):not([class*="mc-"]),
-.section-card:not(.dark) h1, .section-card:not(.dark) h2,
-.section-card:not(.dark) h3, .section-card:not(.dark) h4,
-.carousel-wrap, .carousel-wrap *,
-.top3-card, .top3-card *,
-.mhm-card, .mhm-card *,
-.lineup-banner, .lineup-banner * {
-    color: #0f172a;
-}
-.section-card:not(.dark) .section-title,
-.carousel-wrap .section-title,
-.top3-card .section-title { color: #0f172a !important; }
-/* ---- desktop readability: bump font sizes on wider screens ---- */
+/* ---- desktop font sizes ---- */
 @media (min-width: 1100px) {
-    html, body, [class*="css"] { font-size: 17px; }
-    [data-testid="stMarkdownContainer"] p,
-    [data-testid="stMarkdownContainer"] li { font-size: 1rem; line-height: 1.55; }
-    [data-testid="stWidgetLabel"], label { font-size: 0.98rem !important; }
-    .stTabs [data-baseweb="tab"] { font-size: 1rem !important; padding: 11px 18px !important; }
-    [data-testid="stRadio"] label { font-size: 1rem !important; }
-    [data-testid="stDataFrame"] { font-size: 0.98rem; }
-    [data-testid="stDataFrame"] td,
-    [data-testid="stDataFrame"] th { font-size: 0.95rem !important; }
-    [data-testid="stTable"] td, [data-testid="stTable"] th { font-size: 0.95rem !important; }
-    .hrs-table td, .hrs-table th,
-    .tg-table td,  .tg-table th,
-    .sp-table td,  .sp-table th { font-size: 0.95rem !important; }
+    html, body, [class*="css"] { font-size: 15px; }
 }
 @media (min-width: 1500px) {
-    html, body, [class*="css"] { font-size: 18px; }
-    .stTabs [data-baseweb="tab"] { font-size: 1.05rem !important; padding: 12px 20px !important; }
-    [data-testid="stDataFrame"] td,
-    [data-testid="stDataFrame"] th { font-size: 1rem !important; }
-    .hrs-table td, .hrs-table th,
-    .tg-table td,  .tg-table th,
-    .sp-table td,  .sp-table th { font-size: 1rem !important; }
+    html, body, [class*="css"] { font-size: 16px; }
 }
 
 /* hide empty markdown wrappers */
 .element-container:has(> .stMarkdown:only-child > [data-testid="stMarkdownContainer"]:empty) { display: none; }
 
-/* ---- brand bar ---- */
-/* MLB Edge palette: deep purple/night background, bright gold/yellow
-   primary accent, electric violet secondary accent. Matches the
-   uploaded MLB EDGE logo so the app header feels of-a-piece with the
-   brand mark in the top-left tile. */
-@keyframes brandBarScan {
-    0%   { transform: translateX(-100%); opacity: 0; }
-    20%  { opacity: 1; }
-    80%  { opacity: 1; }
-    100% { transform: translateX(200%); opacity: 0; }
+/* ====================================================================
+   COMMAND BAR (replaces .brand-bar)
+   ==================================================================== */
+@keyframes livePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
 }
-@keyframes brandGoldPulse {
-    0%, 100% { box-shadow: 0 12px 32px rgba(20,5,50,.50), 0 0 0 1px rgba(250,204,21,.25); }
-    50%       { box-shadow: 0 16px 40px rgba(20,5,50,.60), 0 0 0 1px rgba(250,204,21,.50); }
+.cmd-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 16px;
+    background: #0c1a2e;
+    border: 1px solid rgba(0,200,150,0.18);
+    border-radius: 6px;
+    margin-bottom: 10px;
 }
-.brand-bar {
-    display: flex; align-items: center; justify-content: space-between; gap: 18px;
-    padding: 14px 22px; border-radius: 20px;
-    background: linear-gradient(115deg, #0c0420 0%, #1e0b4a 40%, #2e1065 70%, #4c1d95 100%);
-    border: 1px solid rgba(250,204,21,0.48);
-    margin-bottom: 14px; color: #fff;
-    position: relative; overflow: hidden;
-    animation: brandGoldPulse 4s ease-in-out infinite;
+.cmd-bar-left { display: flex; align-items: center; gap: 10px; }
+.cmd-bar-logo {
+    width: 36px; height: 36px; flex: 0 0 36px;
+    border-radius: 5px; border: 1px solid rgba(0,200,150,0.25);
+    object-fit: contain; background: #081526; padding: 2px;
 }
-/* fine dot grid texture behind brand bar */
-.brand-bar::before {
-    content: '';
-    position: absolute; inset: 0; pointer-events: none; z-index: 0;
-    background-image: radial-gradient(circle, rgba(250,204,21,.04) 1px, transparent 1px);
-    background-size: 18px 18px;
+.cmd-bar-wordmark { display: flex; flex-direction: column; gap: 1px; }
+.cmd-bar-name {
+    font-size: 0.9rem; font-weight: 800; color: #eef4ff;
+    letter-spacing: -0.01em; line-height: 1.1; font-family: 'DM Sans', sans-serif;
 }
-/* sweeping shimmer */
-.brand-bar::after {
-    content: '';
-    position: absolute; top: 0; bottom: 0; width: 30%; pointer-events: none; z-index: 1;
-    background: linear-gradient(90deg, transparent, rgba(250,204,21,.06), transparent);
-    animation: brandBarScan 6s ease-in-out infinite 2s;
+.cmd-bar-tag {
+    font-size: 0.58rem; font-weight: 600; color: #00c896;
+    letter-spacing: 0.14em; text-transform: uppercase;
 }
-.brand-bar .brand-left { display:flex; align-items:center; gap: 14px; min-width: 0; position: relative; z-index: 2; }
-.brand-bar .brand-logo {
-    width: 64px; height: 64px; flex: 0 0 64px;
-    border-radius: 14px; background: #12073a;
-    border: 1px solid rgba(250,204,21,0.55);
-    box-shadow: 0 4px 18px rgba(0,0,0,.50), 0 0 0 2px rgba(250,204,21,.12);
-    object-fit: contain; padding: 4px;
+.cmd-bar-center {
+    display: flex; align-items: center; gap: 14px; flex: 1; justify-content: center;
 }
-.brand-name { font-size: 1.55rem; font-weight: 900; letter-spacing: 0.04em; line-height: 1.05;
-    color: #facc15; text-shadow: 0 0 20px rgba(250,204,21,.35), 0 1px 0 rgba(0,0,0,0.55); }
-.brand-tag  { color: #fde68a; font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 800; }
-.brand-meta { text-align: right; color: #fde68a; font-size: 0.92rem; font-weight: 700; position: relative; z-index: 2; }
-.brand-meta .big { font-size: 1.1rem; color: #fff; font-weight: 800; }
+.cmd-stat { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.cmd-stat-val {
+    font-size: 0.95rem; font-weight: 700; color: #eef4ff;
+    font-family: 'DM Mono', monospace; line-height: 1;
+}
+.cmd-stat-label {
+    font-size: 0.56rem; font-weight: 600; color: #3a5a7a;
+    letter-spacing: 0.1em; text-transform: uppercase;
+}
+.cmd-divider { width: 1px; height: 26px; background: rgba(255,255,255,0.07); }
+.cmd-bar-right { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.cmd-time { font-size: 0.7rem; font-weight: 500; color: #4e6a8a; font-family: 'DM Mono', monospace; }
+.cmd-health { display: flex; align-items: center; gap: 5px; }
+.cmd-health-dot { width: 5px; height: 5px; border-radius: 50%; background: #00c896; }
+.cmd-health-dot.warn { background: #f59e0b; }
+.cmd-health-dot.err  { background: #ef4444; }
+.cmd-health-text { font-size: 0.64rem; font-weight: 600; color: #3a5a7a; letter-spacing: 0.04em; }
 @media (max-width: 600px) {
-    .brand-bar .brand-logo { width: 48px; height: 48px; flex-basis: 48px; }
-    .brand-name { font-size: 1.2rem; }
+    .cmd-bar-center { display: none; }
+    .cmd-bar-name { font-size: 0.82rem; }
 }
 
-/* ---- horizontal game carousel ---- */
+/* ====================================================================
+   LIVE TICKER — compact dark strip
+   ==================================================================== */
+.live-ticker {
+    background: #0c1a2e;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 5px;
+    padding: 5px 10px; margin-bottom: 8px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.live-ticker::-webkit-scrollbar { display: none; }
+.live-ticker .row { display: flex; align-items: center; gap: 8px; min-width: max-content; }
+.live-ticker .label {
+    color: #3a5a7a; font-size: 0.6rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase; padding-right: 8px;
+    border-right: 1px solid rgba(255,255,255,0.07); flex-shrink: 0;
+    font-family: 'DM Mono', monospace;
+}
+.live-ticker .game {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(255,255,255,0.03); padding: 3px 8px;
+    border-radius: 3px; color: #b0c8e4; font-weight: 600;
+    font-size: 0.76rem; white-space: nowrap;
+    border: 1px solid rgba(255,255,255,0.06); font-family: 'DM Mono', monospace;
+}
+.live-ticker .game .vs { color: #3a5a7a; }
+.live-ticker .game .runs { color: #eef4ff; font-weight: 700; }
+.live-ticker .game .inning { color: #3a5a7a; font-size: 0.65rem; margin-left: 3px; }
+.live-ticker .game.final .runs { color: #7a9bbf; }
+.live-ticker .game.final::before {
+    content: "F"; background: rgba(245,158,11,0.18); color: #f59e0b;
+    font-size: 0.56rem; padding: 1px 4px; border-radius: 2px;
+    margin-right: 3px; font-weight: 700; letter-spacing: 0.04em;
+}
+.live-ticker .game.live::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: #ef4444; display: inline-block; margin-right: 3px;
+    animation: livePulse 1.6s ease-in-out infinite;
+}
+
+/* ====================================================================
+   GAME CAROUSEL — dark compact rail
+   ==================================================================== */
 .carousel-wrap {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 18px;
-    padding: 10px 6px;
-    margin-bottom: 14px;
-    box-shadow: 0 4px 12px rgba(15,23,42,0.05);
-    overflow: hidden;
+    background: #0c1a2e;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 5px;
+    padding: 6px 4px; margin-bottom: 10px;
 }
 .carousel-strip {
-    display: flex;
-    gap: 10px;
-    overflow-x: auto;
-    scroll-behavior: smooth;
-    padding: 6px 12px 10px;
+    display: flex; gap: 5px;
+    overflow-x: auto; scroll-behavior: smooth;
+    padding: 3px 8px 5px;
     scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.08) transparent;
 }
-.carousel-strip::-webkit-scrollbar { height: 8px; }
-.carousel-strip::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+.carousel-strip::-webkit-scrollbar { height: 3px; }
+.carousel-strip::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
 .carousel-strip::-webkit-scrollbar-track { background: transparent; }
-
 .game-pill {
-    flex: 0 0 auto;
-    min-width: 188px;
-    background: #f8fafc;
-    border: 2px solid #e2e8f0;
-    border-radius: 16px;
-    padding: 10px 14px;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    display: block;
-    text-decoration: none !important;
-    color: inherit !important;
-    user-select: none;
+    flex: 0 0 auto; min-width: 148px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-left: 2px solid transparent;
+    border-radius: 4px; padding: 7px 9px;
+    text-align: center; cursor: pointer;
+    transition: all 0.1s ease; display: block;
+    text-decoration: none !important; color: inherit !important; user-select: none;
 }
-.game-pill:hover { border-color: #a78bfa; background: #f5f3ff; transform: translateY(-1px); }
+.game-pill:hover {
+    border-color: rgba(255,255,255,0.12);
+    border-left-color: rgba(0,200,150,0.45);
+    background: rgba(255,255,255,0.04);
+}
 .game-pill.active {
-    border-color: #facc15;
-    background: linear-gradient(180deg, #fef9c3 0%, #fde68a 100%);
-    box-shadow: 0 4px 14px rgba(124,58,237,0.30);
+    border-color: rgba(0,200,150,0.25);
+    border-left-color: #00c896;
+    background: rgba(0,200,150,0.05);
 }
-.game-pill .logos {
-    display: flex; align-items: center; justify-content: center; gap: 6px;
-    margin-bottom: 4px;
-}
-.game-pill .logos img { width: 38px; height: 38px; object-fit: contain; }
-.game-pill .at { color: #64748b; font-weight: 800; font-size: 1.05rem; }
-.game-pill .matchup-text {
-    display: block;
-    color: #0f172a; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.02em;
-}
-.game-pill .time {
-    display: block;
-    color: #64748b; font-size: 0.76rem; font-weight: 700; margin-top: 2px;
-    letter-spacing: 0.02em;
-}
-
-/* ---- mobile: turn the game carousel into a visible grid of square
-   tiles so all games are in plain sight without horizontal scrolling.
-   Desktop keeps the horizontal carousel look. ---- */
-@media (max-width: 640px) {
-    .carousel-wrap { padding: 8px 6px; }
-    .carousel-strip {
-        display: grid !important;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px;
-        overflow: visible !important;
-        padding: 4px;
-    }
-    .carousel-strip::-webkit-scrollbar { display: none; }
-    .game-pill {
-        min-width: 0;
-        width: 100%;
-        padding: 10px 6px;
-        border-radius: 14px;
-    }
-    .game-pill .logos img { width: 32px; height: 32px; }
-    .game-pill .matchup-text { font-size: 0.82rem; }
-    .game-pill .time { font-size: 0.72rem; }
-}
-
-/* ---- Live + Final score chips on game pills + game header ----
-   The chip replaces the start-time line on the pill once a game is live or
-   final; on the dark game-header card we also append a compact box-score
-   block below the matchup so the user sees the score without scrolling. */
+.game-pill .logos { display: flex; align-items: center; justify-content: center; gap: 5px; margin-bottom: 3px; }
+.game-pill .logos img { width: 26px; height: 26px; object-fit: contain; }
+.game-pill .at { color: #3a5a7a; font-weight: 600; font-size: 0.82rem; }
+.game-pill .matchup-text { display: block; color: #b0c8e4; font-weight: 700; font-size: 0.76rem; letter-spacing: 0.02em; }
+.game-pill .time { display: block; color: #3a5a7a; font-size: 0.65rem; font-weight: 500; margin-top: 2px; font-family: 'DM Mono', monospace; }
 .game-pill .score-line {
     display: flex; align-items: center; justify-content: center;
-    gap: 6px; margin-top: 4px; font-weight: 900;
-    font-size: 0.92rem; color: #0f172a; letter-spacing: 0.02em;
+    gap: 5px; margin-top: 3px; font-weight: 700;
+    font-size: 0.82rem; color: #b0c8e4; font-family: 'DM Mono', monospace;
 }
-.game-pill .score-line .sep { color: #94a3b8; font-weight: 800; }
+.game-pill .score-line .sep { color: #3a5a7a; }
 .game-pill .status-chip {
-    display: inline-block; margin-top: 4px;
-    padding: 1px 8px; border-radius: 999px;
-    font-size: 0.65rem; font-weight: 900; letter-spacing: 0.08em;
-    text-transform: uppercase;
+    display: inline-block; margin-top: 3px;
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
 }
 .game-pill .status-chip.live {
-    background: #fee2e2; color: #991b1b;
-    box-shadow: 0 0 0 1px #fecaca inset;
+    background: rgba(239,68,68,0.14); color: #f87171;
+    border: 1px solid rgba(239,68,68,0.22);
 }
 .game-pill .status-chip.live::before {
     content: ""; display: inline-block;
-    width: 6px; height: 6px; border-radius: 50%;
-    background: #dc2626; margin-right: 5px; vertical-align: middle;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #ef4444; margin-right: 4px; vertical-align: middle;
     animation: livePulse 1.6s ease-in-out infinite;
 }
 .game-pill .status-chip.final {
-    background: #e2e8f0; color: #334155;
-    box-shadow: 0 0 0 1px #cbd5e1 inset;
+    background: rgba(90,120,156,0.12); color: #5a7a9c;
+    border: 1px solid rgba(90,120,156,0.18);
 }
 .game-pill .status-chip.postponed {
-    background: #fef3c7; color: #92400e;
-    box-shadow: 0 0 0 1px #fde68a inset;
+    background: rgba(245,158,11,0.12); color: #f59e0b;
+    border: 1px solid rgba(245,158,11,0.2);
+}
+@media (max-width: 640px) {
+    .carousel-wrap { padding: 5px 4px; }
+    .carousel-strip {
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px; overflow: visible !important; padding: 3px;
+    }
+    .carousel-strip::-webkit-scrollbar { display: none; }
+    .game-pill { min-width: 0; width: 100%; padding: 7px 5px; }
+    .game-pill .logos img { width: 22px; height: 22px; }
+    .game-pill .matchup-text { font-size: 0.72rem; }
+    .game-pill .time { font-size: 0.62rem; }
 }
 @keyframes livePulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.35; }
 }
 
-/* Compact box-score block inside the dark game-header card. */
+/* ====================================================================
+   GAME HEADER (box score card)
+   ==================================================================== */
 .gh-scorebox {
-    margin-top: 12px; background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(250, 204, 21, 0.35); border-radius: 12px;
-    padding: 10px 12px; color: #f8fafc;
+    margin-top: 10px; background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.07); border-radius: 5px;
+    padding: 8px 12px; color: #e2eeff;
 }
 .gh-scorebox .status-row {
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;
 }
 .gh-scorebox .status-pill {
-    font-size: 0.7rem; font-weight: 900; letter-spacing: 0.1em;
-    text-transform: uppercase; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.6rem; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; padding: 2px 7px; border-radius: 3px;
 }
-.gh-scorebox .status-pill.live   { background:#dc2626; color:#fff; }
-.gh-scorebox .status-pill.final  { background:#facc15; color:#1a0b3a; }
-.gh-scorebox .status-pill.postponed { background:#fbbf24; color:#1a0b3a; }
+.gh-scorebox .status-pill.live   { background: rgba(239,68,68,0.18); color: #f87171; }
+.gh-scorebox .status-pill.final  { background: rgba(0,200,150,0.14); color: #00c896; }
+.gh-scorebox .status-pill.postponed { background: rgba(245,158,11,0.14); color: #f59e0b; }
 .gh-scorebox .status-pill.live::before {
     content: ""; display: inline-block;
-    width: 7px; height: 7px; border-radius: 50%;
-    background: #fff; margin-right: 6px; vertical-align: middle;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #ef4444; margin-right: 5px; vertical-align: middle;
     animation: livePulse 1.6s ease-in-out infinite;
 }
-.gh-scorebox .status-meta { font-size: 0.78rem; color: #cbd5e1; font-weight: 700; }
+.gh-scorebox .status-meta { font-size: 0.7rem; color: #4e6a8a; font-weight: 500; }
 .gh-scorebox table {
     width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums;
-    color: #f8fafc;
+    color: #b0c8e4; font-family: 'DM Mono', monospace;
 }
 .gh-scorebox table th, .gh-scorebox table td {
-    padding: 4px 6px; text-align: center; font-size: 0.82rem;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 4px 6px; text-align: center; font-size: 0.74rem;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 .gh-scorebox table th {
-    color: #fde68a; font-size: 0.66rem; font-weight: 800;
-    letter-spacing: 0.06em; text-transform: uppercase;
+    color: #3a5a7a; font-size: 0.58rem; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
 }
-.gh-scorebox table td.team {
-    text-align: left; font-weight: 800; white-space: nowrap;
-}
-.gh-scorebox table td.rhe { font-weight: 900; color: #facc15; }
-.gh-scorebox table td.rhe.runs { font-size: 1.0rem; }
+.gh-scorebox table td.team { text-align: left; font-weight: 700; white-space: nowrap; color: #e2eeff; }
+.gh-scorebox table td.rhe { font-weight: 700; color: #00c896; }
+.gh-scorebox table td.rhe.runs { font-size: 0.88rem; }
 .gh-scorebox .scrollwrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .gh-scorebox .diamond {
-    display: inline-flex; align-items: center; gap: 8px;
-    margin-left: auto; font-size: 0.78rem; color: #cbd5e1;
-    font-weight: 700;
+    display: inline-flex; align-items: center; gap: 7px;
+    margin-left: auto; font-size: 0.7rem; color: #4e6a8a; font-weight: 500;
 }
 .gh-scorebox .diamond .bases {
     display: inline-grid; grid-template-columns: 10px 10px 10px;
-    grid-template-rows: 10px 10px; gap: 2px; transform: rotate(0deg);
+    grid-template-rows: 10px 10px; gap: 2px;
 }
 .gh-scorebox .diamond .base {
     width: 10px; height: 10px; transform: rotate(45deg);
-    background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.35);
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.10);
 }
-.gh-scorebox .diamond .base.on { background:#facc15; border-color:#facc15; }
+.gh-scorebox .diamond .base.on { background: #f59e0b; border-color: #f59e0b; }
 
-/* ---- live games ticker (top of slate) ---- */
-.live-ticker {
-    background: linear-gradient(180deg, #0b1437 0%, #0a2350 100%);
-    border: 1px solid #1e3a8a; border-radius: 14px;
-    padding: 8px 10px; margin-bottom: 10px;
-    overflow-x: auto; -webkit-overflow-scrolling: touch;
-    box-shadow: 0 2px 8px rgba(15,23,42,0.06);
-}
-.live-ticker .row {
-    display: flex; align-items: center; gap: 10px; min-width: max-content;
-}
-.live-ticker .label {
-    color: #facc15; font-size: 0.7rem; font-weight: 900;
-    letter-spacing: 0.12em; text-transform: uppercase; padding-right: 6px;
-    border-right: 1px solid rgba(250,204,21,0.4); flex-shrink: 0;
-}
-.live-ticker .game {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: rgba(255,255,255,0.06); padding: 4px 10px;
-    border-radius: 999px; color: #f8fafc; font-weight: 800;
-    font-size: 0.85rem; white-space: nowrap;
-    border: 1px solid rgba(250,204,21,0.2);
-}
-.live-ticker .game .vs { color:#94a3b8; font-weight: 700; }
-.live-ticker .game .runs { color:#facc15; }
-.live-ticker .game .inning { color:#cbd5e1; font-size: 0.72rem; font-weight: 700; margin-left: 4px; }
-.live-ticker .game.final .runs { color:#fde68a; }
-.live-ticker .game.final::before {
-    content: "F"; background:#facc15; color:#1a0b3a;
-    font-size: 0.62rem; padding: 1px 5px; border-radius: 4px;
-    margin-right: 4px; font-weight: 900;
-}
-.live-ticker .game.live::before {
-    content: ""; width: 7px; height: 7px; border-radius: 50%;
-    background:#dc2626; display: inline-block; margin-right: 2px;
-    animation: livePulse 1.6s ease-in-out infinite;
-}
-
-/* ---- section card ---- */
-.section-card {
-    background: #fff; border: 1px solid #e2e8f0; border-radius: 18px;
-    padding: 16px 18px; margin-bottom: 12px;
-    box-shadow: 0 4px 12px rgba(15,23,42,0.04);
-}
-.section-card.dark {
-    background: linear-gradient(180deg, #0b1437 0%, #0a2350 100%);
-    border: 1px solid #1e3a8a; color:#fff;
-}
-.section-title, .section-title-lg {
-    /* MLB Edge brand headline — gold on the dark shell so it carries
-       across the whole app at a glance. Cards/panels with light surfaces
-       re-color these back to dark slate via the .section-card scope
-       above. */
-    color: #facc15;
-    font-size: 1.1rem;
-    font-weight: 900;
-    margin: 0 0 10px;
-    letter-spacing: -0.01em;
-    display: flex; align-items: center; gap: 10px;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.45);
-}
-.section-title img, .section-title-lg img { width: 28px; height: 28px; }
-
-/* ---- big game header card (above the tabs) ---- */
 .game-header {
     display: flex; align-items: center; justify-content: space-between;
     flex-wrap: wrap; gap: 12px;
 }
-.game-header .matchup-display {
-    display: flex; align-items: center; gap: 12px;
-}
-.game-header .matchup-display img { width: 56px; height: 56px; object-fit: contain; }
-.game-header .matchup-display .vs {
-    color: #94b8ff; font-weight: 700; font-size: 1.4rem; padding: 0 6px;
-}
-.game-header .team-abbr { color:#fff; font-size: 1.8rem; font-weight: 900; letter-spacing: 0.02em; }
-.game-header .meta { color: #c7dafe; font-size: 0.92rem; font-weight: 600; margin-top: 4px; }
-.game-header .probables {
-    text-align: right; color: #fff; font-size: 0.95rem; font-weight: 800;
-}
+.game-header .matchup-display { display: flex; align-items: center; gap: 10px; }
+.game-header .matchup-display img { width: 46px; height: 46px; object-fit: contain; }
+.game-header .matchup-display .vs { color: #3a5a7a; font-weight: 600; font-size: 1.2rem; padding: 0 4px; }
+.game-header .team-abbr { color: #eef4ff; font-size: 1.55rem; font-weight: 800; letter-spacing: 0.01em; }
+.game-header .meta { color: #4e6a8a; font-size: 0.78rem; font-weight: 500; margin-top: 3px; }
+.game-header .probables { text-align: right; color: #b0c8e4; font-size: 0.88rem; font-weight: 600; }
 .game-header .probables .label {
-    color: #c7dafe; font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 800;
+    color: #3a5a7a; font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 700;
 }
-.game-header .probables .hand { color: #94b8ff; }
-
-.kpi-row { display:flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.game-header .probables .hand { color: #4e6a8a; }
+.kpi-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .kpi {
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.18);
-    border-radius: 12px; padding: 7px 11px; color: #fff; font-size: 0.88rem; font-weight: 700;
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 4px; padding: 5px 9px; color: #b0c8e4; font-size: 0.78rem; font-weight: 600;
 }
 .kpi .k {
-    color: #c7dafe; font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase;
-    display:block; margin-bottom: 2px; font-weight: 700;
+    color: #3a5a7a; font-size: 0.56rem; letter-spacing: 0.1em; text-transform: uppercase;
+    display: block; margin-bottom: 2px; font-weight: 600;
 }
 
-/* ---- tier pills ---- */
+/* ====================================================================
+   SECTION PANELS — all-dark surface system (NO white cards)
+   ==================================================================== */
+.section-card {
+    background: #0c1a2e; border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 6px; padding: 14px 16px; margin-bottom: 10px;
+}
+.section-card.dark {
+    background: #0c1a2e; border-color: rgba(255,255,255,0.07); color: #e2eeff;
+}
+
+/* Section header: thin teal accent bar + uppercase label */
+.section-title, .section-title-lg {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 0.68rem; font-weight: 700; color: #4e6a8a;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    margin: 0 0 12px; padding: 0;
+    text-shadow: none;
+}
+.section-title::before, .section-title-lg::before {
+    content: ''; display: inline-block;
+    width: 3px; height: 13px; border-radius: 2px;
+    background: #00c896; flex-shrink: 0;
+}
+.section-title img, .section-title-lg img { width: 18px; height: 18px; }
+
+/* ====================================================================
+   TIER PILLS — sharp, semantic, minimal
+   ==================================================================== */
 .tier {
-    display: inline-block; padding: 3px 10px; border-radius: 999px;
-    font-weight: 800; font-size: 0.74rem; letter-spacing: 0.04em; text-transform: uppercase;
-    border: 1px solid transparent;
+    display: inline-flex; align-items: center;
+    padding: 2px 7px; border-radius: 3px;
+    font-weight: 700; font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+    border: 1px solid transparent; font-family: 'DM Mono', monospace;
 }
-.tier-elite   { background:#dcfce7; color:#14532d; border-color:#86efac; }
-.tier-strong  { background:#d1fae5; color:#065f46; border-color:#6ee7b7; }
-.tier-ok      { background:#fef3c7; color:#78350f; border-color:#fcd34d; }
-.tier-avoid   { background:#fee2e2; color:#7f1d1d; border-color:#fca5a5; }
-.tier-neutral { background:#e2e8f0; color:#334155; border-color:#cbd5e1; }
+.tier-elite   { background: rgba(16,185,129,0.14); color: #10b981; border-color: rgba(16,185,129,0.28); }
+.tier-strong  { background: rgba(0,200,150,0.11); color: #00c896; border-color: rgba(0,200,150,0.24); }
+.tier-ok      { background: rgba(245,158,11,0.11); color: #f59e0b; border-color: rgba(245,158,11,0.24); }
+.tier-avoid   { background: rgba(239,68,68,0.11); color: #ef4444; border-color: rgba(239,68,68,0.24); }
+.tier-neutral { background: rgba(90,120,156,0.10); color: #5a7a9c; border-color: rgba(90,120,156,0.18); }
 
-/* ---- lineup table headers row (with team logo) ---- */
+/* ====================================================================
+   LINEUP BANNER — team header row for matchup board
+   ==================================================================== */
 .lineup-banner {
-    display: flex; align-items: center; gap: 12px;
-    padding: 10px 14px;
-    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-    border: 1px solid #e2e8f0;
-    border-radius: 14px 14px 0 0;
-    margin-top: 10px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    margin-top: 12px;
 }
-.lineup-banner img { width: 36px; height: 36px; }
-.lineup-banner .lineup-title { font-weight: 900; font-size: 1.05rem; color:#0f172a; }
-.lineup-banner .vs-pitcher { color: #475569; font-size: 0.92rem; font-weight: 700; margin-left: 6px; }
+.lineup-banner img { width: 26px; height: 26px; }
+.lineup-banner .lineup-title { font-weight: 700; font-size: 0.88rem; color: #e2eeff; }
+.lineup-banner .vs-pitcher { color: #4e6a8a; font-size: 0.8rem; font-weight: 500; margin-left: 5px; }
 .lineup-banner .badge { margin-left: auto; }
 
-/* ---- streamlit tabs styling (Matchup / Rolling / Zones / Exports) ----
-   Mobile users were missing this strip because it blended into the page.
-   Now: dark green band, gold border, white pills, big tap targets, and
-   a fade on the right edge that hints there are more tabs to scroll. */
-.stTabs { position: relative; }
-.stTabs [data-baseweb="tab-list"] {
-    gap: 6px;
-    background: linear-gradient(180deg, #14062e 0%, #3b1f6b 100%);
-    padding: 8px;
-    border-radius: 14px;
-    border: 2px solid #facc15;
-    box-shadow: 0 4px 14px rgba(20, 5, 50, .35), inset 0 1px 0 rgba(250,204,21,.25);
-    overflow-x: auto;
-    scrollbar-width: thin;
-}
-/* Right-edge fade so users see there's more to swipe to.
-   IMPORTANT: scope this to the tab-list only. Previously it was on
-   .stTabs::after with top:0/bottom:0, which made the green fade extend
-   down the FULL HEIGHT of the tab container — i.e. a vertical green
-   strip running alongside every tab's content panel. That looked like
-   "the whole right side of the page is tinted green". The fix: anchor
-   the fade inside the [data-baseweb="tab-list"] element so it only
-   covers the horizontal tab strip itself. */
-.stTabs [data-baseweb="tab-list"] { position: relative; }
-.stTabs [data-baseweb="tab-list"]::after {
-    content: "";
-    position: absolute; top: 0; right: 0; bottom: 0; width: 36px;
-    pointer-events: none;
-    background: linear-gradient(90deg, rgba(59,31,107,0) 0%, rgba(59,31,107,.9) 100%);
-    border-radius: 0 14px 14px 0;
-}
-.stTabs [data-baseweb="tab"] {
-    background: rgba(255,255,255,.10);
-    border-radius: 10px;
-    padding: 10px 16px;
-    min-height: 44px;
-    font-weight: 800;
-    color: #fef3c7 !important;
-    border: 1px solid rgba(250,204,21,.30);
-    transition: all .18s ease;
-    white-space: nowrap;
-}
-.stTabs [data-baseweb="tab"]:hover {
-    background: rgba(250,204,21,.18);
-    border-color: #facc15;
-}
-.stTabs [aria-selected="true"] {
-    background: #ffffff !important;
-    color: #3b1f6b !important;
-    border-color: #facc15 !important;
-    box-shadow: 0 0 0 2px rgba(250,204,21,.45), 0 4px 10px rgba(20,5,50,.35) !important;
-    transform: translateY(-1px);
-}
-.stTabs [data-baseweb="tab-highlight"] { background: #facc15 !important; height: 3px !important; }
-
-/* ---- mobile: let game-view tabs wrap into a visible grid of square
-   tiles so users see every tab without horizontal scrolling. Hide
-   the right-edge fade and scrollbar since they no longer apply. ---- */
-@media (max-width: 640px) {
-    .stTabs [data-baseweb="tab-list"] {
-        flex-wrap: wrap !important;
-        overflow-x: visible !important;
-        gap: 6px;
-        padding: 8px;
-    }
-    .stTabs [data-baseweb="tab-list"]::after { display: none !important; }
-    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
-    .stTabs [data-baseweb="tab"] {
-        flex: 1 1 calc(50% - 6px) !important;
-        min-width: 0 !important;
-        white-space: normal !important;
-        text-align: center;
-        line-height: 1.15;
-        padding: 10px 8px !important;
-        font-size: 0.92rem !important;
-    }
-    .game-views-sub { display: none !important; }
-}
-
-/* ---- input polish ---- */
-.stButton > button {
-    border-radius: 12px; font-weight: 800;
-    border: 1px solid #7c3aed; background: #7c3aed; color: #fff; padding: 8px 16px;
-}
-.stButton > button:hover { background: #6d28d9; border-color: #6d28d9; color:#fff; }
-
-/* ---- dataframe polish - ensures heatmap shows clearly ---- */
+/* ====================================================================
+   DATAFRAME
+   ==================================================================== */
 [data-testid="stDataFrame"] {
-    border-radius: 14px; overflow: hidden;
-    border: 1px solid #e2e8f0;
+    border-radius: 5px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.07);
 }
 
-/* ---- footer ---- */
+/* ====================================================================
+   FOOTER
+   ==================================================================== */
 .footer {
-    margin-top: 18px; padding: 12px 16px; border-radius: 12px;
-    background: #f1f5f9; color: #475569; font-size: 0.82rem; text-align: center; font-weight: 600;
+    margin-top: 14px; padding: 10px 14px; border-radius: 4px;
+    background: rgba(255,255,255,0.02); color: #3a5a7a;
+    font-size: 0.74rem; text-align: center; font-weight: 400;
+    border: 1px solid rgba(255,255,255,0.04);
 }
 
-/* =========================================================================
-   DARK MODE OVERRIDES
-   ----------------------------------------------------------------------
-   Many of the custom HTML cards in this app hard-code light backgrounds
-   with dark text. When the user has Streamlit set to dark mode (system
-   pref or sidebar toggle), the page background goes dark but those cards
-   keep light bg/dark text — which is fine. The problem cases are:
-     1. Plain text rendered by Streamlit (markdown, captions, st.info,
-        labels) that inherits the dark-mode color — our hard-coded dark
-        slate colors become invisible.
-     2. Card text that says color: #0f172a with NO background override.
-     3. Tables (.hrs-table, .tg-table, .sp-table) with light bg.
-   Strategy: scope every override to Streamlit's [data-theme="dark"]
-   attribute so they only fire when the app itself is rendered in dark.
-   We intentionally do NOT use @media (prefers-color-scheme: dark) because
-   it matches the device OS — even when Streamlit Cloud is rendering in
-   light, which washes out light-mode text on phones set to dark.
-   ======================================================================= */
+/* ====================================================================
+   SCOUTING ROWS (replaces .mhm-card heat-map tile grid)
+   ==================================================================== */
+.scout-rows { display: block; margin: 0 0 12px 0; }
+.scout-row {
+    display: flex; align-items: center; gap: 0;
+    background: #0a1628;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-top: none;
+    padding: 8px 11px;
+    transition: background 0.1s ease;
+    position: relative;
+    border-left: 3px solid transparent;
+}
+.scout-row:last-child { border-radius: 0 0 5px 5px; }
+.scout-row:hover {
+    background: rgba(0,200,150,0.04);
+    border-left-color: rgba(0,200,150,0.5);
+}
+.scout-row.tier-elite   { border-left-color: #10b981; }
+.scout-row.tier-strong  { border-left-color: #00c896; }
+.scout-row.tier-ok      { border-left-color: #f59e0b; }
+.scout-row.tier-avoid   { border-left-color: #ef4444; }
+.scout-spot {
+    flex: 0 0 24px; width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,0.04);
+    border-radius: 3px;
+    font-size: 0.68rem; font-weight: 700; color: #3a5a7a;
+    font-family: 'DM Mono', monospace;
+    margin-right: 9px; flex-shrink: 0;
+}
+.scout-player {
+    flex: 0 0 160px; min-width: 0; margin-right: 10px; flex-shrink: 0;
+}
+@media (max-width: 640px) { .scout-player { flex-basis: 120px; } }
+.scout-player-name {
+    font-size: 0.85rem; font-weight: 700; color: #e2eeff;
+    display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-family: 'DM Sans', sans-serif; line-height: 1.2;
+}
+.scout-player-meta {
+    font-size: 0.6rem; font-weight: 500; color: #3a5a7a;
+    display: block; margin-top: 2px; letter-spacing: 0.02em;
+}
+.scout-player-crush {
+    font-size: 0.6rem; font-weight: 600; color: #00c896;
+    display: block; margin-top: 2px; line-height: 1.15;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.scout-player-form {
+    font-size: 0.6rem; font-weight: 500; color: #7dd3fc;
+    display: block; margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.scout-metrics {
+    display: flex; align-items: center; gap: 3px;
+    flex: 1 1 auto; overflow: hidden; margin-right: 9px;
+}
+.scout-metric {
+    display: flex; flex-direction: column; align-items: center;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 3px; padding: 4px 6px; min-width: 48px; flex-shrink: 0;
+}
+.scout-metric-label {
+    font-size: 0.54rem; font-weight: 700; color: #3a5a7a;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin-bottom: 2px; line-height: 1; white-space: nowrap;
+    font-family: 'DM Sans', sans-serif;
+}
+.scout-metric-val {
+    font-size: 0.8rem; font-weight: 700; color: #b0c8e4; line-height: 1;
+    font-family: 'DM Mono', monospace;
+}
+.scout-metric-bar {
+    width: 100%; height: 2px; background: rgba(255,255,255,0.05);
+    border-radius: 1px; margin-top: 3px; overflow: hidden;
+}
+.scout-metric-bar-fill { height: 100%; border-radius: 1px; }
+.scout-outcome {
+    flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end;
+    gap: 3px; margin-left: auto; flex-shrink: 0; min-width: 82px;
+}
+.scout-likely {
+    font-size: 0.68rem; font-weight: 600; color: #8aaccc;
+    text-align: right; line-height: 1.2; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; max-width: 110px;
+}
+.scout-likely-reason {
+    font-size: 0.58rem; font-weight: 500; color: #3a5a7a;
+    text-align: right; line-height: 1.2; max-width: 110px; white-space: normal;
+}
+.scout-matchup-score {
+    font-size: 0.95rem; font-weight: 800; color: #eef4ff; line-height: 1;
+    font-family: 'DM Mono', monospace;
+}
+.scout-matchup-label {
+    font-size: 0.52rem; font-weight: 600; color: #3a5a7a;
+    text-transform: uppercase; letter-spacing: 0.08em;
+}
+.scout-row-spacer { height: 8px; }
+@media (max-width: 640px) {
+    .scout-metrics { display: none; }
+    .scout-row { padding: 7px 9px; }
+    .scout-player { flex-basis: auto; flex: 1 1 auto; }
+    .scout-outcome { min-width: 65px; }
+    .scout-likely { font-size: 0.62rem; max-width: 75px; }
+}
 
-/* Streamlit sets data-theme="dark" on the root when the user picks dark
-   in app settings. All dark-mode overrides live under this selector so
-   they never leak into light mode. */
+/* ====================================================================
+   SCOUT CTA (replaces gold .mhm-cta-pill)
+   ==================================================================== */
+.mhm-cards { display: block; margin: 0 0 12px 0; }
+.mhm-card-spacer { height: 8px; }
+.scout-cta-btn {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    width: 100%; min-height: 38px; padding: 7px 14px; margin-top: -1px;
+    background: rgba(0,200,150,0.07);
+    color: #00c896 !important;
+    border: 1px solid rgba(0,200,150,0.18);
+    border-top: 1px dashed rgba(0,200,150,0.12);
+    border-radius: 0 0 5px 5px;
+    font-family: 'DM Mono', monospace;
+    font-weight: 700; font-size: 0.68rem; line-height: 1.2;
+    letter-spacing: 0.1em; text-transform: uppercase; text-align: center;
+    white-space: nowrap; user-select: none; pointer-events: none;
+}
+.scout-cta-btn::after { content: " →"; font-weight: 400; }
+.scout-cta-btn, .scout-cta-btn * { color: #00c896 !important; }
+@media (max-width: 640px) { .scout-cta-btn { min-height: 42px; font-size: 0.64rem; } }
+.mhm-cta-click { display:block; height:0; margin:0 !important; padding:0 !important; }
+
+div[data-testid="stElementContainer"]:has(.mhm-cta-click) +
+  div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) {
+  margin-top:-38px !important; margin-bottom:10px !important;
+  position:relative; z-index:5;
+}
+div[data-testid="element-container"]:has(.mhm-cta-click) +
+  div[data-testid="element-container"]:has(div[data-testid="stButton"]) {
+  margin-top:-38px !important; margin-bottom:10px !important;
+  position:relative; z-index:5;
+}
+.mhm-cta-click + div[data-testid="stButton"] {
+  margin-top:-38px !important; margin-bottom:10px !important;
+  position:relative; z-index:5;
+}
+@media (max-width:640px) {
+  div[data-testid="stElementContainer"]:has(.mhm-cta-click) +
+    div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]),
+  div[data-testid="element-container"]:has(.mhm-cta-click) +
+    div[data-testid="element-container"]:has(div[data-testid="stButton"]),
+  .mhm-cta-click + div[data-testid="stButton"] {
+    margin-top:-42px !important;
+  }
+}
+div[data-testid="stElementContainer"]:has(.mhm-cta-click) +
+  div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button,
+div[data-testid="element-container"]:has(.mhm-cta-click) +
+  div[data-testid="element-container"]:has(div[data-testid="stButton"]) button,
+.mhm-cta-click + div[data-testid="stButton"] button {
+  width:100% !important; min-height:38px !important;
+  background: transparent !important; background-color: transparent !important;
+  background-image: none !important; color: transparent !important;
+  border: 0 !important; border-radius: 0 0 5px 5px !important;
+  box-shadow: none !important; padding: 7px 14px !important;
+  cursor: pointer !important; text-shadow: none !important; outline: none !important;
+}
+div[data-testid="stElementContainer"]:has(.mhm-cta-click) +
+  div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button *,
+div[data-testid="element-container"]:has(.mhm-cta-click) +
+  div[data-testid="element-container"]:has(div[data-testid="stButton"]) button *,
+.mhm-cta-click + div[data-testid="stButton"] button * {
+  color: transparent !important; background: transparent !important; text-shadow: none !important;
+}
+@media (max-width:640px) {
+  div[data-testid="stElementContainer"]:has(.mhm-cta-click) +
+    div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button,
+  div[data-testid="element-container"]:has(.mhm-cta-click) +
+    div[data-testid="element-container"]:has(div[data-testid="stButton"]) button,
+  .mhm-cta-click + div[data-testid="stButton"] button { min-height:42px !important; }
+}
+
+/* ====================================================================
+   INSIGHTS PANEL (replaces Top 3 white cards)
+   ==================================================================== */
+.insights-panel {
+    background: #0c1a2e; border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 6px; overflow: hidden; margin: 10px 0 12px;
+}
+.insights-panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 14px;
+    background: rgba(0,200,150,0.05);
+    border-bottom: 1px solid rgba(0,200,150,0.12);
+}
+.insights-panel-title {
+    font-size: 0.62rem; font-weight: 700; color: #00c896;
+    letter-spacing: 0.12em; text-transform: uppercase; font-family: 'DM Sans', sans-serif;
+}
+.insights-panel-sub { font-size: 0.6rem; font-weight: 500; color: #3a5a7a; }
+.insight-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    transition: background 0.1s ease;
+}
+.insight-row:last-child { border-bottom: none; }
+.insight-row:hover { background: rgba(0,200,150,0.03); }
+.insight-rank {
+    flex: 0 0 22px; width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.68rem; font-weight: 800; color: #3a5a7a;
+    font-family: 'DM Mono', monospace;
+}
+.insight-rank.rank-1 { color: #10b981; }
+.insight-rank.rank-2 { color: #00c896; }
+.insight-rank.rank-3 { color: #5a7a9c; }
+.insight-photo {
+    width: 34px; height: 34px; border-radius: 50%;
+    object-fit: cover; background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08); flex-shrink: 0;
+}
+.insight-photo-fallback {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: rgba(0,200,150,0.08); color: #00c896;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 0.82rem;
+    border: 1px solid rgba(0,200,150,0.14); flex-shrink: 0;
+}
+.insight-player { flex: 0 0 150px; min-width: 0; }
+.insight-player-name {
+    font-size: 0.88rem; font-weight: 700; color: #eef4ff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-family: 'DM Sans', sans-serif; line-height: 1.2;
+}
+.insight-player-meta { font-size: 0.62rem; font-weight: 500; color: #3a5a7a; margin-top: 2px; }
+.insight-stats { display: flex; gap: 8px; flex: 1 1 auto; align-items: center; flex-wrap: wrap; }
+.insight-stat { display: flex; flex-direction: column; min-width: 42px; }
+.insight-stat-val {
+    font-size: 0.9rem; font-weight: 700; color: #e2eeff; line-height: 1;
+    font-family: 'DM Mono', monospace;
+}
+.insight-stat-label {
+    font-size: 0.56rem; font-weight: 600; color: #3a5a7a;
+    text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px;
+}
+.insight-score-bar { flex: 1 1 auto; min-width: 55px; max-width: 110px; }
+.insight-score-bar-track {
+    height: 3px; background: rgba(255,255,255,0.05);
+    border-radius: 2px; overflow: hidden;
+}
+.insight-score-bar-fill {
+    height: 100%; border-radius: 2px;
+    background: linear-gradient(90deg, #00c896, #10b981);
+}
+.insight-score-num {
+    font-size: 0.68rem; font-weight: 700; color: #00c896; margin-top: 3px;
+    font-family: 'DM Mono', monospace;
+}
+.insight-crush { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.insight-crush-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: rgba(245,158,11,0.09); color: #f59e0b;
+    border: 1px solid rgba(245,158,11,0.18);
+    border-radius: 3px; padding: 2px 6px;
+    font-weight: 600; font-size: 0.62rem; white-space: nowrap;
+}
+@media (max-width: 640px) {
+    .insight-player { flex-basis: 95px; }
+    .insight-stats { gap: 5px; }
+    .insight-score-bar { display: none; }
+    .insight-stat-val { font-size: 0.78rem; }
+}
+
+/* ====================================================================
+   DARK MODE OVERRIDES
+   ==================================================================== */
 [data-theme="dark"] [data-testid="stMarkdownContainer"] p,
 [data-theme="dark"] [data-testid="stMarkdownContainer"] li,
 [data-theme="dark"] [data-testid="stMarkdownContainer"] span,
 [data-theme="dark"] [data-testid="stCaptionContainer"],
 [data-theme="dark"] [data-testid="stWidgetLabel"],
-[data-theme="dark"] label {
-    color: #e2e8f0 !important;
-}
+[data-theme="dark"] label { color: #7a9bbf !important; }
 [data-theme="dark"] .section-title, [data-theme="dark"] .section-title-lg {
-    /* Brighter violet on true dark theme so the title glows */
-    color: #c4b5fd !important;
-    text-shadow: 0 0 8px rgba(167, 139, 250, 0.45) !important;
+    color: #4e6a8a !important;
 }
 [data-theme="dark"] [style*="color:#475569"],
 [data-theme="dark"] [style*="color: #475569"],
 [data-theme="dark"] [style*="color:#64748b"],
-[data-theme="dark"] [style*="color: #64748b"] {
-    color: #cbd5e1 !important;
-}
-[data-theme="dark"] .top-tab-row {
-    /* Keep the gold strip in dark mode too — matches the logo */
-    background: linear-gradient(180deg, #fde68a 0%, #f59e0b 55%, #b45309 100%) !important;
-    border-color: #92400e !important;
-}
-[data-theme="dark"] .top-tab-row .top-tab-pill {
-    background: #1e293b !important;
-    color: #f1f5f9 !important;
-    border-color: #475569 !important;
-}
-[data-theme="dark"] .top-tab-row .top-tab-pill.active {
-    background: linear-gradient(110deg, #14062e 0%, #3b1f6b 60%, #6b21a8 100%) !important;
-    color: #facc15 !important;
-    border-color: #facc15 !important;
-}
-[data-theme="dark"] .hrs-table td, [data-theme="dark"] .tg-table td {
-    color: #0f172a !important;
-}
+[data-theme="dark"] [style*="color: #64748b"] { color: #4e6a8a !important; }
 [data-theme="dark"] .footer {
-    background: #1e293b !important;
-    color: #cbd5e1 !important;
+    background: rgba(255,255,255,0.02) !important; color: #3a5a7a !important;
 }
-[data-theme="dark"] .top3-stat .lab,
-[data-theme="dark"] .spc-meta,
-[data-theme="dark"] .spc-bigscore .lab,
-[data-theme="dark"] .spc-stat .lab {
-    color: #cbd5e1 !important;
-}
-[data-theme="dark"] .top3-stat .val { color: #f8fafc !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -4641,89 +4720,53 @@ def render_matchup_heatmap_html(df):
 
     css = """
 <style>
+/* Heat-map table: new dark skin (global .mhm-* classes supplement these) */
 .mhm-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
-  border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;
-  box-shadow: 0 2px 10px rgba(15,23,42,0.06); margin: 6px 0 14px 0; }
-.mhm-wrap::-webkit-scrollbar { height: 10px; }
-.mhm-wrap::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
-.mhm-wrap::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 6px; }
+  border: 1px solid rgba(255,255,255,0.07); border-radius: 0 0 5px 5px;
+  background: #0a1628; margin: 0 0 12px 0; }
+.mhm-wrap::-webkit-scrollbar { height: 7px; }
+.mhm-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.09); border-radius: 4px; }
+.mhm-wrap::-webkit-scrollbar-track { background: transparent; }
 .mhm-table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-.mhm-table th { position: sticky; top: 0; z-index: 3; background: #0f172a; color: #f8fafc;
-  font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
-  padding: 8px 10px; text-align: center; white-space: nowrap; border-bottom: 2px solid #1e293b; }
-.mhm-table td { padding: 7px 10px; text-align: center; font-size: 0.82rem;
-  font-weight: 700; color: #0f172a; white-space: nowrap; border-bottom: 1px solid #e2e8f0; }
+  font-family: 'DM Mono', 'DM Sans', monospace; }
+.mhm-table th { position: sticky; top: 0; z-index: 3; background: #081526; color: #3a5a7a;
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+  padding: 7px 10px; text-align: center; white-space: nowrap;
+  border-bottom: 1px solid rgba(255,255,255,0.07); }
+.mhm-table td { padding: 6px 10px; text-align: center; font-size: 0.78rem;
+  font-weight: 600; color: #b0c8e4; white-space: nowrap;
+  border-bottom: 1px solid rgba(255,255,255,0.04); }
 .mhm-table tr:last-child td { border-bottom: none; }
-.mhm-col-hitter { position: sticky; left: 0; z-index: 2; background: #ffffff;
-  text-align: left !important; min-width: 170px; box-shadow: 2px 0 4px rgba(15,23,42,0.06); }
-.mhm-table th.mhm-col-hitter { z-index: 4; background: #0f172a; }
-.mhm-table tr:nth-child(even) td.mhm-col-hitter { background: #f8fafc; }
-.mhm-hitter-name { font-weight: 800; color: #0f172a; }
-.mhm-hitter-meta { font-size: 0.68rem; color: #64748b; font-weight: 700; margin-top: 1px; }
-.mhm-hitter-crushes { font-size: 0.68rem; color: #be185d; font-weight: 800; margin-top: 2px;
+.mhm-table tr:hover td { background: rgba(0,200,150,0.04) !important; }
+.mhm-col-hitter { position: sticky; left: 0; z-index: 2; background: #0a1628 !important;
+  text-align: left !important; min-width: 170px;
+  border-right: 1px solid rgba(255,255,255,0.06); }
+.mhm-table th.mhm-col-hitter { z-index: 4; background: #081526 !important; }
+.mhm-table tr:hover td.mhm-col-hitter { background: rgba(0,200,150,0.06) !important; }
+.mhm-hitter-name { font-weight: 700; color: #e2eeff; font-family: 'DM Sans', sans-serif; }
+.mhm-hitter-meta { font-size: 0.6rem; color: #3a5a7a; font-weight: 500; margin-top: 1px; }
+.mhm-hitter-crushes { font-size: 0.6rem; color: #00c896; font-weight: 600; margin-top: 2px;
   white-space: normal; line-height: 1.15; max-width: 220px; }
-.mhm-hitter-form { font-size: 0.68rem; color: #1d4ed8; font-weight: 800; margin-top: 2px;
+.mhm-hitter-form { font-size: 0.6rem; color: #7dd3fc; font-weight: 600; margin-top: 2px;
   white-space: normal; line-height: 1.15; max-width: 220px; }
-.mhm-hitter-hr { font-size: 0.68rem; color: #7c2d12; font-weight: 800; margin-top: 2px;
+.mhm-hitter-hr { font-size: 0.6rem; color: #fca5a5; font-weight: 600; margin-top: 2px;
   white-space: normal; line-height: 1.15; max-width: 220px; }
-.mhm-likely { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 800;
-  background: #f1f5f9; color: #0f172a; display: inline-block; }
-.mhm-likely-reason { font-size: 0.64rem; font-weight: 700; color: #475569;
+.mhm-likely { padding: 2px 7px; border-radius: 3px; font-size: 0.64rem; font-weight: 700;
+  background: rgba(255,255,255,0.06); color: #b0c8e4; display: inline-block;
+  font-family: 'DM Sans', sans-serif; }
+.mhm-likely-reason { font-size: 0.58rem; font-weight: 500; color: #3a5a7a;
   margin-top: 3px; line-height: 1.2; max-width: 180px; white-space: normal;
   text-align: center; margin-left: auto; margin-right: auto; }
-.mhm-tile-reason { font-size: 0.60rem; font-weight: 700; color: #475569;
-  margin-top: 3px; line-height: 1.15; text-align: center; padding: 0 4px;
-  white-space: normal; }
-/* Missing/insufficient-sample cells: muted neutral background instead of bare
-   white, so the heat map reads as one continuous board. */
-.mhm-na { background-color: #cbd5e1; color: #475569; font-weight: 800; }
-.mhm-empty { padding: 14px 16px; color: #64748b; font-weight: 700; font-style: italic; }
-.mhm-trend { display: inline-block; margin-left: 4px; font-size: 0.78rem;
-  font-weight: 900; line-height: 1; vertical-align: baseline; }
-.mhm-trend-up   { color: #15803d; }
-.mhm-trend-down { color: #b91c1c; }
-.mhm-trend-flat { color: #475569; }
-
-/* Per-player interactive card: every stat fits on screen as a small
-   heat-colored tile and the card has a CTA button fused to its footer
-   (rendered by render_matchup_board_with_sort). Shown on every viewport
-   below the desktop table — this is the "whole interactive card" the user
-   taps to open the detail dialog. */
-.mhm-cards { display: block; margin: 10px 0 14px 0; }
-.mhm-card { border: 1px solid #1e293b; border-radius: 14px;
-  background: #ffffff; box-shadow: 0 4px 14px rgba(2,6,23,.35);
-  padding: 10px 12px 0 12px; margin-bottom: 0;
-  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
-  border-bottom: none; }
-.mhm-card-header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px;
-  padding-bottom: 6px; border-bottom: 1px dashed #e2e8f0; }
-.mhm-card-name { font-weight: 800; color: #0f172a; font-size: 0.96rem; }
-.mhm-card-meta { font-size: 0.66rem; color: #475569; font-weight: 700; }
-.mhm-card-sub  { font-size: 0.68rem; font-weight: 800; line-height: 1.2; }
-.mhm-card-sub.crushes { color: #be185d; }
-.mhm-card-sub.form    { color: #1d4ed8; }
-.mhm-card-sub.hr      { color: #7c2d12; }
-.mhm-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
-  padding-bottom: 10px; }
-.mhm-tile { display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 6px 2px; border-radius: 8px; background: #f1f5f9; min-height: 44px; }
-.mhm-tile-label { font-size: 0.58rem; font-weight: 800; letter-spacing: .03em;
-  color: #475569; text-transform: uppercase; line-height: 1; margin-bottom: 3px; }
-.mhm-tile-value { font-size: 0.78rem; font-weight: 800; color: #0f172a; line-height: 1; }
-.mhm-tile.is-na { background: #e2e8f0; }
-.mhm-tile.is-na .mhm-tile-value { color: #64748b; }
-.mhm-tile-likely { grid-column: span 4; background: #f8fafc; padding: 4px; }
-.mhm-tile-likely .mhm-tile-value { font-size: 0.74rem; }
-
-/* Spacer between fused card+button blocks so each card reads as one unit. */
-.mhm-card-spacer { height: 12px; }
-
-/* On wide screens, the desktop heat-map table is still a quick scan above
-   the interactive card grid — both stay visible. */
-@media (max-width: 700px) {
-  .mhm-wrap  { display: none; }
-}
+.mhm-tile-reason { font-size: 0.56rem; font-weight: 500; color: #3a5a7a;
+  margin-top: 3px; line-height: 1.1; text-align: center; padding: 0 4px; white-space: normal; }
+.mhm-na { background-color: rgba(255,255,255,0.03) !important; color: #3a5a7a !important; font-weight: 600; }
+.mhm-empty { padding: 14px 16px; color: #3a5a7a; font-weight: 500; font-style: italic; font-size: 0.82rem; }
+.mhm-trend { display: inline-block; margin-left: 3px; font-size: 0.72rem;
+  font-weight: 700; line-height: 1; vertical-align: baseline; }
+.mhm-trend-up   { color: #10b981; }
+.mhm-trend-down { color: #ef4444; }
+.mhm-trend-flat { color: #3a5a7a; }
+@media (max-width: 700px) { .mhm-wrap { display: none; } }
 </style>
 """
 
@@ -4849,123 +4892,163 @@ def render_matchup_heatmap_html(df):
 
 
 def render_matchup_player_card_html(row, display_cols):
-    """Render the per-player heat-map card — the "original player card" with
-    the green/red/yellow metric tiles, name/team/pitch notes/L5/L10/30D, and
-    last-HR strip. The card is intentionally left OPEN at the bottom so the
-    orchestrator can drop a Streamlit button immediately below it; CSS in
-    `.mhm-card` + `.mhm-cta-host` removes the gap so the two render as one
-    interactive card.
+    """Render a hitter as a horizontal scouting intelligence row.
+
+    Replaces the old 4-col heat-map tile grid with a compact horizontal strip:
+    [spot] [name / meta / crush notes] [5 key metric blocks] [tier + score + likely]
+
+    The row element is left open-bottomed so the orchestrator can fuse a
+    Streamlit CTA button below it (same positioning mechanism as before).
     """
     r = row
     spot = r.get("Spot", "")
     hitter_name = r.get("Hitter", "")
     team = r.get("Team", "")
+    bat_side = r.get("_bat_side", "") or ""
+
     crushes = r.get("Crushes", "")
     if crushes is None or (isinstance(crushes, float) and pd.isna(crushes)):
         crushes = ""
     crushes_str = str(crushes).strip()
+
     form_line = r.get("_Form", "")
     if form_line is None or (isinstance(form_line, float) and pd.isna(form_line)):
         form_line = ""
     form_line = str(form_line).strip()
+
     last_hr = r.get("_LastHR", "")
     if last_hr is None or (isinstance(last_hr, float) and pd.isna(last_hr)):
         last_hr = ""
     last_hr = str(last_hr).strip()
-    hr_l10 = r.get("_HRLast10", "")
-    if hr_l10 is None or (isinstance(hr_l10, float) and pd.isna(hr_l10)):
-        hr_l10 = ""
-    hr_l10 = str(hr_l10).strip()
-    hr_lines = []
-    if last_hr and last_hr != "—":
-        hr_lines.append(f"💣 Last HR: {last_hr}")
-    if hr_l10 and hr_l10 != "—":
-        hr_lines.append(f"🔟 {hr_l10}")
 
-    m_crushes = (f'<div class="mhm-card-sub crushes">💥 {crushes_str}</div>'
-                 if crushes_str and crushes_str != "—" else "")
-    m_form = (f'<div class="mhm-card-sub form">📈 {form_line}</div>'
-              if form_line else "")
-    m_hr = (f'<div class="mhm-card-sub hr">' + " · ".join(hr_lines) + '</div>'
-            if hr_lines else "")
-    header_html = (
-        f'<div class="mhm-card-header">'
-        f'<div class="mhm-card-name">{spot}. {hitter_name}</div>'
-        f'<div class="mhm-card-meta">{team}</div>'
-        f'{m_crushes}{m_form}{m_hr}'
-        f'</div>'
+    crush_html = (
+        f'<span class="scout-player-crush">&#8623; {crushes_str}</span>'
+        if crushes_str and crushes_str != "—" else ""
     )
+    form_html = (
+        f'<span class="scout-player-form">{form_line}</span>'
+        if form_line else ""
+    )
+    hr_note = ""
+    if last_hr and last_hr != "—":
+        hr_note = f'<span class="scout-player-form" style="color:#fca5a5;">HR: {last_hr}</span>'
 
-    tiles = []
-    for c in display_cols:
-        if c in ("Hitter", "Team", "Crushes"):
-            continue
-        v = r.get(c)
-        if c == "Likely":
-            mlabel = MATCHUP_HEATMAP_MOBILE_LABELS.get(c, c)
-            reason = r.get("_LikelyReason", "")
-            if reason is None or (isinstance(reason, float) and pd.isna(reason)):
-                reason = ""
-            reason = str(reason).strip()
-            if v is None or (isinstance(v, float) and pd.isna(v)) or str(v) == "—":
-                tiles.append(
-                    f'<div class="mhm-tile mhm-tile-likely is-na">'
-                    f'<div class="mhm-tile-label">{mlabel}</div>'
-                    f'<div class="mhm-tile-value">—</div></div>'
-                )
-            else:
-                reason_html = (f'<div class="mhm-tile-reason">{reason}</div>'
-                               if reason else "")
-                tiles.append(
-                    f'<div class="mhm-tile mhm-tile-likely">'
-                    f'<div class="mhm-tile-label">{mlabel}</div>'
-                    f'<div class="mhm-tile-value">{v}</div>'
-                    f'{reason_html}</div>'
-                )
-            continue
-        spec = HEATMAP_THRESHOLDS.get(c)
-        fmt = spec[3] if spec else "{}"
-        mlabel = MATCHUP_HEATMAP_MOBILE_LABELS.get(c, c)
+    meta_parts = [team]
+    if bat_side:
+        meta_parts.append(f"Bats {bat_side}")
+    meta_str = " &middot; ".join(p for p in meta_parts if p)
+
+    # Tier from matchup score
+    matchup_v = r.get("Matchup")
+    _mv_safe = float(matchup_v) if (
+        matchup_v is not None and not (isinstance(matchup_v, float) and pd.isna(matchup_v))
+    ) else 0
+    tier_key, tier_label = _matchup_tier(_mv_safe)
+    matchup_disp = f"{_mv_safe:.1f}" if _mv_safe else "—"
+
+    # 5-metric strip shown as compact blocks with mini progress bars
+    STRIP_COLS = [
+        ("ISO",      "ISO",   "{:.3f}"),
+        ("Brl/BIP%", "Brl%",  "{:.1f}"),
+        ("EV",       "EV",    "{:.1f}"),
+        ("HH%",      "HH%",   "{:.1f}"),
+        ("xwOBA",    "xwOBA", "{:.3f}"),
+    ]
+    metric_tiles = []
+    for col, label, fmt in STRIP_COLS:
+        v = r.get(col)
+        spec = HEATMAP_THRESHOLDS.get(col)
         if v is None or (isinstance(v, float) and pd.isna(v)):
-            tiles.append(
-                f'<div class="mhm-tile is-na">'
-                f'<div class="mhm-tile-label">{mlabel}</div>'
-                f'<div class="mhm-tile-value">—</div></div>'
+            metric_tiles.append(
+                f'<div class="scout-metric">'
+                f'<span class="scout-metric-label">{label}</span>'
+                f'<span class="scout-metric-val" style="color:#3a5a7a;">—</span>'
+                f'<div class="scout-metric-bar"></div>'
+                f'</div>'
             )
             continue
         try:
             txt = fmt.format(float(v))
         except Exception:
             txt = str(v)
-        if c == "HR Form":
+        if col == "HR Form":
             trend = r.get("_HR Trend")
-            arrow_map = {"↑": ("mhm-trend-up", "↑"),
-                         "↓": ("mhm-trend-down", "↓"),
-                         "→": ("mhm-trend-flat", "→")}
+            arrow_map = {
+                "↑": ("mhm-trend-up", "&#8593;"),
+                "↓": ("mhm-trend-down", "&#8595;"),
+                "→": ("mhm-trend-flat", "&#8594;"),
+            }
             arrow_cls, arrow_glyph = arrow_map.get(
-                trend if isinstance(trend, str) else "",
-                ("mhm-trend-flat", "→"),
+                trend if isinstance(trend, str) else "", ("mhm-trend-flat", "&#8594;")
             )
-            txt = f'{txt} <span class="mhm-trend {arrow_cls}">{arrow_glyph}</span>'
-        rgb, text_color = _heatmap_color_for(c, v)
-        if rgb is None:
-            tiles.append(
-                f'<div class="mhm-tile">'
-                f'<div class="mhm-tile-label">{mlabel}</div>'
-                f'<div class="mhm-tile-value">{txt}</div></div>'
+            txt = f'{txt}&thinsp;<span class="mhm-trend {arrow_cls}">{arrow_glyph}</span>'
+
+        rgb, text_color = _heatmap_color_for(col, v)
+        if rgb:
+            bar_color = f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
+            val_style = (
+                f"color:{text_color};background:rgb({rgb[0]},{rgb[1]},{rgb[2]});"
+                "padding:1px 3px;border-radius:2px;font-size:0.73rem;"
             )
         else:
-            tile_style = f'background-color: rgb({rgb[0]},{rgb[1]},{rgb[2]});'
-            tile_value_style = f'color: {text_color};'
-            tiles.append(
-                f'<div class="mhm-tile" style="{tile_style}">'
-                f'<div class="mhm-tile-label" style="{tile_value_style} opacity:.85;">{mlabel}</div>'
-                f'<div class="mhm-tile-value" style="{tile_value_style}">{txt}</div></div>'
-            )
+            bar_color = "#1e3a5c"
+            val_style = ""
+
+        bar_pct = 50
+        if spec:
+            lo, hi = spec[0], spec[1]
+            try:
+                pct = max(0, min(100, (float(v) - lo) / max(hi - lo, 0.001) * 100))
+                bar_pct = int(100 - pct) if spec[2] else int(pct)
+            except Exception:
+                bar_pct = 50
+
+        metric_tiles.append(
+            f'<div class="scout-metric">'
+            f'<span class="scout-metric-label">{label}</span>'
+            f'<span class="scout-metric-val" style="{val_style}">{txt}</span>'
+            f'<div class="scout-metric-bar">'
+            f'<div class="scout-metric-bar-fill" style="width:{bar_pct}%;background:{bar_color};opacity:0.65;"></div>'
+            f'</div>'
+            f'</div>'
+        )
+
+    # Likely outcome
+    likely_v = r.get("Likely", "")
+    if likely_v is None or (isinstance(likely_v, float) and pd.isna(likely_v)):
+        likely_v = ""
+    likely_str = str(likely_v).strip()
+    likely_reason = r.get("_LikelyReason", "")
+    if likely_reason is None or (isinstance(likely_reason, float) and pd.isna(likely_reason)):
+        likely_reason = ""
+    likely_reason = str(likely_reason).strip()
+
+    tier_cls = f"tier-{tier_key}"
+    likely_html = (
+        f'<span class="scout-likely">{likely_str}</span>'
+        if likely_str and likely_str != "—" else ""
+    )
+    reason_html = (
+        f'<span class="scout-likely-reason">{likely_reason}</span>'
+        if likely_reason else ""
+    )
 
     return (
-        f'<div class="mhm-card">{header_html}'
-        f'<div class="mhm-grid">{"".join(tiles)}</div>'
+        f'<div class="scout-row {tier_cls}">'
+        f'<div class="scout-spot">{spot}</div>'
+        f'<div class="scout-player">'
+        f'<span class="scout-player-name">{hitter_name}</span>'
+        f'<span class="scout-player-meta">{meta_str}</span>'
+        f'{crush_html}{form_html}{hr_note}'
+        f'</div>'
+        f'<div class="scout-metrics">{"".join(metric_tiles)}</div>'
+        f'<div class="scout-outcome">'
+        f'<span class="tier {tier_cls}">{tier_label}</span>'
+        f'<span class="scout-matchup-score">{matchup_disp}</span>'
+        f'<span class="scout-matchup-label">SCORE</span>'
+        f'{likely_html}'
+        f'{reason_html}'
+        f'</div>'
         f'</div>'
     )
 
@@ -6358,163 +6441,41 @@ def _open_player_detail_dialog(payload_key: str):
     st.markdown(_render_player_detail_html(payload, active), unsafe_allow_html=True)
 
 
-_MATCHUP_CTA_CSS = (
-    '<div class="mhm-cta-host">'
-    # Open Sans is free and hosted on Google Fonts; the font file is fetched
-    # once by the browser and cached. We use it for the visible gold pill so
-    # the typography stays consistent across themes/devices.
-    '<link rel="preconnect" href="https://fonts.googleapis.com">'
-    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-    '<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@700;800;900&display=swap" rel="stylesheet">'
-    '<style>'
-    # ---- Visible gold CTA pill (pure HTML, rendered inside the card host) ---
-    # This is the element the user actually sees. Because it is our own HTML
-    # (not a Streamlit-painted button), no theme primary-color rule can turn
-    # it purple. It carries pointer-events:none so the transparent Streamlit
-    # button stacked on top still receives the click.
-    '.mhm-card-host { margin-bottom: 0; }'
-    '.mhm-cta-pill {'
-    '  display:flex; align-items:center; justify-content:center;'
-    '  width:100%; min-height:54px; padding:12px 14px; margin-top:-1px;'
-    '  background: linear-gradient(180deg, #fde047 0%, #ca8a04 100%);'
-    '  background-color:#f7c948;'
-    '  color:#0b0b0b !important;'
-    '  border:1px solid #a16207; border-top:1px dashed #92400e;'
-    '  border-radius:0 0 14px 14px;'
-    '  font-family:"Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'
-    '  font-weight:900; font-size:1rem; line-height:1.2;'
-    '  letter-spacing:.08em; text-transform:uppercase; text-align:center;'
-    '  box-shadow: 0 6px 16px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.55);'
-    '  white-space:nowrap; user-select:none; pointer-events:none;'
-    '}'
-    '.mhm-cta-pill, .mhm-cta-pill * { color:#0b0b0b !important; }'
-    '@media (max-width:640px) {'
-    '  .mhm-cta-pill { min-height:56px; font-size:.98rem; padding:14px 12px; letter-spacing:.06em; }'
-    '}'
-    # ---- Hidden / transparent Streamlit click target ------------------------
-    # The .mhm-cta-click marker div is rendered inside one Streamlit element
-    # container; the st.button below it lives in the very next element
-    # container in the same vertical block. We use :has() on the container
-    # so we don't depend on the marker and button being direct DOM siblings
-    # (Streamlit wraps each in its own element-container <div>), which is
-    # what made the previous .mhm-card-host + div[data-testid="stButton"]
-    # selector unreliable across Streamlit versions/themes.
-    #
-    # Selector chain (any of these matches the element container holding the
-    # st.button that follows the marker):
-    #   * an element-container that :has(.mhm-cta-click), then its next
-    #     sibling element-container that :has(div[data-testid="stButton"]).
-    #   * a fallback for the simple sibling case.
-    '.mhm-cta-click { display:block; height:0; margin:0 !important; padding:0 !important; }'
-    # Pull the button container up to overlay the gold pill above it. We
-    # match the element-container that immediately follows the one carrying
-    # .mhm-cta-click. This works regardless of inner wrapper depth.
-    'div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
-    '  div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) {'
-    '  margin-top:-54px !important; margin-bottom:16px !important;'
-    '  position:relative; z-index:5;'
-    '}'
-    'div[data-testid="element-container"]:has(.mhm-cta-click) + '
-    '  div[data-testid="element-container"]:has(div[data-testid="stButton"]) {'
-    '  margin-top:-54px !important; margin-bottom:16px !important;'
-    '  position:relative; z-index:5;'
-    '}'
-    # Fallback when Streamlit places the marker and button as direct siblings.
-    '.mhm-cta-click + div[data-testid="stButton"] {'
-    '  margin-top:-54px !important; margin-bottom:16px !important;'
-    '  position:relative; z-index:5;'
-    '}'
-    '@media (max-width:640px) {'
-    '  div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
-    '    div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]),'
-    '  div[data-testid="element-container"]:has(.mhm-cta-click) + '
-    '    div[data-testid="element-container"]:has(div[data-testid="stButton"]),'
-    '  .mhm-cta-click + div[data-testid="stButton"] {'
-    '    margin-top:-56px !important;'
-    '  }'
-    '}'
-    # The actual Streamlit button: transparent chrome and transparent text.
-    # We target ANY button inside an element-container that follows one
-    # containing .mhm-cta-click, so the selector keeps working even if
-    # Streamlit changes its inner wrapper markup.
-    'div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
-    '  div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button,'
-    'div[data-testid="element-container"]:has(.mhm-cta-click) + '
-    '  div[data-testid="element-container"]:has(div[data-testid="stButton"]) button,'
-    '.mhm-cta-click + div[data-testid="stButton"] button {'
-    '  width:100% !important; min-height:54px !important;'
-    '  background: transparent !important; background-color: transparent !important;'
-    '  background-image: none !important;'
-    '  color: transparent !important;'
-    '  border: 0 !important; border-radius: 0 0 14px 14px !important;'
-    '  box-shadow: none !important;'
-    '  padding: 12px 14px !important;'
-    '  cursor: pointer !important;'
-    '  text-shadow: none !important;'
-    '  outline: none !important;'
-    '}'
-    'div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
-    '  div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button *,'
-    'div[data-testid="element-container"]:has(.mhm-cta-click) + '
-    '  div[data-testid="element-container"]:has(div[data-testid="stButton"]) button *,'
-    '.mhm-cta-click + div[data-testid="stButton"] button * {'
-    '  color: transparent !important; background: transparent !important;'
-    '  text-shadow: none !important;'
-    '}'
-    '@media (max-width:640px) {'
-    '  div[data-testid="stElementContainer"]:has(.mhm-cta-click) + '
-    '    div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) button,'
-    '  div[data-testid="element-container"]:has(.mhm-cta-click) + '
-    '    div[data-testid="element-container"]:has(div[data-testid="stButton"]) button,'
-    '  .mhm-cta-click + div[data-testid="stButton"] button {'
-    '    min-height:56px !important;'
-    '  }'
-    '}'
-    '</style></div>'
-)
+# The global CSS (injected at startup) already contains the .scout-cta-btn
+# button overlay rules. This constant provides only the host wrapper
+# that the renderer injects once per lineup board.
+_MATCHUP_CTA_CSS = '<div class="scout-cta-host"></div>'
 
 
 def _render_interactive_player_cards(sorted_df, key_prefix, pitchers_df, slate_date):
-    """Render each row of the sorted board as a single interactive card:
-    the original heat-map card (name/team/pitch notes/L5/L10/30D/last-HR +
-    green/red/yellow metric tiles + LIKELY tile) with a Streamlit CTA button
-    fused to its footer via the shared `.mhm-card-host + stButton` CSS.
+    """Render each hitter as a horizontal scouting intelligence row with a
+    teal 'SCOUT REPORT' CTA button fused to its bottom edge.
 
-    The CTA label is a single, uniform "OPEN MATCHUP CARD" pill — the LIKELY
-    prediction stays in the card body above where it always lived, but is no
-    longer crammed into the pill text. The pill is the card's bottom edge —
-    not a separate stacked list above or below the grid.
+    The scouting row (built by render_matchup_player_card_html) is left
+    open-bottomed. A visible .scout-cta-btn label sits below it; the actual
+    Streamlit button is then pulled up via negative-margin CSS from the global
+    stylesheet to overlay the label so the user's click registers on Streamlit.
     """
     if sorted_df is None or sorted_df.empty:
         return
 
-    st.markdown(_MATCHUP_CTA_CSS, unsafe_allow_html=True)
-
     display_cols = _matchup_display_cols(sorted_df)
 
+    # Open the scout-rows container
+    rows_html_parts = []
     for idx, (_, row) in enumerate(sorted_df.iterrows()):
         pid = row.get("_PlayerId")
         name = row.get("Hitter", "")
 
-        # Render the heat-map card AND the visible gold CTA pill as one HTML
-        # block. The pill is pure HTML — never a Streamlit-themed button — so
-        # it cannot render purple/blue regardless of the active theme. The
-        # actual click target is the transparent Streamlit button rendered
-        # immediately below; CSS pulls it up via negative margin to overlay
-        # the pill so the user clicks the gold pill they see.
-        card_html = render_matchup_player_card_html(row, display_cols)
+        row_html = render_matchup_player_card_html(row, display_cols)
         st.markdown(
-            f'<div class="mhm-card-host">{card_html}'
-            f'<div class="mhm-cta-pill">OPEN MATCHUP CARD</div>'
-            f'</div>'
+            f'<div class="scout-rows">{row_html}</div>'
+            f'<div class="scout-cta-btn">SCOUT REPORT</div>'
             f'<div class="mhm-cta-click"></div>',
             unsafe_allow_html=True,
         )
 
-        # Invisible click target sized to match the gold pill. The label is
-        # still set to "OPEN MATCHUP CARD" for screen readers / accessibility,
-        # but it is rendered transparent by the CSS in _MATCHUP_CTA_CSS.
-        label = "OPEN MATCHUP CARD"
+        label = "SCOUT REPORT"
         btn_key = f"pdc_open_{key_prefix}_{idx}_{pid or name}"
         if st.button(label, key=btn_key, use_container_width=True):
             payload_key = f"_pdc_payload_{key_prefix}_{idx}"
@@ -8885,34 +8846,45 @@ def style_slate_pitcher_table(df):
 # ===========================================================================
 def render_brand_bar(slate_count):
     logo_html = (
-        f'<img class="brand-logo" src="{LOGO_URI}" alt="MrBets850" />'
-        if LOGO_URI else '<span class="brand-logo" style="display:flex;align-items:center;'
-                         'justify-content:center;font-size:1.6rem;">👑</span>'
+        f'<img class="cmd-bar-logo" src="{LOGO_URI}" alt="MLB Edge" />'
+        if LOGO_URI else
+        '<span class="cmd-bar-logo" style="display:flex;align-items:center;justify-content:center;'
+        'font-size:1rem;color:#00c896;">⚾</span>'
     )
-    # Time-stamp the brand bar with the slate's freshness in Central Time.
-    # Also surface a quick health summary: live / total sources.
     try:
         now_ct = datetime.now(MLB_TZ).strftime("%a %b %-d · %-I:%M %p CT")
     except Exception:
         now_ct = ""
     live_n = sum(1 for v in DATA_SOURCES.values() if v.get("status") == "live")
     total_n = len(DATA_SOURCES)
-    if total_n == 0:
-        health_html = "Live data · Auto-refresh 30 min"
-    else:
-        health_html = f"{live_n}/{total_n} live sources · As of {now_ct}" if now_ct else f"{live_n}/{total_n} live sources"
+    health_dot_cls = "warn" if (total_n and live_n < total_n * 0.7) else ""
+    health_label = f"{live_n}/{total_n} feeds live" if total_n else "Data live"
     st.markdown(f"""
-    <div class="brand-bar">
-        <div class="brand-left">
+    <div class="cmd-bar">
+        <div class="cmd-bar-left">
             {logo_html}
-            <div>
-                <div class="brand-tag">⚾ THE MLB EDGE</div>
-                <div class="brand-name">MLB Edge — Matchup Board</div>
+            <div class="cmd-bar-wordmark">
+                <span class="cmd-bar-name">MLB Edge</span>
+                <span class="cmd-bar-tag">Matchup Intelligence</span>
             </div>
         </div>
-        <div class="brand-meta">
-            <div class="big">{slate_count} {'game' if slate_count == 1 else 'games'} on slate</div>
-            <div>{health_html}</div>
+        <div class="cmd-bar-center">
+            <div class="cmd-stat">
+                <span class="cmd-stat-val">{slate_count}</span>
+                <span class="cmd-stat-label">{'Game' if slate_count == 1 else 'Games'}</span>
+            </div>
+            <div class="cmd-divider"></div>
+            <div class="cmd-stat">
+                <span class="cmd-stat-val">{live_n}</span>
+                <span class="cmd-stat-label">Live Feeds</span>
+            </div>
+        </div>
+        <div class="cmd-bar-right">
+            <span class="cmd-time">{now_ct}</span>
+            <div class="cmd-health">
+                <span class="cmd-health-dot {health_dot_cls}"></span>
+                <span class="cmd-health-text">{health_label}</span>
+            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -10694,8 +10666,8 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
     era_tone     = _pp_tone(era_v,     2.50, 5.50,   reverse=True)
     hr9_tone     = _pp_tone(hr9_v,     0.80, 1.60,   reverse=True)
 
-    color_bg = {"elite": "#fef2f2", "strong": "#fffbeb", "ok": "#f8fafc", "avoid": "#f0fdf4"}[key]
-    border = {"elite": "#ef4444", "strong": "#f59e0b", "ok": "#94a3b8", "avoid": "#16a34a"}[key]
+    color_bg = {"elite": "#0f1f2e", "strong": "#0f1f2e", "ok": "#0c1a2e", "avoid": "#0f1f2e"}[key]
+    border = {"elite": "#ef4444", "strong": "#f59e0b", "ok": "#4e6a8a", "avoid": "#10b981"}[key]
 
     # Live "PITCHING CHANGE DETECTED" badge — surfaced when the live current
     # pitcher differs from the pregame probable starter. Tooltip names the
@@ -10730,33 +10702,32 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
     if hr_level == "hard":
         hr_badge_html = (
             f'<span title="HR-target pitcher: {hr_reason}" '
-            f'style="display:inline-block; padding:3px 9px; border-radius:999px; '
-            f'background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; '
-            f'font-size:.72rem; font-weight:800; letter-spacing:.02em; '
-            f'margin-left:8px;">💣 HR Target</span>'
+            f'style="display:inline-block; padding:2px 7px; border-radius:3px; '
+            f'background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.3); '
+            f'font-size:.62rem; font-weight:700; letter-spacing:.06em; '
+            f'margin-left:6px; text-transform:uppercase;">HR Target</span>'
         )
     elif hr_level == "soft":
         hr_badge_html = (
             f'<span title="HR-target pitcher: {hr_reason}" '
-            f'style="display:inline-block; padding:3px 9px; border-radius:999px; '
-            f'background:#ffedd5; color:#9a3412; border:1px solid #fed7aa; '
-            f'font-size:.72rem; font-weight:800; letter-spacing:.02em; '
-            f'margin-left:8px;">💥 HR Target</span>'
+            f'style="display:inline-block; padding:2px 7px; border-radius:3px; '
+            f'background:rgba(245,158,11,0.12); color:#f59e0b; border:1px solid rgba(245,158,11,0.25); '
+            f'font-size:.62rem; font-weight:700; letter-spacing:.06em; '
+            f'margin-left:6px; text-transform:uppercase;">HR Watch</span>'
         )
 
-    # Tone -> text color for the metric value. Background is left alone so the
-    # panel keeps its existing tier-driven look; the metric numbers themselves
-    # carry the green/yellow/red signal.
-    tone_color = {"good": "#15803d", "mid": "#92400e", "bad": "#b91c1c", "": "#0f172a"}
+    tone_color = {"good": "#10b981", "mid": "#f59e0b", "bad": "#ef4444", "": "#b0c8e4"}
     def _stat_block(lbl, val, tone):
-        c = tone_color.get(tone, "#0f172a")
+        c = tone_color.get(tone, "#b0c8e4")
         return (
-            f'<div><div style="font-size:0.66rem; color:#64748b; '
-            f'text-transform:uppercase; font-weight:700;">{lbl}</div>'
-            f'<div style="font-weight:800; color:{c};">{val}</div></div>'
+            f'<div>'
+            f'<div style="font-size:0.58rem; color:#3a5a7a; text-transform:uppercase; '
+            f'font-weight:700; letter-spacing:0.08em;">{lbl}</div>'
+            f'<div style="font-weight:700; color:{c}; font-family:\'DM Mono\',monospace;">{val}</div>'
+            f'</div>'
         )
 
-    mix_html = render_pitch_mix_block(pitch_mix_df, surface_bg="#ffffff") if pitch_mix_df is not None else ""
+    mix_html = render_pitch_mix_block(pitch_mix_df, surface_bg="#0a1628") if pitch_mix_df is not None else ""
     _tier_key = ('elite' if key == 'elite'
                  else 'strong' if key == 'strong'
                  else 'ok' if key == 'ok' else 'avoid')
@@ -10765,32 +10736,23 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
     _hand_html = _html.escape(pitch_hand_s)
     _verdict_html = _html.escape(_safe_str(verdict, ""))
     _score_html = _html.escape(_safe_str(score, "—"))
-    # Render the card body without leading per-line indentation. CommonMark
-    # treats a blank line followed by 4+-space-indented lines as an indented
-    # code block — so a single empty f-string slot inside an indented HTML
-    # template (e.g. the "replaced …" hint when the pitcher hasn't changed)
-    # is enough to dump the rest of the card as raw HTML text. Keep this
-    # template flush-left so an empty slot can never trigger that.
     panel_html = (
-        f'<div style="background:{color_bg}; border:1px solid #e2e8f0; '
-        f'border-left:6px solid {border}; border-radius:14px; '
-        f'padding:12px 14px;">'
-        f'<div style="display:flex; justify-content:space-between; '
-        f'align-items:flex-start;">'
+        f'<div style="background:{color_bg}; border:1px solid rgba(255,255,255,0.08); '
+        f'border-left:4px solid {border}; border-radius:6px; '
+        f'padding:10px 12px;">'
+        f'<div style="display:flex; justify-content:space-between; align-items:flex-start;">'
         f'<div>'
-        f'<div style="font-size:0.7rem; color:#64748b; '
-        f'text-transform:uppercase; letter-spacing:0.1em; '
-        f'font-weight:800;">{_label_html}</div>'
-        f'<div style="font-size:1.05rem; font-weight:900; '
-        f'color:#0f172a;">{_name_html} '
-        f'<span style="color:#64748b; font-weight:700; '
-        f'font-size:0.85rem;">({_hand_html})</span>'
+        f'<div style="font-size:0.6rem; color:#3a5a7a; text-transform:uppercase; '
+        f'letter-spacing:0.1em; font-weight:700;">{_label_html}</div>'
+        f'<div style="font-size:0.95rem; font-weight:800; color:#e2eeff; margin-top:2px;">'
+        f'{_name_html} '
+        f'<span style="color:#4e6a8a; font-weight:600; font-size:0.82rem;">({_hand_html})</span>'
         f'{change_badge_html}{hr_badge_html}</div>'
         f'{replaced_html}'
         f'</div>'
         f'<div style="text-align:right;">'
-        f'<div style="font-size:1.5rem; font-weight:900; '
-        f'color:#0f172a; line-height:1;">{_score_html}</div>'
+        f'<div style="font-size:1.4rem; font-weight:800; color:#eef4ff; line-height:1; '
+        f'font-family:\'DM Mono\',monospace;">{_score_html}</div>'
         f'<span class="tier tier-{_tier_key}">{_verdict_html}</span>'
         f'</div>'
         f'</div>'
@@ -16552,17 +16514,15 @@ _render_day_night = (_view == "☀️🌙 Day vs Night HR")
 if _is_games_view:
     st.markdown(
         "<div style='display:flex;align-items:center;gap:10px;"
-        "margin:12px 2px 8px;padding:10px 14px;"
-        "background:linear-gradient(110deg,#1a0b2e 0%,#3b1f6b 55%,#6b21a8 100%);"
-        "border:2px solid #facc15;border-radius:14px;"
-        "box-shadow:0 4px 14px rgba(20,5,40,.45);'>"
-        "<span style='display:inline-flex;align-items:center;justify-content:center;"
-        "width:30px;height:30px;border-radius:50%;background:#facc15;color:#3b1f6b;"
-        "font-weight:900;font-size:1.05rem;'>☰</span>"
-        "<span style='font-weight:900;font-size:1.08rem;color:#facc15;"
-        "letter-spacing:.01em;'>Game views</span>"
-        "<span class='game-views-sub' style='color:#fde68a;font-weight:600;font-size:.88rem;"
-        "margin-left:auto;'>Matchup · Injuries</span>"
+        "margin:10px 0 0;padding:7px 12px;"
+        "background:rgba(12,26,46,0.85);"
+        "border:1px solid rgba(0,200,150,0.14);"
+        "border-radius:5px 5px 0 0;"
+        "border-bottom:none;'>"
+        "<span style='font-weight:700;font-size:0.6rem;color:#4e6a8a;"
+        "letter-spacing:0.12em;text-transform:uppercase;'>Game Analysis</span>"
+        "<span class='game-views-sub' style='color:#3a5a7a;font-weight:500;font-size:0.7rem;"
+        "margin-left:auto;'>Matchup &middot; Injuries</span>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -16672,7 +16632,7 @@ if _render_matchup:
 
     # ----- Pitcher Vulnerability panels (shown above lineups so hitter
     # heat-maps below can be read against each SP's exploitable profile) -----
-    st.markdown('<div class="section-title" style="margin-top:14px;">🎯 Pitcher Vulnerability</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="margin-top:14px;">Pitcher Vulnerability</div>', unsafe_allow_html=True)
     pc1, pc2 = st.columns(2)
     _away_probable = _safe_str(game_row.get("away_probable"), "TBD")
     _home_probable = _safe_str(game_row.get("home_probable"), "TBD")
@@ -16767,84 +16727,57 @@ if _render_matchup:
         "(sweet-spot range)."
     )
 
-    # ----- Top 3 Hitters for this game (rendered last under the lineups) -----
+    # ----- Top Insights Panel (replaces Top 3 white cards) -----
     combined_for_ranking = pd.concat([away_matchup, home_matchup], ignore_index=True) \
         if (not away_matchup.empty or not home_matchup.empty) else pd.DataFrame()
     if not combined_for_ranking.empty and "Matchup" in combined_for_ranking.columns:
         top3 = combined_for_ranking.sort_values("Matchup", ascending=False).head(3).reset_index(drop=True)
-        _power_combo_img = os.path.join(ASSETS_DIR, "homerun_power_combo.jpeg")
-        if os.path.exists(_power_combo_img):
-            st.image(_power_combo_img, width="stretch")
-        st.markdown('<div class="section-title" style="margin-top:18px;">🔥 Top 3 Hitters — This Game</div>', unsafe_allow_html=True)
         st.markdown(
-            '<style>'
-            '.top3-row { display:flex; gap:12px; flex-wrap:wrap; margin: 6px 0 14px 0; }'
-            '.top3-card { flex: 1 1 0; min-width: 240px; background: #ffffff; border: 2px solid #e2e8f0; '
-            '  border-radius: 14px; padding: 14px 16px 14px 16px; box-shadow: 0 2px 8px rgba(15,23,42,0.05); position: relative; }'
-            '.top3-card.rank1 { border-color:#16a34a; background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 60%); }'
-            '.top3-card.rank2 { border-color:#22c55e; }'
-            '.top3-card.rank3 { border-color:#84cc16; }'
-            '.top3-rank { position:absolute; top:-10px; left:14px; background:#0f172a; color:#fff; '
-            '  font-size: 0.72rem; font-weight: 800; padding: 3px 9px; border-radius: 999px; letter-spacing:.05em; }'
-            '.top3-head { display:flex; align-items:center; gap: 12px; margin-top: 4px; }'
-            '.top3-photo { width: 64px; height: 64px; flex: 0 0 64px; border-radius: 50%; '
-            '  object-fit: cover; background: #e2e8f0; border: 2px solid #cbd5e1; }'
-            '.top3-card.rank1 .top3-photo { border-color: #16a34a; }'
-            '.top3-card.rank2 .top3-photo { border-color: #22c55e; }'
-            '.top3-card.rank3 .top3-photo { border-color: #84cc16; }'
-            '.top3-photo-fallback { width:64px; height:64px; flex:0 0 64px; border-radius:50%; '
-            '  background:#0f172a; color:#facc15; display:flex; align-items:center; justify-content:center; '
-            '  font-weight:900; font-size:1.1rem; border:2px solid #cbd5e1; }'
-            '.top3-head-text { display:flex; flex-direction:column; min-width:0; }'
-            '.top3-name { font-size: 1.02rem; font-weight: 800; color:#0f172a; margin-top: 2px; '
-            '  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }'
-            '.top3-meta { color:#64748b; font-size:.78rem; font-weight:700; margin-bottom: 0; letter-spacing:.02em; }'
-            '.top3-stats { display:flex; gap:14px; flex-wrap:wrap; }'
-            '.top3-stat { display:flex; flex-direction:column; }'
-            '.top3-stat .lab { color:#64748b; font-size:.66rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }'
-            '.top3-stat .val { color:#0f172a; font-size:1.05rem; font-weight:800; }'
-            '.top3-score { background:#dcfce7; color:#065f46; padding: 2px 10px; border-radius: 999px; '
-            '  font-weight: 800; font-size: .82rem; display:inline-block; margin-top:8px; }'
-            '</style>',
+            '<div class="section-title" style="margin-top:16px;">'
+            'TOP INTEL — This Game'
+            '</div>',
             unsafe_allow_html=True,
         )
-        cards = []
+
+        def _fmt_v(v, fmt):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return "—"
+            try:
+                return fmt.format(float(v))
+            except Exception:
+                return "—"
+
+        rows_html = []
         for i, r in top3.iterrows():
-            rank_cls = f"rank{i+1}"
             name = str(r.get("Hitter", ""))
             team = str(r.get("Team", ""))
             spot = r.get("Spot", "")
             bat = r.get("_bat_side", "") or r.get("Bat", "")
-            opp_pitcher = game_row["home_probable"] if team == game_row["away_abbr"] else game_row["away_probable"]
-            matchup_v = r.get("Matchup", 0)
-            # Card stats use the user's Power Combo profile: Barrel% 15+,
-            # FB% 45+, EV 93+ mph, HardHit% 50+, ISO .250+. Hitters meeting
-            # these together cluster strongly with HR upside.
-            brl_v = r.get("Brl/BIP%")
-            fb_v  = r.get("FB%")
-            ev_v  = r.get("EV")
-            hh_v  = r.get("HH%")
-            iso_v = r.get("ISO")
-            # OPS surfaced as a top-tile metric so the per-game Top 3 card
-            # communicates overall bat quality, not only HR-specific signals.
-            ops_v = r.get("OPS")
-            def _fmt_card_num(v, fmt):
-                if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
-                try: return fmt.format(float(v))
-                except Exception: return "—"
-            # Player headshot from MLB CDN; fall back to initials disc when no id
+            opp_pitcher = (
+                game_row["home_probable"]
+                if team == game_row.get("away_abbr", "") else
+                game_row["away_probable"]
+            )
+            matchup_v = r.get("Matchup", 0) or 0
+            brl_v  = r.get("Brl/BIP%")
+            ev_v   = r.get("EV")
+            hh_v   = r.get("HH%")
+            iso_v  = r.get("ISO")
+            ops_v  = r.get("OPS")
+
             photo_url = player_headshot_url(r.get("_player_id"))
             if photo_url:
                 photo_html = (
-                    f'<img class="top3-photo" src="{photo_url}" alt="{name}" '
-                    f'onerror="this.outerHTML=&#39;<div class=\'top3-photo-fallback\'>'
-                    f'{(name[:1] or "?").upper()}</div>&#39;" />'
+                    f'<img class="insight-photo" src="{photo_url}" alt="{name}" '
+                    f'onerror="this.outerHTML=\'<div class=\\\"insight-photo-fallback\\\">'
+                    f'{(name[:1] or "?").upper()}</div>\'" />'
                 )
             else:
                 initials = "".join([p[:1] for p in name.split()[:2]]).upper() or "?"
-                photo_html = f'<div class="top3-photo-fallback">{initials}</div>'
-            # "Crushes" line — the 1-2 pitch types this hitter punishes most.
-            crush_html = ""
+                photo_html = f'<div class="insight-photo-fallback">{initials}</div>'
+
+            # Crush chips
+            crush_chips_html = ""
             crush_df = hitter_pitch_crush(arsenal_batter_df, r.get("_player_id"), top_n=2, min_pa=15)
             if not crush_df.empty:
                 chips = []
@@ -16853,52 +16786,68 @@ if _render_matchup:
                     pname = PITCH_NAME_MAP.get(pt, str(cr.get("pitch_name", pt)))
                     pemoji = PITCH_EMOJI.get(pt, "⚾")
                     cw = cr.get("woba")
-                    cslg = cr.get("slg")
                     woba_str = f"{float(cw):.3f}" if pd.notna(cw) else "—"
-                    slg_str = f"{float(cslg):.3f}" if pd.notna(cslg) else "—"
                     chips.append(
-                        f'<span style="display:inline-flex; align-items:center; gap:5px; '
-                        f'background:#fef3c7; color:#78350f; border:1px solid #fbbf24; '
-                        f'border-radius:999px; padding:3px 9px; font-weight:800; font-size:0.78rem; '
-                        f'margin-right:6px; margin-top:4px;">'
-                        f'{pemoji} {pname} '
-                        f'<span style="color:#92400e; font-weight:700;">'
-                        f'· wOBA {woba_str} · SLG {slg_str}</span></span>'
+                        f'<span class="insight-crush-chip">{pemoji} {pname} &middot; wOBA {woba_str}</span>'
                     )
-                crush_html = (
-                    '<div style="margin-top:10px;">'
-                    '<div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; '
-                    'letter-spacing:.06em; font-weight:800; margin-bottom:2px;">Pitches They Crush</div>'
-                    + "".join(chips) + '</div>'
+                crush_chips_html = (
+                    f'<div class="insight-crush">{"".join(chips)}</div>'
                 )
-            else:
-                crush_html = (
-                    '<div style="margin-top:10px; font-size:0.72rem; color:#94a3b8; '
-                    'font-weight:700;">Pitches They Crush — not enough sample yet.</div>'
-                )
-            cards.append(
-                f'<div class="top3-card {rank_cls}">'
-                f'<div class="top3-rank">#{i+1}</div>'
-                f'<div class="top3-head">'
+
+            # Score bar (0–200 scale)
+            bar_pct = min(100, max(0, (float(matchup_v) / 200) * 100))
+            rank_cls = f"rank-{i + 1}"
+
+            rows_html.append(
+                f'<div class="insight-row">'
+                f'<div class="insight-rank {rank_cls}">#{i + 1}</div>'
                 f'{photo_html}'
-                f'<div class="top3-head-text">'
-                f'<div class="top3-name">{name}</div>'
-                f'<div class="top3-meta">{team} · Spot {spot} · Bats {bat} · vs {opp_pitcher}</div>'
-                f'<div class="top3-score">Matchup {matchup_v:.1f}</div>'
+                f'<div class="insight-player">'
+                f'<div class="insight-player-name">{name}</div>'
+                f'<div class="insight-player-meta">{team} &middot; #{spot} &middot; vs {opp_pitcher}</div>'
+                f'{crush_chips_html}'
+                f'</div>'
+                f'<div class="insight-stats">'
+                f'<div class="insight-stat">'
+                f'<span class="insight-stat-val">{_fmt_v(ops_v, "{:.3f}")}</span>'
+                f'<span class="insight-stat-label">OPS</span>'
+                f'</div>'
+                f'<div class="insight-stat">'
+                f'<span class="insight-stat-val">{_fmt_v(brl_v, "{:.1f}%")}</span>'
+                f'<span class="insight-stat-label">Brl%</span>'
+                f'</div>'
+                f'<div class="insight-stat">'
+                f'<span class="insight-stat-val">{_fmt_v(ev_v, "{:.1f}")}</span>'
+                f'<span class="insight-stat-label">EV</span>'
+                f'</div>'
+                f'<div class="insight-stat">'
+                f'<span class="insight-stat-val">{_fmt_v(hh_v, "{:.1f}%")}</span>'
+                f'<span class="insight-stat-label">HH%</span>'
+                f'</div>'
+                f'<div class="insight-stat">'
+                f'<span class="insight-stat-val">{_fmt_v(iso_v, "{:.3f}")}</span>'
+                f'<span class="insight-stat-label">ISO</span>'
+                f'</div>'
+                f'<div class="insight-score-bar">'
+                f'<div class="insight-score-bar-track">'
+                f'<div class="insight-score-bar-fill" style="width:{bar_pct:.0f}%;"></div>'
+                f'</div>'
+                f'<div class="insight-score-num">{matchup_v:.1f}</div>'
                 f'</div>'
                 f'</div>'
-                f'<div class="top3-stats" style="margin-top:12px;">'
-                f'<div class="top3-stat"><span class="lab">OPS</span><span class="val">{_fmt_card_num(ops_v, "{:.3f}")}</span></div>'
-                f'<div class="top3-stat"><span class="lab">Barrel%</span><span class="val">{_fmt_card_num(brl_v, "{:.1f}%")}</span></div>'
-                f'<div class="top3-stat"><span class="lab">FB%</span><span class="val">{_fmt_card_num(fb_v, "{:.1f}%")}</span></div>'
-                f'<div class="top3-stat"><span class="lab">EV</span><span class="val">{_fmt_card_num(ev_v, "{:.1f}")}</span></div>'
-                f'<div class="top3-stat"><span class="lab">HardHit%</span><span class="val">{_fmt_card_num(hh_v, "{:.1f}%")}</span></div>'
-                f'<div class="top3-stat"><span class="lab">ISO</span><span class="val">{_fmt_card_num(iso_v, "{:.3f}")}</span></div>'
-                f'</div>'
-                f'{crush_html}'
                 f'</div>'
             )
-        st.markdown('<div class="top3-row">' + "".join(cards) + '</div>', unsafe_allow_html=True)
+
+        st.markdown(
+            f'<div class="insights-panel">'
+            f'<div class="insights-panel-header">'
+            f'<span class="insights-panel-title">Top Performers — This Matchup</span>'
+            f'<span class="insights-panel-sub">Ranked by Matchup Score</span>'
+            f'</div>'
+            + "".join(rows_html) +
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 # ============== Hot / Cold Batters tabs (slate-wide) ==============
 @st.cache_data(ttl=600, show_spinner=False)

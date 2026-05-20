@@ -101,7 +101,7 @@ Use one Railway project with one service:
 Railway project: mlb-edge
 Service: streamlit-app
 Source: this GitHub repo
-Branch: cursor/railway-migration-66af for testing, then main later after merge
+Branch: main (migration is merged — deploy directly from main)
 Start command: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
 ```
 
@@ -173,8 +173,11 @@ primary production host.
 
 ## Recommended GitHub branch strategy
 
-1. Test Railway from this branch: `cursor/railway-migration-66af`.
-2. Do not change `main` until the Railway preview works.
-3. After testing, merge the branch into `main`.
-4. Only after the Railway app works from the production branch should DNS be
-   changed for `themlbedge.com`.
+The Railway migration configuration has already been merged into `main` via
+PR #73. The branch `cursor/railway-migration-66af` is no longer needed for
+deployment.
+
+1. Deploy Railway from `main` — the configuration is ready.
+2. Test the Railway public URL before touching DNS.
+3. Only after the Railway app works should DNS be changed for `themlbedge.com`.
+4. See `DEPLOY_TO_RAILWAY_mlb-data-app.md` for the complete deployment guide.

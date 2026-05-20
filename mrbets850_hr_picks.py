@@ -663,53 +663,30 @@ def _inject_css() -> None:
         """
 <style>
 .mrbets850-hr-wrap {
-    /* Light-theme defaults */
-    --mrb-card-bg: linear-gradient(160deg, #ffffff 0%, #fdfaff 60%, #f5efff 100%);
-    --mrb-card-border: rgba(124,58,237,0.30);
-    --mrb-card-shadow: 0 4px 14px rgba(20,5,50,0.10);
-    --mrb-text-strong: #1a0b3a;
-    --mrb-text-muted: #4c1d95;
-    --mrb-text-subtle: #6b7280;
-    --mrb-stat-bg: #f5f3ff;
-    --mrb-stat-border: rgba(124,58,237,0.16);
-    --mrb-stat-value: #4c1d95;
-    --mrb-note-bg: rgba(124,58,237,0.06);
+    /* Always dark — this app runs in dark mode */
+    --mrb-card-bg: linear-gradient(160deg, #0e0628 0%, #1a0b3a 50%, #221152 100%);
+    --mrb-card-border: rgba(250,204,21,0.45);
+    --mrb-card-shadow: 0 6px 22px rgba(0,0,0,0.50);
+    --mrb-text-strong: #f4f0ff;
+    --mrb-text-muted: #fde68a;
+    --mrb-text-subtle: #a1a1aa;
+    --mrb-stat-bg: rgba(255,255,255,0.06);
+    --mrb-stat-border: rgba(250,204,21,0.22);
+    --mrb-stat-value: #facc15;
+    --mrb-note-bg: rgba(250,204,21,0.09);
     --mrb-note-border: #facc15;
-    --mrb-note-text: #3b0764;
-    --mrb-empty-bg: rgba(124,58,237,0.04);
-    --mrb-empty-border: rgba(124,58,237,0.35);
-    --mrb-empty-text: #4c1d95;
+    --mrb-note-text: #fde68a;
+    --mrb-empty-bg: rgba(250,204,21,0.06);
+    --mrb-empty-border: rgba(250,204,21,0.50);
+    --mrb-empty-text: #fde68a;
     --mrb-accent: #facc15;
     --mrb-accent-soft: #fde68a;
     --mrb-violet: #7c3aed;
-    --mrb-editor-bg: linear-gradient(180deg, #faf8ff 0%, #f3eeff 100%);
-    --mrb-editor-border: rgba(124,58,237,0.25);
-    --mrb-editor-text: #1a0b3a;
-    --mrb-editor-muted: #4c1d95;
+    --mrb-editor-bg: linear-gradient(180deg, #14062e 0%, #1f0c44 100%);
+    --mrb-editor-border: rgba(250,204,21,0.35);
+    --mrb-editor-text: #fafafa;
+    --mrb-editor-muted: #fde68a;
     margin: 6px 0 14px 0;
-}
-@media (prefers-color-scheme: dark) {
-    .mrbets850-hr-wrap {
-        --mrb-card-bg: linear-gradient(160deg, #0e0628 0%, #1a0b3a 50%, #221152 100%);
-        --mrb-card-border: rgba(250,204,21,0.45);
-        --mrb-card-shadow: 0 6px 22px rgba(0,0,0,0.50);
-        --mrb-text-strong: #f4f0ff;
-        --mrb-text-muted: #fde68a;
-        --mrb-text-subtle: #a1a1aa;
-        --mrb-stat-bg: rgba(255,255,255,0.06);
-        --mrb-stat-border: rgba(250,204,21,0.22);
-        --mrb-stat-value: #facc15;
-        --mrb-note-bg: rgba(250,204,21,0.09);
-        --mrb-note-border: #facc15;
-        --mrb-note-text: #fde68a;
-        --mrb-empty-bg: rgba(250,204,21,0.06);
-        --mrb-empty-border: rgba(250,204,21,0.50);
-        --mrb-empty-text: #fde68a;
-        --mrb-editor-bg: linear-gradient(180deg, #14062e 0%, #1f0c44 100%);
-        --mrb-editor-border: rgba(250,204,21,0.35);
-        --mrb-editor-text: #fafafa;
-        --mrb-editor-muted: #fde68a;
-    }
 }
 
 /* ---- animations ---- */

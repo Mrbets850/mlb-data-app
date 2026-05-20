@@ -2,7 +2,7 @@
 # Edge Intel design system — deep navy base, teal accent, no purple
 base = "dark"
 primaryColor = "#00c896"
-backgroundColor = "#08111f"
-secondaryBackgroundColor = "#0c1a2e"
+backgroundColor = "#0a1628"
+secondaryBackgroundColor = "#0d1f38"
 textColor = "#e2eeff"
 font = "sans serif"

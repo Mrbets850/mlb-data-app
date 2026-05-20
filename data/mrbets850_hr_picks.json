@@ -1,11 +1,19 @@
 {
-  "last_updated": "2026-05-20T14:38:15Z",
+  "last_updated": "2026-05-20T14:38:39Z",
   "picks": [
     {
       "rank": 1,
       "name": "Bryce Harper",
       "team": "",
       "player_id": 547180,
+      "note": "",
+      "confidence": "🔥 Lock"
+    },
+    {
+      "rank": 2,
+      "name": "Junior Caminero",
+      "team": "",
+      "player_id": 691406,
       "note": "",
       "confidence": "🔥 Lock"
     }

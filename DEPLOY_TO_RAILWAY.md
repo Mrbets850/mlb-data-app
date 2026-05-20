@@ -5,7 +5,7 @@ Follow these steps before changing `themlbedge.com`.
 ## Before you start
 
 - Your GitHub account is already connected to Railway.
-- Use the test branch first: `cursor/railway-migration-66af`
+- Deploy from the `main` branch (the migration is already merged)
 - Do not change DNS yet.
 - Do not delete the Streamlit deployment yet.
 
@@ -18,7 +18,7 @@ Follow these steps before changing `themlbedge.com`.
 5. When Railway asks for a branch, select:
 
 ```text
-cursor/railway-migration-66af
+main
 ```
 
 6. Let Railway create the service.

@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime as _dt
 import itertools
 import math
+import os
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -267,10 +268,24 @@ def _fetch_game_totals(date_iso: str) -> Tuple[Dict[str, float], str]:
     context. We only emit a notice if the API itself errored after a real
     attempt, and the wording is informational (caption, not warning).
     """
-    try:
-        api_key = st.secrets.get("odds_api_key")
-    except Exception:
-        api_key = None
+    api_key = None
+    for key_name in (
+        "odds_api_key",
+        "ODDS_API_KEY",
+        "THE_ODDS_API_KEY",
+        "THE_ODDS_API",
+        "ODDSAPI_KEY",
+    ):
+        try:
+            candidate = st.secrets.get(key_name)
+        except Exception:
+            candidate = None
+        if not candidate:
+            candidate = os.environ.get(key_name)
+        if candidate:
+            api_key = str(candidate).strip()
+            if api_key:
+                break
     if not api_key:
         return {}, ""  # silent — caller will use Model Est. total
     try:

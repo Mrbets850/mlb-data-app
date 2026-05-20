@@ -11655,6 +11655,7 @@ if _view == "🥎 Pitcher Breakdown":
         # build_slate_pitcher_table; name is a plain alpha sort.
         _PB_ORDER_OPTS = (
             "Pitch Score (best to worst)",
+            "Pitch Score (worst to best)",
             "Slate order",
             "Pitcher name (A-Z)",
         )
@@ -11676,6 +11677,16 @@ if _view == "🥎 Pitcher Breakdown":
             st.markdown(
                 '<div class="pbd-sort-hint">'
                 'Best Pitch Score first · lower=worse, dashes=insufficient sample'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        elif _pb_order == "Pitch Score (worst to best)":
+            _pb_df = _pb_df.sort_values(
+                "Pitch Score", ascending=True, na_position="last"
+            ).reset_index(drop=True)
+            st.markdown(
+                '<div class="pbd-sort-hint">'
+                'Worst Pitch Score first · lower=worse, dashes=insufficient sample'
                 '</div>',
                 unsafe_allow_html=True,
             )

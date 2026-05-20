@@ -977,63 +977,77 @@ _RBI_MOBILE_CSS = (
     "    flex: 1 1 100% !important; }"
     "}"
     ".rbi-grid { display:grid; grid-template-columns: 1fr; gap: 12px; "
-    "  margin: 6px 0 12px 0; }"
+    "  margin: 8px 0 14px 0; }"
     "@media (min-width: 480px) and (max-width: 640px) {"
     "  .rbi-grid { grid-template-columns: repeat(2, 1fr); }"
     "}"
-    ".rbi-card { background: linear-gradient(180deg, #15102b 0%, #0b0820 100%); "
-    "  border:1px solid #2a1e4a; border-radius:14px; padding:12px 13px; "
-    "  color:#e9e6f5; box-shadow: 0 4px 12px rgba(0,0,0,.30); "
-    "  display:flex; flex-direction:column; gap:8px; min-width:0; }"
-    ".rbi-head { display:flex; align-items:flex-start; gap:8px; min-width:0; }"
+    ".rbi-card { background: linear-gradient(160deg, #0d0928 0%, #130b38 50%, #1a0f42 100%); "
+    "  border:1px solid rgba(92,64,180,.35); border-radius:16px; padding:13px 14px; "
+    "  color:#e9e6f5; "
+    "  box-shadow: 0 6px 18px rgba(0,0,0,.40), 0 0 0 1px rgba(92,64,180,.12); "
+    "  display:flex; flex-direction:column; gap:8px; min-width:0; "
+    "  position: relative; overflow: hidden; "
+    "  transition: border-color .2s, box-shadow .2s; }"
+    # subtle top gradient accent on cards
+    ".rbi-card::before { content:''; position:absolute; top:0; left:0; right:0; height:1px; "
+    "  background: linear-gradient(90deg, transparent 20%, rgba(250,204,21,.20) 50%, transparent 80%); }"
+    ".rbi-head { display:flex; align-items:flex-start; gap:8px; min-width:0; position: relative; z-index:1; }"
     ".rbi-rank { font-variant-numeric: tabular-nums; font-weight:900; "
-    "  font-size:.78rem; color:#fcd34d; background:#3b1f6b; "
-    "  border:1px solid #5b3aa0; padding:2px 7px; border-radius:8px; "
-    "  flex:0 0 auto; line-height:1.3; }"
+    "  font-size:.76rem; color:#fcd34d; "
+    "  background: linear-gradient(135deg, #3b1f6b, #1e0b4a); "
+    "  border:1px solid rgba(124,58,237,.55); padding:3px 9px; border-radius:8px; "
+    "  flex:0 0 auto; line-height:1.3; "
+    "  box-shadow: 0 2px 6px rgba(20,5,50,.40); }"
     ".rbi-id { display:flex; flex-direction:column; min-width:0; flex:1 1 auto; }"
     ".rbi-name { font-weight:800; font-size:1.0rem; line-height:1.15; "
-    "  color:#f8fafc; word-break:break-word; }"
-    ".rbi-sub { font-size:.74rem; color:#a3a0c4; margin-top:2px; "
-    "  word-break:break-word; }"
+    "  color:#f4f0ff; word-break:break-word; }"
+    ".rbi-sub { font-size:.73rem; color:#9590b8; margin-top:2px; "
+    "  word-break:break-word; font-weight:600; }"
     ".rbi-score { font-variant-numeric: tabular-nums; font-weight:900; "
-    "  font-size:1.05rem; color:#fcd34d; text-align:right; flex:0 0 auto; "
-    "  padding-left:6px; line-height:1.05; }"
-    ".rbi-score small { display:block; font-size:.6rem; color:#a3a0c4; "
-    "  font-weight:700; letter-spacing:.06em; text-transform:uppercase; "
+    "  font-size:1.08rem; color:#facc15; text-align:right; flex:0 0 auto; "
+    "  padding-left:6px; line-height:1.05; "
+    "  text-shadow: 0 0 10px rgba(250,204,21,.30); }"
+    ".rbi-score small { display:block; font-size:.58rem; color:#9590b8; "
+    "  font-weight:700; letter-spacing:.08em; text-transform:uppercase; "
     "  margin-top:2px; }"
-    ".rbi-tiers { display:flex; flex-wrap:wrap; gap:5px; }"
-    ".rbi-tier { display:inline-block; padding: 2px 8px; border-radius:999px; "
-    "  font-size:.66rem; font-weight:800; letter-spacing:.03em; "
+    ".rbi-tiers { display:flex; flex-wrap:wrap; gap:5px; position: relative; z-index:1; }"
+    ".rbi-tier { display:inline-block; padding: 2px 9px; border-radius:999px; "
+    "  font-size:.64rem; font-weight:800; letter-spacing:.04em; "
     "  border:1px solid transparent; text-transform:uppercase; }"
-    ".rbi-tier.elite  { background: rgba(16,185,129,.18); color:#86efac; "
-    "  border-color: rgba(110,231,183,.40); }"
-    ".rbi-tier.strong { background: rgba(132,204,22,.16); color:#bef264; "
-    "  border-color: rgba(190,242,100,.40); }"
-    ".rbi-tier.ok     { background: rgba(250,204,21,.14); color:#fde68a; "
+    ".rbi-tier.elite  { background: rgba(16,185,129,.16); color:#6ee7b7; "
+    "  border-color: rgba(110,231,183,.35); }"
+    ".rbi-tier.strong { background: rgba(132,204,22,.14); color:#bef264; "
+    "  border-color: rgba(190,242,100,.35); }"
+    ".rbi-tier.ok     { background: rgba(250,204,21,.12); color:#fde68a; "
+    "  border-color: rgba(253,224,71,.35); }"
+    ".rbi-tier.soft   { background: rgba(249,115,22,.14); color:#fdba74; "
+    "  border-color: rgba(253,186,116,.35); }"
+    ".rbi-tier.poor   { background: rgba(239,68,68,.16); color:#fca5a5; "
+    "  border-color: rgba(252,165,165,.35); }"
+    ".rbi-tier.gold   { background: rgba(252,211,77,.14); color:#fde68a; "
     "  border-color: rgba(253,224,71,.40); }"
-    ".rbi-tier.soft   { background: rgba(249,115,22,.16); color:#fdba74; "
-    "  border-color: rgba(253,186,116,.40); }"
-    ".rbi-tier.poor   { background: rgba(239,68,68,.18); color:#fecaca; "
-    "  border-color: rgba(252,165,165,.40); }"
-    ".rbi-tier.gold   { background: rgba(252,211,77,.16); color:#fde68a; "
-    "  border-color: rgba(253,224,71,.45); }"
-    ".rbi-tier.info   { background: rgba(139,92,246,.20); color:#ddd6fe; "
-    "  border-color: rgba(196,181,253,.40); }"
-    ".rbi-grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 6px; }"
-    ".rbi-chip { background:#1c1340; border:1px solid #2a1e4a; "
-    "  border-radius:9px; padding:6px 8px; min-width:0; }"
-    ".rbi-chip-label { font-size:.62rem; color:#a3a0c4; "
-    "  font-weight:700; letter-spacing:.04em; text-transform:uppercase; "
+    ".rbi-tier.info   { background: rgba(139,92,246,.18); color:#c4b5fd; "
+    "  border-color: rgba(196,181,253,.35); }"
+    ".rbi-grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 6px; "
+    "  position: relative; z-index:1; }"
+    ".rbi-chip { background: rgba(255,255,255,.04); "
+    "  border:1px solid rgba(92,64,180,.25); "
+    "  border-radius:10px; padding:6px 9px; min-width:0; "
+    "  transition: border-color .18s; }"
+    ".rbi-chip-label { font-size:.60rem; color:#8a87b0; "
+    "  font-weight:700; letter-spacing:.05em; text-transform:uppercase; "
     "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
-    ".rbi-chip-val { font-size:.95rem; font-weight:800; color:#f8fafc; "
-    "  font-variant-numeric: tabular-nums; margin-top:1px; "
+    ".rbi-chip-val { font-size:.96rem; font-weight:800; color:#f0eeff; "
+    "  font-variant-numeric: tabular-nums; margin-top:2px; "
     "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
-    ".rbi-chip-val.na { color:#6b7290; }"
-    ".rbi-foot { font-size:.72rem; color:#a3a0c4; display:flex; "
-    "  flex-wrap:wrap; gap:6px 10px; }"
-    ".rbi-foot b { color:#e9e6f5; }"
-    ".rbi-empty { padding:14px 16px; color:#a3a0c4; background:#15102b; "
-    "  border:1px dashed #2a1e4a; border-radius:14px; text-align:center; }"
+    ".rbi-chip-val.na { color:#5a5778; }"
+    ".rbi-foot { font-size:.71rem; color:#9590b8; display:flex; "
+    "  flex-wrap:wrap; gap:6px 10px; position: relative; z-index:1; "
+    "  border-top: 1px solid rgba(92,64,180,.18); padding-top: 6px; margin-top: 2px; }"
+    ".rbi-foot b { color:#d4d0f0; }"
+    ".rbi-empty { padding:16px 18px; color:#9590b8; "
+    "  background: rgba(13,9,40,.80); "
+    "  border:1px dashed rgba(92,64,180,.35); border-radius:16px; text-align:center; }"
     "</style>"
 )
 
@@ -1508,18 +1522,64 @@ def render_rbi_model_page(
     rows can be built, a polished empty state is shown — never fake data.
     """
     st.markdown(
-        '<div class="section-title" style="font-size:1.45rem;margin-top:8px;">'
-        '⚾ RBI Edge Model — Daily Prop Targets</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div style="margin: 0 0 12px 0; color:#475569; font-size:0.92rem;">'
-        'Today\'s top <b>2+ RBI</b> prop targets, scored by the RBI Edge Model. '
-        'The score blends <b>Opportunity</b> (lineup slot, team OBP, opposing SP/bullpen, total) '
-        'with <b>Skill</b> (xwOBA, xSLG gap, Barrel%, HardHit%, K%, ISO, RISP AVG) and a '
-        '<b>Context multiplier</b> (platoon, park, temperature, team form, lineup stability). '
-        'Tabs below: leaderboard, 2-leg parlays, 3-leg long shots, and a player deep dive.'
-        '</div>',
+        """
+<style>
+@keyframes rbiPageScan {
+    0%   { transform: translateX(-100%); opacity:0; }
+    20%  { opacity:1; } 80% { opacity:1; }
+    100% { transform: translateX(250%); opacity:0; }
+}
+.rbi-page-header {
+    padding: 18px 22px; border-radius: 18px; margin-bottom: 14px;
+    background: linear-gradient(125deg, #1a0808 0%, #3b0c0c 35%, #7f1d1d 65%, #b91c1c 100%);
+    border: 1px solid rgba(251,191,36,.45);
+    box-shadow: 0 8px 28px rgba(127,29,29,.40), 0 0 0 1px rgba(239,68,68,.12);
+    position: relative; overflow: hidden;
+}
+.rbi-page-header::before {
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background-image: radial-gradient(circle, rgba(251,191,36,.035) 1px, transparent 1px);
+    background-size: 16px 16px;
+}
+.rbi-page-header::after {
+    content:''; position:absolute; top:0; bottom:0; width:35%; pointer-events:none;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.04), transparent);
+    animation: rbiPageScan 6s ease-in-out infinite 1s;
+}
+.rbi-page-eyebrow {
+    font-size: .68rem; font-weight: 800; letter-spacing: .18em;
+    text-transform: uppercase; color: #fbbf24; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 7px;
+    position: relative; z-index: 1;
+}
+.rbi-page-eyebrow::before {
+    content: ''; width: 16px; height: 2px;
+    background: #fbbf24; border-radius: 1px; display: inline-block;
+}
+.rbi-page-title {
+    font-size: 1.55rem; font-weight: 900; color: #fde68a;
+    letter-spacing: .01em; line-height: 1.1; margin: 0 0 8px 0;
+    text-shadow: 0 0 20px rgba(251,191,36,.35), 0 2px 6px rgba(0,0,0,.55);
+    position: relative; z-index: 1;
+}
+.rbi-page-sub {
+    font-size: .88rem; color: #fecaca; line-height: 1.55; font-weight: 500;
+    position: relative; z-index: 1;
+}
+.rbi-page-sub b { color: #fde68a; font-weight: 800; }
+</style>
+<div class="rbi-page-header">
+  <div class="rbi-page-eyebrow">RBI Edge Model · Daily Prop Intelligence</div>
+  <div class="rbi-page-title">⚾ Daily 2+ RBI Prop Targets</div>
+  <div class="rbi-page-sub">
+    Top targets scored by the RBI Edge Model — blending
+    <b>Opportunity</b> (lineup slot, team OBP, opposing SP/bullpen, total)
+    with <b>Skill</b> (xwOBA, xSLG gap, Barrel%, HardHit%, K%, ISO, RISP AVG) and a
+    <b>Context multiplier</b> (platoon, park, temperature, team form, lineup stability).
+    Tabs below: leaderboard, 2-leg parlays, 3-leg long shots, and a player deep dive.
+  </div>
+</div>
+""",
         unsafe_allow_html=True,
     )
 

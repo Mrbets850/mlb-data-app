@@ -420,20 +420,27 @@ section.main,
        complaint). #0f172a is dark enough for white card surfaces to pop
        and light enough that headings/captions in #f8fafc / #fde68a stay
        crisp. */
-    background: #0f172a !important;
-    background-color: #0f172a !important;
+    background: #0a1120 !important;
+    background-color: #0a1120 !important;
     background-image: none !important;
 }
 /* Belt-and-suspenders: a body::before strip that paints any uncovered
    pixel behind the iframe content. Sits at z-index:-1 so it never
    overlaps actual UI. Solid color to match the app shell. */
-body, html { background: #0f172a !important; }
+body, html { background: #0a1120 !important; }
 body::before {
     content: "";
     position: fixed; inset: 0;
-    background: #0f172a;
+    background: #0a1120;
     z-index: -1;
     pointer-events: none;
+}
+/* Subtle dot grid texture behind the entire app */
+body::after {
+    content: "";
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background-image: radial-gradient(circle, rgba(250,204,21,.025) 1px, transparent 1px);
+    background-size: 24px 24px;
 }
 /* Streamlit's auto-injected header bar (top) — make it transparent so it
    melts into the dark background, and lighten its icons. */
@@ -763,26 +770,51 @@ html, body, [class*="css"] {
    primary accent, electric violet secondary accent. Matches the
    uploaded MLB EDGE logo so the app header feels of-a-piece with the
    brand mark in the top-left tile. */
+@keyframes brandBarScan {
+    0%   { transform: translateX(-100%); opacity: 0; }
+    20%  { opacity: 1; }
+    80%  { opacity: 1; }
+    100% { transform: translateX(200%); opacity: 0; }
+}
+@keyframes brandGoldPulse {
+    0%, 100% { box-shadow: 0 12px 32px rgba(20,5,50,.50), 0 0 0 1px rgba(250,204,21,.25); }
+    50%       { box-shadow: 0 16px 40px rgba(20,5,50,.60), 0 0 0 1px rgba(250,204,21,.50); }
+}
 .brand-bar {
     display: flex; align-items: center; justify-content: space-between; gap: 18px;
-    padding: 14px 22px; border-radius: 18px;
-    background: linear-gradient(110deg, #14062e 0%, #2a0f5c 55%, #4c1d95 100%);
-    box-shadow: 0 12px 28px rgba(20, 5, 50, 0.45);
-    border: 1px solid rgba(250,204,21,0.55);
+    padding: 14px 22px; border-radius: 20px;
+    background: linear-gradient(115deg, #0c0420 0%, #1e0b4a 40%, #2e1065 70%, #4c1d95 100%);
+    border: 1px solid rgba(250,204,21,0.48);
     margin-bottom: 14px; color: #fff;
+    position: relative; overflow: hidden;
+    animation: brandGoldPulse 4s ease-in-out infinite;
 }
-.brand-bar .brand-left { display:flex; align-items:center; gap: 14px; min-width: 0; }
+/* fine dot grid texture behind brand bar */
+.brand-bar::before {
+    content: '';
+    position: absolute; inset: 0; pointer-events: none; z-index: 0;
+    background-image: radial-gradient(circle, rgba(250,204,21,.04) 1px, transparent 1px);
+    background-size: 18px 18px;
+}
+/* sweeping shimmer */
+.brand-bar::after {
+    content: '';
+    position: absolute; top: 0; bottom: 0; width: 30%; pointer-events: none; z-index: 1;
+    background: linear-gradient(90deg, transparent, rgba(250,204,21,.06), transparent);
+    animation: brandBarScan 6s ease-in-out infinite 2s;
+}
+.brand-bar .brand-left { display:flex; align-items:center; gap: 14px; min-width: 0; position: relative; z-index: 2; }
 .brand-bar .brand-logo {
     width: 64px; height: 64px; flex: 0 0 64px;
-    border-radius: 14px; background: #1a0b3a;
+    border-radius: 14px; background: #12073a;
     border: 1px solid rgba(250,204,21,0.55);
-    box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+    box-shadow: 0 4px 18px rgba(0,0,0,.50), 0 0 0 2px rgba(250,204,21,.12);
     object-fit: contain; padding: 4px;
 }
 .brand-name { font-size: 1.55rem; font-weight: 900; letter-spacing: 0.04em; line-height: 1.05;
-    color: #facc15; text-shadow: 0 1px 0 rgba(0,0,0,0.45); }
+    color: #facc15; text-shadow: 0 0 20px rgba(250,204,21,.35), 0 1px 0 rgba(0,0,0,0.55); }
 .brand-tag  { color: #fde68a; font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 800; }
-.brand-meta { text-align: right; color: #fde68a; font-size: 0.92rem; font-weight: 700; }
+.brand-meta { text-align: right; color: #fde68a; font-size: 0.92rem; font-weight: 700; position: relative; z-index: 2; }
 .brand-meta .big { font-size: 1.1rem; color: #fff; font-weight: 800; }
 @media (max-width: 600px) {
     .brand-bar .brand-logo { width: 48px; height: 48px; flex-basis: 48px; }
@@ -11151,36 +11183,53 @@ def _render_rbi_hero_strip():
 
     css = (
         "<style>"
-        ".rbi-hero { margin: 4px 0 16px 0; padding: 14px 14px 10px; "
-        "  background: linear-gradient(135deg, #7f1d1d 0%, #b91c1c 50%, #dc2626 100%); "
-        "  border-radius: 16px; border: 2px solid #fbbf24; "
-        "  box-shadow: 0 4px 16px rgba(127,29,29,.35); }"
+        "@keyframes rbiScan { "
+        "  0%   { transform: translateX(-100%); opacity:0; } "
+        "  20%  { opacity:1; } 80% { opacity:1; } "
+        "  100% { transform: translateX(200%); opacity:0; } }"
+        ".rbi-hero { margin: 4px 0 16px 0; padding: 16px 16px 12px; "
+        "  background: linear-gradient(130deg, #3b0000 0%, #7f1d1d 35%, #b91c1c 70%, #dc2626 100%); "
+        "  border-radius: 18px; border: 1px solid rgba(251,191,36,.50); "
+        "  box-shadow: 0 8px 28px rgba(127,29,29,.45), 0 0 0 1px rgba(239,68,68,.15); "
+        "  position: relative; overflow: hidden; }"
+        ".rbi-hero::before { content:''; position:absolute; inset:0; pointer-events:none; "
+        "  background-image: radial-gradient(circle, rgba(251,191,36,.04) 1px, transparent 1px); "
+        "  background-size: 16px 16px; }"
+        ".rbi-hero::after { content:''; position:absolute; top:0; bottom:0; width:35%; "
+        "  pointer-events:none; "
+        "  background: linear-gradient(90deg, transparent, rgba(255,255,255,.04), transparent); "
+        "  animation: rbiScan 5s ease-in-out infinite 1s; }"
         ".rbi-hero-title { color:#fde68a; font-weight:900; font-size:1.15rem; "
-        "  letter-spacing:.02em; margin: 0 0 4px 0; "
-        "  text-shadow: 0 1px 2px rgba(0,0,0,.4); }"
-        ".rbi-hero-sub { color:#fee2e2; font-size:.82rem; margin: 0 0 10px 0; }"
+        "  letter-spacing:.02em; margin: 0 0 4px 0; position: relative; z-index:1; "
+        "  text-shadow: 0 0 16px rgba(251,191,36,.35), 0 1px 2px rgba(0,0,0,.5); }"
+        ".rbi-hero-sub { color:#fecaca; font-size:.82rem; margin: 0 0 12px 0; "
+        "  position: relative; z-index:1; }"
         ".rbi-hero-rail { display:flex; gap:10px; overflow-x:auto; "
         "  padding: 4px 2px 8px; scroll-snap-type: x mandatory; "
-        "  -webkit-overflow-scrolling: touch; }"
-        ".rbi-hero-rail::-webkit-scrollbar { height:6px; }"
-        ".rbi-hero-rail::-webkit-scrollbar-thumb { background:#fbbf24; border-radius:3px; }"
+        "  -webkit-overflow-scrolling: touch; position: relative; z-index:1; }"
+        ".rbi-hero-rail::-webkit-scrollbar { height:5px; }"
+        ".rbi-hero-rail::-webkit-scrollbar-thumb { background:rgba(251,191,36,.50); border-radius:3px; }"
         ".rbi-card { flex: 0 0 auto; min-width: 180px; max-width: 200px; "
-        "  background:#fff; border-radius:12px; padding:10px 12px; "
+        "  background:#fff; border-radius:14px; padding:11px 13px; "
         "  scroll-snap-align: start; "
-        "  box-shadow: 0 2px 6px rgba(0,0,0,.15); }"
-        ".rbi-card-rank { display:inline-block; background:#3b1f6b; color:#facc15; "
-        "  font-weight:900; font-size:.72rem; padding:2px 8px; border-radius:999px; "
+        "  box-shadow: 0 4px 14px rgba(0,0,0,.18); "
+        "  border: 1px solid #f1f5f9; "
+        "  transition: transform .15s, box-shadow .15s; }"
+        ".rbi-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.22); }"
+        ".rbi-card-rank { display:inline-block; background: linear-gradient(135deg,#3b1f6b,#1e0b4a); "
+        "  color:#facc15; "
+        "  font-weight:900; font-size:.70rem; padding:2px 9px; border-radius:999px; "
         "  letter-spacing:.05em; }"
-        ".rbi-card-score { float:right; font-weight:900; font-size:1.05rem; "
-        "  color:#dc2626; }"
+        ".rbi-card-score { float:right; font-weight:900; font-size:1.08rem; "
+        "  color:#dc2626; font-variant-numeric:tabular-nums; }"
         ".rbi-card-name { font-weight:800; color:#0f172a; font-size:.96rem; "
-        "  margin-top:6px; line-height:1.15; }"
-        ".rbi-card-meta { color:#64748b; font-size:.74rem; margin-top:2px; }"
-        ".rbi-card-game { color:#475569; font-size:.74rem; margin-top:6px; "
-        "  border-top:1px solid #f1f5f9; padding-top:5px; }"
+        "  margin-top:7px; line-height:1.15; }"
+        ".rbi-card-meta { color:#64748b; font-size:.73rem; margin-top:2px; font-weight:600; }"
+        ".rbi-card-game { color:#475569; font-size:.73rem; margin-top:7px; "
+        "  border-top:1px solid #f1f5f9; padding-top:6px; font-weight:600; }"
         ".rbi-card-stats { display:flex; gap:8px; margin-top:6px; "
-        "  font-variant-numeric: tabular-nums; font-size:.72rem; color:#0f172a; }"
-        ".rbi-card-stats span b { color:#dc2626; }"
+        "  font-variant-numeric: tabular-nums; font-size:.72rem; color:#0f172a; font-weight:700; }"
+        ".rbi-card-stats span b { color:#b91c1c; }"
         "</style>"
     )
 
@@ -11252,63 +11301,69 @@ st.markdown(
     "<style>"
     # ---- Top-level view tabs: bold, mobile-friendly pill carousel ----
     # Pure HTML anchor pills — no Streamlit radio internals to fight.
+    "@keyframes tabRailGlow { "
+    "  0%, 100% { box-shadow: 0 2px 12px rgba(20,5,50,.30), inset 0 1px 0 rgba(250,204,21,.08); } "
+    "  50%       { box-shadow: 0 4px 20px rgba(20,5,50,.45), inset 0 1px 0 rgba(250,204,21,.16); } "
+    "}"
     ".top-tab-row { margin: 8px 0 14px 0; padding: 10px; "
-    "  background: linear-gradient(180deg, #fde68a 0%, #f59e0b 55%, #b45309 100%); "
-    "  border-radius: 16px; border: 2px solid #92400e; "
-    "  box-shadow: 0 2px 8px rgba(120,53,15,.25), inset 0 1px 0 rgba(255,255,255,.45); }"
-    ".top-tab-strip { display:flex; gap:10px; flex-wrap:nowrap; "
+    "  background: linear-gradient(180deg, #0c0420 0%, #14062e 60%, #1a0840 100%); "
+    "  border-radius: 18px; border: 1px solid rgba(250,204,21,.28); "
+    "  animation: tabRailGlow 5s ease-in-out infinite; "
+    "  position: relative; overflow: hidden; }"
+    # subtle dot grid in the nav rail background
+    ".top-tab-row::before { content:''; position:absolute; inset:0; pointer-events:none; "
+    "  background-image: radial-gradient(circle, rgba(250,204,21,.035) 1px, transparent 1px); "
+    "  background-size: 16px 16px; }"
+    ".top-tab-strip { display:flex; gap:8px; flex-wrap:nowrap; "
     "  justify-content:flex-start; overflow-x:auto; overflow-y:hidden; "
     "  -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; "
-    "  scrollbar-width:thin; scrollbar-color:#92400e transparent; "
-    "  padding-bottom:4px; }"
-    ".top-tab-strip::-webkit-scrollbar { height:6px; }"
-    ".top-tab-strip::-webkit-scrollbar-thumb { background:#92400e; border-radius:3px; }"
+    "  scrollbar-width:thin; scrollbar-color:rgba(250,204,21,.35) transparent; "
+    "  padding-bottom:4px; position: relative; z-index: 1; }"
+    ".top-tab-strip::-webkit-scrollbar { height:4px; }"
+    ".top-tab-strip::-webkit-scrollbar-thumb { background:rgba(250,204,21,.35); border-radius:2px; }"
     ".top-tab-strip::-webkit-scrollbar-track { background:transparent; }"
     ".top-tab-pill { scroll-snap-align:start; flex:0 0 auto; white-space:nowrap; "
-    "  background:#ffffff; padding:12px 22px; min-height:48px; min-width:128px; "
-    "  border-radius:999px; border:2px solid #cbd5e1; cursor:pointer; "
-    "  font-weight:800; font-size:1.02rem; color:#0f172a; "
+    "  background:rgba(255,255,255,.07); padding:11px 20px; min-height:46px; min-width:124px; "
+    "  border-radius:12px; border:1px solid rgba(255,255,255,.10); cursor:pointer; "
+    "  font-weight:700; font-size:.98rem; color:#cbd5e1; "
     "  text-decoration:none; line-height:1.2; letter-spacing:.01em; "
-    "  transition:all .18s ease; box-shadow:0 1px 3px rgba(15,23,42,.06); "
+    "  transition:all .18s cubic-bezier(.22,1,.36,1); "
     "  display:inline-flex; align-items:center; justify-content:center; }"
     ".apps-gen-header { display:flex; align-items:baseline; justify-content:space-between; "
-    "  margin: 6px 4px 4px; padding: 0 2px; gap: 10px; flex-wrap:wrap; }"
-    # Title sits directly on the dark midnight app background (PR #48), so
-    # the old dark-purple ink was invisible. Bold gold + soft glow keeps it
-    # legible without competing with the gold pill strip below.
+    "  margin: 6px 4px 6px; padding: 0 2px; gap: 10px; flex-wrap:wrap; }"
     ".apps-gen-title { font-weight:900; font-size:1.18rem; color:#facc15; "
-    "  letter-spacing:.01em; text-shadow:0 1px 0 rgba(0,0,0,.55), "
-    "    0 0 10px rgba(250,204,21,.25); }"
-    ".apps-gen-sub { font-size:.8rem; color:#e2e8f0; font-weight:700; "
-    "  text-shadow: 0 1px 0 rgba(0,0,0,.5); }"
-    ".top-tab-pill:hover { border-color:#7c3aed; transform:translateY(-1px); "
-    "  box-shadow:0 4px 10px rgba(124,58,237,.18); color:#0f172a; "
+    "  letter-spacing:.01em; text-shadow:0 0 16px rgba(250,204,21,.30), 0 1px 0 rgba(0,0,0,.6); }"
+    ".apps-gen-sub { font-size:.78rem; color:#8795b8; font-weight:600; }"
+    ".top-tab-pill:hover { border-color:rgba(124,58,237,.45); transform:translateY(-2px); "
+    "  background:rgba(124,58,237,.15); "
+    "  box-shadow:0 4px 14px rgba(124,58,237,.20); color:#e2e8f0; "
     "  text-decoration:none; }"
     ".top-tab-pill.active { "
-    "  background:linear-gradient(110deg, #14062e 0%, #3b1f6b 55%, #6b21a8 100%); "
-    "  color:#facc15; border-color:#facc15; "
-    "  box-shadow:0 0 0 3px rgba(250,204,21,.30), 0 6px 16px rgba(20,5,50,.45); "
-    "  transform:translateY(-1px); text-decoration:none; }"
+    "  background:linear-gradient(135deg, #1e0b4a 0%, #3b1f6b 55%, #5b21a8 100%); "
+    "  color:#facc15; border-color:rgba(250,204,21,.55); "
+    "  box-shadow:0 0 0 1px rgba(250,204,21,.20), 0 6px 20px rgba(20,5,50,.50), "
+    "    0 0 12px rgba(250,204,21,.12); "
+    "  transform:translateY(-2px); text-decoration:none; font-weight:800; }"
     ".top-tab-pill.active:hover { color:#facc15; }"
     # Mobile: replace horizontal pill carousel with a visible grid of
     # square tiles so every category is in plain sight without
     # horizontal scrolling. Desktop layout (above) is unchanged.
     "@media (max-width: 640px) { "
-    "  .top-tab-row { padding:10px; } "
+    "  .top-tab-row { padding:10px; border-radius:16px; } "
     "  .top-tab-strip { display:grid !important; "
     "    grid-template-columns: repeat(2, minmax(0, 1fr)); "
-    "    gap:8px; overflow:visible !important; "
+    "    gap:7px; overflow:visible !important; "
     "    flex-wrap:wrap; padding-bottom:0; } "
     "  .top-tab-strip::-webkit-scrollbar { display:none; } "
     "  .top-tab-pill { width:100%; min-width:0; flex:1 1 auto; "
-    "    padding:14px 10px; min-height:64px; font-size:.98rem; "
-    "    white-space:normal; line-height:1.15; text-align:center; "
-    "    border-radius:14px; } "
+    "    padding:14px 10px; min-height:62px; font-size:.94rem; "
+    "    white-space:normal; line-height:1.2; text-align:center; "
+    "    border-radius:12px; } "
     "  .apps-gen-title { font-size:1.08rem; } "
     "  .apps-gen-sub { display:none; } "
     "}"
     "@media (max-width: 380px) { "
-    "  .top-tab-pill { padding:12px 8px; min-height:60px; font-size:.92rem; } "
+    "  .top-tab-pill { padding:12px 8px; min-height:58px; font-size:.88rem; } "
     "}"
     ".sp-legend { color:#64748b; font-size:.78rem; margin: 4px 0 12px 0; }"
     ".sp-legend code { background:#f1f5f9; padding: 1px 6px; border-radius:6px; "
@@ -11416,63 +11471,82 @@ if _mrbets_idx is not None:
     )
     st.markdown(
         "<style>"
-        ".mrbets-hero-cta { display:block; text-decoration:none !important; "
-        "  margin: 2px 0 18px 0; padding: 18px 18px; "
-        "  background: linear-gradient(120deg, #14062e 0%, #3b1f6b 45%, #6b21a8 100%); "
-        "  border: 3px solid #facc15; border-radius: 20px; "
-        "  box-shadow: 0 8px 28px rgba(20,5,50,.55), "
-        "    inset 0 1px 0 rgba(250,204,21,.35), 0 0 0 4px rgba(250,204,21,.18); "
-        "  position: relative; overflow: hidden; "
-        "  animation: mrbetsGlow 2.6s ease-in-out infinite alternate; }"
-        ".mrbets-hero-cta:hover { transform: translateY(-1px); "
-        "  box-shadow: 0 12px 34px rgba(20,5,50,.65), "
-        "    inset 0 1px 0 rgba(250,204,21,.5), 0 0 0 5px rgba(250,204,21,.28); }"
         "@keyframes mrbetsGlow { "
-        "  from { box-shadow: 0 8px 28px rgba(20,5,50,.55), "
-        "    inset 0 1px 0 rgba(250,204,21,.35), 0 0 0 4px rgba(250,204,21,.18); } "
-        "  to   { box-shadow: 0 8px 30px rgba(20,5,50,.65), "
-        "    inset 0 1px 0 rgba(250,204,21,.55), 0 0 0 5px rgba(250,204,21,.38); } }"
-        ".mrbets-hero-inner { display:flex; align-items:center; gap:16px; "
-        "  position:relative; z-index:1; }"
+        "  0%, 100% { box-shadow: 0 10px 36px rgba(20,5,50,.60), "
+        "    0 0 0 1px rgba(250,204,21,.30), 0 0 24px rgba(250,204,21,.08); } "
+        "  50%       { box-shadow: 0 14px 44px rgba(20,5,50,.70), "
+        "    0 0 0 2px rgba(250,204,21,.55), 0 0 40px rgba(250,204,21,.16); } }"
+        "@keyframes mrbetsShimmer { "
+        "  0%   { background-position: -200% center; } "
+        "  100% { background-position:  200% center; } }"
+        "@keyframes mrLiveFlash { "
+        "  0%, 100% { opacity: 1; } 50% { opacity: .45; } }"
+        ".mrbets-hero-cta { display:block; text-decoration:none !important; "
+        "  margin: 2px 0 18px 0; padding: 20px 20px; "
+        "  background: linear-gradient(125deg, #080220 0%, #1e0b4a 35%, #3b1f6b 65%, #5b21a8 100%); "
+        "  border: 1px solid rgba(250,204,21,.55); border-radius: 22px; "
+        "  animation: mrbetsGlow 3s ease-in-out infinite; "
+        "  position: relative; overflow: hidden; "
+        "  transition: transform .2s cubic-bezier(.22,1,.36,1); }"
+        # dot grid texture in CTA
+        ".mrbets-hero-cta::before { content:''; position:absolute; inset:0; pointer-events:none; z-index:0; "
+        "  background-image: radial-gradient(circle, rgba(250,204,21,.04) 1px, transparent 1px); "
+        "  background-size: 18px 18px; }"
+        # shimmer sweep
+        ".mrbets-hero-cta::after { content:''; position:absolute; top:0; bottom:0; width:40%; "
+        "  pointer-events:none; z-index:1; "
+        "  background: linear-gradient(90deg, transparent, rgba(255,255,255,.04), transparent); "
+        "  background-size: 200% auto; animation: mrbetsShimmer 3.5s linear infinite; }"
+        ".mrbets-hero-cta:hover { transform: translateY(-2px); animation: none; "
+        "  box-shadow: 0 18px 50px rgba(20,5,50,.75), 0 0 0 2px rgba(250,204,21,.70), "
+        "    0 0 48px rgba(250,204,21,.18); }"
+        ".mrbets-hero-inner { display:flex; align-items:center; gap:18px; "
+        "  position:relative; z-index:2; }"
         ".mrbets-hero-text { flex:1 1 auto; min-width:0; }"
-        ".mrbets-hero-eyebrow { font-size:.74rem; font-weight:900; "
+        ".mrbets-hero-eyebrow { display:flex; align-items:center; gap:8px; "
+        "  font-size:.70rem; font-weight:900; "
         "  letter-spacing:.18em; text-transform:uppercase; color:#facc15; "
-        "  text-shadow: 0 1px 2px rgba(0,0,0,.5); margin-bottom: 4px; }"
-        ".mrbets-hero-title { font-size:1.55rem; font-weight:900; color:#ffffff; "
-        "  line-height:1.1; letter-spacing:.01em; "
-        "  text-shadow: 0 2px 6px rgba(0,0,0,.5); margin: 0; }"
+        "  margin-bottom: 5px; }"
+        ".mrbets-live-dot { width:7px; height:7px; border-radius:50%; "
+        "  background:#22c55e; flex-shrink:0; "
+        "  animation: mrLiveFlash 1.8s ease-in-out infinite; }"
+        ".mrbets-hero-title { font-size:1.60rem; font-weight:900; color:#ffffff; "
+        "  line-height:1.05; letter-spacing:.01em; "
+        "  text-shadow: 0 2px 8px rgba(0,0,0,.55); margin: 0; }"
         ".mrbets-hero-title .crown { color:#facc15; "
-        "  text-shadow: 0 0 8px rgba(250,204,21,.55); }"
-        ".mrbets-hero-title .accent { color:#facc15; }"
-        ".mrbets-hero-sub { color:#e9d5ff; font-size:.92rem; font-weight:600; "
-        "  margin-top:6px; line-height:1.3; }"
+        "  text-shadow: 0 0 12px rgba(250,204,21,.65), 0 2px 4px rgba(0,0,0,.5); }"
+        ".mrbets-hero-title .accent { color:#facc15; "
+        "  text-shadow: 0 0 10px rgba(250,204,21,.40); }"
+        ".mrbets-hero-sub { color:#c4b5fd; font-size:.90rem; font-weight:600; "
+        "  margin-top:7px; line-height:1.35; }"
         ".mrbets-hero-cta-btn { display:inline-flex; align-items:center; gap:8px; "
-        "  margin-top:12px; padding:10px 18px; border-radius:999px; "
-        "  background: linear-gradient(180deg, #facc15 0%, #f59e0b 100%); "
-        "  color:#3b1f6b !important; font-weight:900; font-size:.95rem; "
+        "  margin-top:13px; padding:11px 22px; border-radius:999px; "
+        "  background: linear-gradient(135deg, #ffe042 0%, #facc15 50%, #f59e0b 100%); "
+        "  color:#1e0b4a !important; font-weight:900; font-size:.94rem; "
         "  letter-spacing:.04em; text-transform:uppercase; "
-        "  box-shadow: 0 4px 12px rgba(245,158,11,.45), "
-        "    inset 0 1px 0 rgba(255,255,255,.6); "
-        "  border: 2px solid #fde68a; }"
+        "  box-shadow: 0 4px 16px rgba(250,204,21,.45), inset 0 1px 0 rgba(255,255,255,.55); "
+        "  border: 1px solid rgba(255,255,255,.35); position: relative; overflow: hidden; }"
+        ".mrbets-hero-cta-btn::before { content:''; position:absolute; inset:0; "
+        "  background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); "
+        "  background-size: 200% auto; animation: mrbetsShimmer 2.2s linear infinite; }"
+        ".mrbets-hero-cta-btn > span, .mrbets-hero-cta-btn .arrow { position: relative; z-index:1; }"
         ".mrbets-hero-cta-btn .arrow { transition: transform .18s ease; }"
-        ".mrbets-hero-cta:hover .mrbets-hero-cta-btn .arrow { "
-        "  transform: translateX(3px); }"
-        ".mrbets-hero-sparkle { position:absolute; top:-40%; right:-10%; "
-        "  width:55%; height:180%; pointer-events:none; "
-        "  background: radial-gradient(closest-side, rgba(250,204,21,.22) 0%, "
-        "    rgba(250,204,21,0) 70%); transform: rotate(18deg); z-index:0; }"
+        ".mrbets-hero-cta:hover .mrbets-hero-cta-btn .arrow { transform: translateX(4px); }"
+        ".mrbets-hero-sparkle { position:absolute; top:-40%; right:-8%; "
+        "  width:50%; height:180%; pointer-events:none; z-index:1; "
+        "  background: radial-gradient(closest-side, rgba(250,204,21,.18) 0%, "
+        "    rgba(250,204,21,0) 70%); transform: rotate(15deg); }"
         "@media (max-width: 640px) { "
-        "  .mrbets-hero-cta { padding: 16px 14px; border-radius:18px; "
-        "    border-width:2px; margin-bottom: 14px; } "
+        "  .mrbets-hero-cta { padding: 16px 14px; border-radius:18px; margin-bottom: 14px; } "
         "  .mrbets-hero-inner { gap:12px; } "
         "  .mrbets-hero-title { font-size:1.22rem; } "
-        "  .mrbets-hero-sub { font-size:.84rem; } "
-        "  .mrbets-hero-cta-btn { padding:9px 14px; font-size:.86rem; "
-        "    width:100%; justify-content:center; } "
+        "  .mrbets-hero-sub { font-size:.82rem; } "
+        "  .mrbets-hero-cta-btn { padding:10px 16px; font-size:.86rem; "
+        "    width:100%; justify-content:center; margin-top:11px; } "
         "}"
         "@media (max-width: 380px) { "
         "  .mrbets-hero-title { font-size:1.06rem; } "
-        "  .mrbets-hero-eyebrow { font-size:.68rem; letter-spacing:.14em; } "
+        "  .mrbets-hero-eyebrow { font-size:.66rem; letter-spacing:.14em; } "
         "}"
         "</style>",
         unsafe_allow_html=True,
@@ -11484,7 +11558,10 @@ if _mrbets_idx is not None:
         '<div class="mrbets-hero-inner">'
         f'{_mrbets_logo_html}'
         '<div class="mrbets-hero-text">'
-        '<div class="mrbets-hero-eyebrow">⭐ Today\'s Premium Picks</div>'
+        '<div class="mrbets-hero-eyebrow">'
+        '<span class="mrbets-live-dot"></span>'
+        '⭐ Today\'s Premium Picks'
+        '</div>'
         '<div class="mrbets-hero-title">'
         '<span class="crown">👑</span> MRBETS850 '
         '<span class="accent">HOMERUN PICKS</span> OF THE DAY'
@@ -11493,8 +11570,10 @@ if _mrbets_idx is not None:
         'Hand-picked Top 25 home-run plays for tonight\'s slate — '
         'ranked, stats-backed, updated daily.'
         '</div>'
-        '<span class="mrbets-hero-cta-btn">View Today\'s Picks '
-        '<span class="arrow">→</span></span>'
+        '<span class="mrbets-hero-cta-btn">'
+        '<span>View Today\'s Picks</span>'
+        '<span class="arrow">→</span>'
+        '</span>'
         '</div>'
         '</div>'
         '</a>',

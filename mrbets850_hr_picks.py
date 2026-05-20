@@ -665,17 +665,17 @@ def _inject_css() -> None:
 .mrbets850-hr-wrap {
     /* Light-theme defaults */
     --mrb-card-bg: linear-gradient(160deg, #ffffff 0%, #fdfaff 60%, #f5efff 100%);
-    --mrb-card-border: rgba(124,58,237,0.35);
-    --mrb-card-shadow: 0 4px 12px rgba(20,5,50,0.10);
-    --mrb-text-strong: #1a0b3a;        /* deep-purple/near-black */
-    --mrb-text-muted: #4c1d95;         /* MLB Edge violet for labels */
-    --mrb-text-subtle: #6b7280;        /* slate-500 for N/A */
-    --mrb-stat-bg: #f5f3ff;            /* violet-50 */
-    --mrb-stat-border: rgba(124,58,237,0.18);
-    --mrb-stat-value: #4c1d95;         /* violet-900 */
+    --mrb-card-border: rgba(124,58,237,0.30);
+    --mrb-card-shadow: 0 4px 14px rgba(20,5,50,0.10);
+    --mrb-text-strong: #1a0b3a;
+    --mrb-text-muted: #4c1d95;
+    --mrb-text-subtle: #6b7280;
+    --mrb-stat-bg: #f5f3ff;
+    --mrb-stat-border: rgba(124,58,237,0.16);
+    --mrb-stat-value: #4c1d95;
     --mrb-note-bg: rgba(124,58,237,0.06);
     --mrb-note-border: #facc15;
-    --mrb-note-text: #3b0764;          /* dark violet, readable on lightviolet */
+    --mrb-note-text: #3b0764;
     --mrb-empty-bg: rgba(124,58,237,0.04);
     --mrb-empty-border: rgba(124,58,237,0.35);
     --mrb-empty-text: #4c1d95;
@@ -690,20 +690,20 @@ def _inject_css() -> None:
 }
 @media (prefers-color-scheme: dark) {
     .mrbets850-hr-wrap {
-        --mrb-card-bg: linear-gradient(160deg, #1a0b3a 0%, #221152 55%, #2a0f5c 100%);
-        --mrb-card-border: rgba(250,204,21,0.55);
-        --mrb-card-shadow: 0 6px 18px rgba(0,0,0,0.45);
-        --mrb-text-strong: #fafafa;
+        --mrb-card-bg: linear-gradient(160deg, #0e0628 0%, #1a0b3a 50%, #221152 100%);
+        --mrb-card-border: rgba(250,204,21,0.45);
+        --mrb-card-shadow: 0 6px 22px rgba(0,0,0,0.50);
+        --mrb-text-strong: #f4f0ff;
         --mrb-text-muted: #fde68a;
         --mrb-text-subtle: #a1a1aa;
         --mrb-stat-bg: rgba(255,255,255,0.06);
-        --mrb-stat-border: rgba(250,204,21,0.25);
+        --mrb-stat-border: rgba(250,204,21,0.22);
         --mrb-stat-value: #facc15;
-        --mrb-note-bg: rgba(250,204,21,0.10);
+        --mrb-note-bg: rgba(250,204,21,0.09);
         --mrb-note-border: #facc15;
         --mrb-note-text: #fde68a;
         --mrb-empty-bg: rgba(250,204,21,0.06);
-        --mrb-empty-border: rgba(250,204,21,0.55);
+        --mrb-empty-border: rgba(250,204,21,0.50);
         --mrb-empty-text: #fde68a;
         --mrb-editor-bg: linear-gradient(180deg, #14062e 0%, #1f0c44 100%);
         --mrb-editor-border: rgba(250,204,21,0.35);
@@ -712,71 +712,118 @@ def _inject_css() -> None:
     }
 }
 
-/* ---- Brand header (always dark purple + gold — readable on both themes) ---- */
+/* ---- animations ---- */
+@keyframes mrbHeaderScan {
+    0%   { transform: translateX(-100%); opacity:0; }
+    20%  { opacity:1; } 80% { opacity:1; }
+    100% { transform: translateX(250%); opacity:0; }
+}
+@keyframes mrbHeaderGlow {
+    0%, 100% { box-shadow: 0 12px 32px rgba(20,5,50,.50), 0 0 0 1px rgba(250,204,21,.25); }
+    50%       { box-shadow: 0 16px 42px rgba(20,5,50,.65), 0 0 0 1px rgba(250,204,21,.50); }
+}
+
+/* ---- Brand header (always dark purple + gold) ---- */
 .mrbets850-hr-wrap .mrbets850-hr-header {
     display: flex; align-items: center; gap: 14px;
-    padding: 14px 18px; border-radius: 18px;
-    background: linear-gradient(110deg, #14062e 0%, #2a0f5c 55%, #4c1d95 100%);
-    border: 1.5px solid rgba(250,204,21,0.60);
-    box-shadow: 0 12px 28px rgba(20,5,50,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
-    color: #fff;
+    padding: 16px 20px; border-radius: 20px;
+    background: linear-gradient(115deg, #080220 0%, #1e0b4a 40%, #2e1065 70%, #4c1d95 100%);
+    border: 1px solid rgba(250,204,21,0.52);
+    animation: mrbHeaderGlow 4s ease-in-out infinite;
+    color: #fff; position: relative; overflow: hidden;
+}
+.mrbets850-hr-wrap .mrbets850-hr-header::before {
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background-image: radial-gradient(circle, rgba(250,204,21,.04) 1px, transparent 1px);
+    background-size: 16px 16px;
+}
+.mrbets850-hr-wrap .mrbets850-hr-header::after {
+    content:''; position:absolute; top:0; bottom:0; width:35%;
+    pointer-events:none;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.05), transparent);
+    animation: mrbHeaderScan 6s ease-in-out infinite 1.5s;
 }
 .mrbets850-hr-wrap .mrbets850-hr-brand-logo {
     width: 64px; height: 64px; flex: 0 0 64px;
-    border-radius: 14px; background: #1a0b3a; padding: 4px;
+    border-radius: 14px; background: #12073a; padding: 4px;
     object-fit: contain;
     border: 1px solid rgba(250,204,21,0.55);
-    box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+    box-shadow: 0 4px 18px rgba(0,0,0,.50), 0 0 0 2px rgba(250,204,21,.10);
+    position: relative; z-index: 1;
 }
 .mrbets850-hr-wrap .mrbets850-hr-logo {
     width: 56px; height: 56px; border-radius: 12px;
-    background: #1a0b3a; padding: 5px; object-fit: contain;
-    border: 1.5px solid #facc15;
-    box-shadow: 0 0 0 2px rgba(250,204,21,0.18);
+    background: #12073a; padding: 5px; object-fit: contain;
+    border: 1px solid rgba(250,204,21,0.55);
+    box-shadow: 0 0 0 2px rgba(250,204,21,0.15);
+    position: relative; z-index: 1;
 }
-.mrbets850-hr-wrap .mrbets850-hr-text { min-width: 0; }
+.mrbets850-hr-wrap .mrbets850-hr-text { min-width: 0; position: relative; z-index: 1; }
 .mrbets850-hr-wrap .mrbets850-hr-eyebrow {
-    color: #fde68a; font-size: 0.72rem; letter-spacing: 0.18em;
+    color: #fde68a; font-size: 0.70rem; letter-spacing: 0.18em;
     text-transform: uppercase; font-weight: 800;
+    display: flex; align-items: center; gap: 7px;
+}
+.mrbets850-hr-wrap .mrbets850-hr-eyebrow::before {
+    content: '';
+    width: 7px; height: 7px; border-radius: 50%; background: #22c55e;
+    flex-shrink: 0; display: inline-block;
+    animation: mrbLiveDot 1.8s ease-in-out infinite;
+}
+@keyframes mrbLiveDot {
+    0%, 100% { opacity:1; box-shadow: 0 0 0 0 rgba(34,197,94,.6); }
+    50%       { opacity:.7; box-shadow: 0 0 0 5px rgba(34,197,94,0); }
 }
 .mrbets850-hr-wrap .mrbets850-hr-title {
-    font-weight: 900; font-size: 1.35rem; color: #facc15;
-    letter-spacing: 0.02em; line-height: 1.15;
-    text-shadow: 0 2px 6px rgba(0,0,0,0.55);
+    font-weight: 900; font-size: 1.38rem; color: #facc15;
+    letter-spacing: 0.02em; line-height: 1.12;
+    text-shadow: 0 0 20px rgba(250,204,21,.35), 0 2px 6px rgba(0,0,0,.60);
 }
 .mrbets850-hr-wrap .mrbets850-hr-sub {
-    color: #fde68a; font-size: 0.9rem; font-weight: 600; margin-top: 2px;
+    color: #c4b5fd; font-size: 0.88rem; font-weight: 600; margin-top: 3px;
 }
 .mrbets850-hr-wrap .mrbets850-hr-meta {
     margin-left: auto; text-align: right;
     color: #fde68a; font-weight: 700; font-size: 0.85rem;
+    position: relative; z-index: 1;
 }
 .mrbets850-hr-wrap .mrbets850-hr-meta .big {
     font-size: 1rem; color: #facc15; font-weight: 800;
 }
 
-/* ---- Cards (compact square tiles) ----
-   The grid uses small min-width tiles so 25 picks tile densely instead of
-   forcing one-card-per-row on mobile. Each card is a self-contained
-   block: rank chip + headshot + name on the top row, a 2-col stat chip
-   grid below. No element should stretch a tile to look like a list row. */
+/* ---- Cards (compact square tiles) ---- */
 .mrbets850-hr-wrap .mrbets850-card-grid {
     display: grid; gap: 10px; margin-top: 14px;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 }
 .mrbets850-hr-wrap .mrbets850-card {
-    position: relative; padding: 10px 10px 10px 10px;
-    border-radius: 14px;
-    border: 1.5px solid var(--mrb-card-border);
+    position: relative; padding: 11px;
+    border-radius: 16px;
+    border: 1px solid var(--mrb-card-border);
     background: var(--mrb-card-bg);
     box-shadow: var(--mrb-card-shadow);
     color: var(--mrb-text-strong);
     overflow: hidden;
     display: flex; flex-direction: column;
+    transition: border-color .22s, box-shadow .22s, transform .22s;
 }
-/* The header row keeps the rank pill, headshot, and name on one line so the
-   card stays roughly square — never the tall stacked-text shape that
-   prompted this redesign. */
+/* subtle top accent line on each card */
+.mrbets850-hr-wrap .mrbets850-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent 15%, rgba(250,204,21,.25) 50%, transparent 85%);
+    opacity: 0; transition: opacity .22s;
+}
+@media (prefers-color-scheme: dark) {
+    .mrbets850-hr-wrap .mrbets850-card:hover {
+        border-color: rgba(250,204,21,.65);
+        box-shadow: 0 10px 28px rgba(0,0,0,.55), 0 0 0 1px rgba(250,204,21,.15),
+                    0 0 16px rgba(250,204,21,.06);
+        transform: translateY(-2px);
+    }
+    .mrbets850-hr-wrap .mrbets850-card:hover::before { opacity: 1; }
+}
+/* The header row keeps the rank pill, headshot, and name on one line. */
 .mrbets850-hr-wrap .mrbets850-card .head {
     display: flex; align-items: center; gap: 8px;
     margin-bottom: 8px; min-width: 0;
@@ -784,11 +831,11 @@ def _inject_css() -> None:
 .mrbets850-hr-wrap .mrbets850-card .rank-pill {
     flex: 0 0 auto;
     min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px;
-    background: linear-gradient(135deg, #facc15, #b45309);
+    background: linear-gradient(135deg, #ffe042 0%, #facc15 50%, #f59e0b 100%);
     color: #14062e; font-weight: 900; font-size: 0.78rem;
     display: inline-flex; align-items: center; justify-content: center;
-    border: 1.5px solid #14062e;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.30);
+    border: 1px solid rgba(20,6,46,0.25);
+    box-shadow: 0 2px 6px rgba(0,0,0,.30), 0 0 0 1px rgba(255,255,255,.15) inset;
     line-height: 1;
 }
 .mrbets850-hr-wrap .mrbets850-card .head img.headshot,
@@ -797,6 +844,7 @@ def _inject_css() -> None:
     border-radius: 50%;
     object-fit: cover; background: #1a0b3a;
     border: 2px solid var(--mrb-accent);
+    box-shadow: 0 0 0 1px rgba(250,204,21,.12);
 }
 .mrbets850-hr-wrap .mrbets850-card .head .headshot.placeholder {
     display: flex; align-items: center; justify-content: center;
@@ -811,62 +859,60 @@ def _inject_css() -> None:
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mrbets850-hr-wrap .mrbets850-card .head .team {
-    font-size: 0.7rem; color: var(--mrb-text-muted);
+    font-size: 0.68rem; color: var(--mrb-text-muted);
     font-weight: 700; letter-spacing: 0.04em;
     display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
 }
 .mrbets850-hr-wrap .mrbets850-card .confidence {
     display: inline-block;
-    padding: 1px 6px; border-radius: 999px;
+    padding: 1px 7px; border-radius: 999px;
     font-size: 0.62rem; font-weight: 800;
     background: var(--mrb-accent); color: #14062e;
     border: 1px solid rgba(20,6,46,0.20);
     line-height: 1.4;
 }
-/* Two columns by default so labels never wrap inside the chip — three
-   would shrink chip widths below the width of strings like "Barrel%". */
 .mrbets850-hr-wrap .mrbets850-card .stat-grid {
     display: grid; grid-template-columns: repeat(2, minmax(0,1fr));
     gap: 4px 6px; margin-top: 2px;
 }
 .mrbets850-hr-wrap .mrbets850-card .stat {
     background: var(--mrb-stat-bg);
-    padding: 4px 6px; border-radius: 7px;
+    padding: 4px 7px; border-radius: 8px;
     border: 1px solid var(--mrb-stat-border);
     display: flex; align-items: baseline; justify-content: space-between;
     gap: 4px; min-width: 0;
+    transition: border-color .18s;
+}
+.mrbets850-hr-wrap .mrbets850-card:hover .stat {
+    border-color: rgba(250,204,21,.30);
 }
 .mrbets850-hr-wrap .mrbets850-card .stat .lbl {
-    font-size: 0.6rem; color: var(--mrb-text-muted);
-    font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    font-size: 0.58rem; color: var(--mrb-text-muted);
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
     white-space: nowrap;
 }
 .mrbets850-hr-wrap .mrbets850-card .stat .val {
-    font-size: 0.78rem; font-weight: 800; color: var(--mrb-stat-value);
+    font-size: 0.80rem; font-weight: 800; color: var(--mrb-stat-value);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
 }
 .mrbets850-hr-wrap .mrbets850-card .stat .val.na {
     color: var(--mrb-text-subtle); font-weight: 700;
 }
 .mrbets850-hr-wrap .mrbets850-card .note {
-    margin-top: 6px; padding: 5px 7px;
+    margin-top: 7px; padding: 5px 8px;
     background: var(--mrb-note-bg);
     border-left: 3px solid var(--mrb-note-border);
-    border-radius: 6px;
+    border-radius: 7px;
     color: var(--mrb-note-text);
-    font-size: 0.72rem; line-height: 1.25; font-weight: 600;
+    font-size: 0.72rem; line-height: 1.3; font-weight: 600;
 }
-/* ---- Cashed-card state ----
-   When the picked player has homered today, swap to a vivid green
-   gradient with a glowing border and stamp a HR-hit badge in the corner.
-   Stays readable in both themes — the badge text and border colour are
-   inlined rather than driven from --mrb-* so the success state pops even
-   inside the dark variant of the wrapper. */
+/* ---- Cashed-card state ---- */
 .mrbets850-hr-wrap .mrbets850-card.cashed {
-    background: linear-gradient(160deg, #052e1a 0%, #064e3b 55%, #047857 100%);
+    background: linear-gradient(160deg, #032b16 0%, #054e2e 55%, #047857 100%);
     border-color: #22c55e;
-    box-shadow: 0 0 0 2px rgba(34,197,94,0.30),
-                0 6px 22px rgba(5,150,105,0.45);
+    box-shadow: 0 0 0 1px rgba(34,197,94,.25),
+                0 8px 28px rgba(5,150,105,.50);
     color: #ecfdf5;
 }
 .mrbets850-hr-wrap .mrbets850-card.cashed .name,
@@ -878,7 +924,7 @@ def _inject_css() -> None:
 }
 .mrbets850-hr-wrap .mrbets850-card.cashed .stat {
     background: rgba(255,255,255,0.10);
-    border-color: rgba(187,247,208,0.45);
+    border-color: rgba(187,247,208,0.40);
 }
 .mrbets850-hr-wrap .mrbets850-card.cashed .stat .val.na {
     color: #bbf7d0;
@@ -888,27 +934,27 @@ def _inject_css() -> None:
     border-left-color: #facc15;
 }
 .mrbets850-hr-wrap .mrbets850-card .cashed-badge {
-    position: absolute; top: 6px; right: 6px;
-    padding: 2px 6px; border-radius: 999px;
+    position: absolute; top: 7px; right: 7px;
+    padding: 2px 7px; border-radius: 999px;
     font-size: 0.62rem; font-weight: 900; letter-spacing: 0.04em;
-    background: linear-gradient(135deg, #facc15, #f59e0b);
+    background: linear-gradient(135deg, #ffe042, #facc15, #f59e0b);
     color: #052e1a;
-    border: 1.5px solid #052e1a;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.40);
+    border: 1px solid rgba(5,46,26,.40);
+    box-shadow: 0 2px 8px rgba(0,0,0,.45);
     text-transform: uppercase;
     line-height: 1.2;
 }
 /* HR-hits summary chip in the header. */
 .mrbets850-hr-wrap .mrbets850-hr-meta .hits-chip {
     display: inline-block; margin-top: 4px;
-    padding: 2px 8px; border-radius: 999px;
-    background: rgba(34,197,94,0.20); color: #bbf7d0;
+    padding: 2px 9px; border-radius: 999px;
+    background: rgba(34,197,94,0.18); color: #86efac;
     font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em;
-    border: 1px solid rgba(187,247,208,0.45);
+    border: 1px solid rgba(134,239,172,0.35);
 }
 .mrbets850-hr-wrap .mrbets850-empty {
-    padding: 18px; border-radius: 14px;
-    border: 1.5px dashed var(--mrb-empty-border);
+    padding: 20px; border-radius: 16px;
+    border: 1px dashed var(--mrb-empty-border);
     background: var(--mrb-empty-bg);
     color: var(--mrb-empty-text);
     text-align: center; font-weight: 700;

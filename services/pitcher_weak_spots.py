@@ -34,10 +34,36 @@ except Exception:  # pragma: no cover
     pd = None  # type: ignore
 
 # Public lineup status constants — re-exported so callers in app.py don't
-# have to import lineup_service directly.
+# have to import lineup_service directly. Mirrors lineup_service.py so the UI
+# can render truthful labels for live / final / postponed games rather than
+# falling through to a generic "pending" badge.
 LINEUP_STATUS_CONFIRMED = "confirmed"
 LINEUP_STATUS_EXPECTED = "expected"
 LINEUP_STATUS_NOT_POSTED = "not_posted"
+LINEUP_STATUS_LIVE = "live"
+LINEUP_STATUS_FINAL = "final"
+LINEUP_STATUS_POSTPONED = "postponed"
+
+
+def lineup_status_label(status: str, *, has_lineup: bool = True) -> str:
+    """Human-readable label for a lineup status.
+
+    ``has_lineup`` lets the live/final paths degrade gracefully when the
+    boxscore didn't carry a batting order — instead of claiming a confirmed
+    lineup we'd render "Live - lineup unavailable" which is the truth.
+    """
+    s = (status or "").lower()
+    if s == LINEUP_STATUS_CONFIRMED:
+        return "Lineup confirmed"
+    if s == LINEUP_STATUS_LIVE:
+        return "Live" if has_lineup else "Live - lineup unavailable"
+    if s == LINEUP_STATUS_FINAL:
+        return "Final" if has_lineup else "Final - lineup unavailable"
+    if s == LINEUP_STATUS_POSTPONED:
+        return "Postponed"
+    if s == LINEUP_STATUS_EXPECTED:
+        return "Projected lineup"
+    return "Lineup pending"
 
 # Zone classification thresholds (0-100 scale).
 ZONE_PRIMARY = "primary"     # red/orange — strong attack
@@ -554,7 +580,11 @@ def assemble_card(
 ) -> WeakSpotCard:
     """Run the slot scorer for every batter in ``lineup`` and roll up the
     aggregate card-level fields the UI sorts/filters by."""
-    is_confirmed = lineup_status == LINEUP_STATUS_CONFIRMED
+    # Confirmed-style statuses share the green outline treatment: a lineup is
+    # locked in once MLB has either posted it or already begun the game.
+    is_confirmed = lineup_status in (
+        LINEUP_STATUS_CONFIRMED, LINEUP_STATUS_LIVE, LINEUP_STATUS_FINAL,
+    )
     scores: list[dict[str, Any]] = [score_slot(pitcher_profile, b) for b in lineup]
 
     sorted_scores = sorted(scores, key=lambda s: -s["score"])
@@ -571,12 +601,13 @@ def assemble_card(
     has_top = any(s["slot"] <= 3 and s["zone"] in (ZONE_PRIMARY, ZONE_SECONDARY) for s in scores)
     has_mid = any(4 <= s["slot"] <= 6 and s["zone"] in (ZONE_PRIMARY, ZONE_SECONDARY) for s in scores)
 
-    if lineup_status == LINEUP_STATUS_CONFIRMED:
-        status_label = "Lineup confirmed"
-    elif lineup_status == LINEUP_STATUS_EXPECTED:
-        status_label = "Projected lineup"
-    else:
-        status_label = "Lineup pending"
+    # A lineup is "real" once at least one named (non-Projected #N) batter
+    # has been bound — for live/final games we want to flip to the
+    # "unavailable" fallback when boxscore data is missing.
+    has_named_lineup = any(
+        b.name and not b.name.startswith("Projected #") for b in lineup
+    )
+    status_label = lineup_status_label(lineup_status, has_lineup=has_named_lineup)
 
     return WeakSpotCard(
         game_pk=game_pk,
@@ -622,7 +653,7 @@ def bind_confirmed_lineup(card: WeakSpotCard, confirmed: list[LineupBatter]) -> 
         new_batters.append(replacement)
     card.batters = new_batters
     card.lineup_status = LINEUP_STATUS_CONFIRMED
-    card.lineup_status_label = "Lineup confirmed"
+    card.lineup_status_label = lineup_status_label(LINEUP_STATUS_CONFIRMED)
     card.is_lineup_confirmed = True
     return card
 

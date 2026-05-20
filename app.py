@@ -15852,18 +15852,31 @@ if _view == "🎯 Pitcher Weak Spots":
             lineup_to_dict_rows as _lineup_to_rows,
             LINEUP_STATUS_CONFIRMED as _LS_CONFIRMED,
             LINEUP_STATUS_EXPECTED as _LS_EXPECTED,
+            LINEUP_STATUS_LIVE as _LS_LIVE,
+            LINEUP_STATUS_FINAL as _LS_FINAL,
+            LINEUP_STATUS_POSTPONED as _LS_POSTPONED,
+            LINEUP_STATUS_NOT_POSTED as _LS_NOT_POSTED,
         )
     except Exception:
         _lineup_daily = None
         _lineup_to_rows = None
         _LS_CONFIRMED = "confirmed"
         _LS_EXPECTED = "expected"
+        _LS_LIVE = "live"
+        _LS_FINAL = "final"
+        _LS_POSTPONED = "postponed"
+        _LS_NOT_POSTED = "not_posted"
+    # Statuses where we treat the lineup as locked in (not projected) and
+    # apply the confirmed-style highlight. Includes live/final because once a
+    # game starts, the batting order is real even if we end up rendering it
+    # without a boxscore.
+    _LS_LOCKED = {_LS_CONFIRMED, _LS_LIVE, _LS_FINAL}
 
     st.markdown(
         '<div class="section-title" style="font-size:1.4rem;margin-top:8px;">'
         '🎯 Pitcher Weak Spots'
         '</div>'
-        '<div style="color:#64748b; font-size:.92rem; margin:-4px 0 12px 0;">'
+        '<div style="color:#cbd5e1; font-size:.92rem; margin:-4px 0 12px 0; line-height:1.45;">'
         'Daily matchup intelligence: each starter\'s most attackable opposing batting-order slots, '
         'with projected lineups locked in by position until MLB posts the confirmed order.'
         '</div>',
@@ -15875,10 +15888,11 @@ if _view == "🎯 Pitcher Weak Spots":
         st.stop()
 
     # ---- Build one card per starting pitcher (away then home for each game) ----
-    @st.cache_data(ttl=180, show_spinner=False)
+    @st.cache_data(ttl=60, show_spinner=False)
     def _pws_lineups_for_date(date_iso: str):
-        """Pull daily lineups via the shared lineup service. Cached for 3 min
-        so the tab refreshes on the same cadence as the rest of the slate.
+        """Pull daily lineups via the shared lineup service. Short cache so we
+        pick up confirmed lineups and live/final state quickly — the
+        underlying ``LineupService`` already does its own status-aware TTL.
         Returns a {game_pk: GameLineups} dict (best-effort; empty on error)."""
         if _lineup_daily is None:
             return {}
@@ -15892,11 +15906,26 @@ if _view == "🎯 Pitcher Weak Spots":
     _lineups_by_pk = _pws_lineups_for_date(_slate_iso)
 
     def _lineup_for_side(game_pk, side_team_abbr, opp_team_id, opp_team_abbr):
-        """Return (LineupBatter list, status). Confirmed > projected > anonymous."""
+        """Return (LineupBatter list, status). Confirmed > projected > anonymous.
+
+        For live/final games we honor the game-state status even when the
+        boxscore arrived without a batting order — the UI then renders a
+        truthful "Live - lineup unavailable" / "Final - lineup unavailable"
+        instead of misleading "Lineup pending".
+        """
         gl = _lineups_by_pk.get(int(game_pk) if game_pk else -1)
+        game_state_status = None
+        if gl is not None:
+            # Capture the *game's* abstract status — used so a live/final
+            # game without a posted batting order still labels truthfully.
+            abstract = (gl.abstract_status or "").lower()
+            if gl.is_postponed:
+                game_state_status = _LS_POSTPONED
+            elif abstract == "live":
+                game_state_status = _LS_LIVE
+            elif abstract == "final":
+                game_state_status = _LS_FINAL
         if gl is not None and _lineup_to_rows is not None:
-            # Pick the side that ISN'T the pitcher's team — we score the
-            # batting order opposite to the pitcher we're profiling.
             opp_side = None
             if str(gl.away.team_abbr or "").upper() == str(opp_team_abbr or "").upper():
                 opp_side = gl.away
@@ -15904,8 +15933,8 @@ if _view == "🎯 Pitcher Weak Spots":
                 opp_side = gl.home
             if opp_side is not None and opp_side.starters:
                 rows = _lineup_to_rows(opp_side)
-                status = opp_side.status or _LS_EXPECTED
-                is_proj = status != _LS_CONFIRMED
+                status = opp_side.status or game_state_status or _LS_EXPECTED
+                is_proj = status not in _LS_LOCKED
                 return pws.lineup_from_rows(rows, is_projected=is_proj), status
         # Fall back to the app's projected lineup (recent-starts greedy assign).
         if opp_team_id:
@@ -15913,16 +15942,26 @@ if _view == "🎯 Pitcher Weak Spots":
                 proj_df = get_projected_lineup(int(opp_team_id), opp_team_abbr, _slate_iso)
                 if proj_df is not None and not proj_df.empty:
                     rows = proj_df.to_dict(orient="records")
-                    return pws.lineup_from_rows(rows, is_projected=True), _LS_EXPECTED
+                    # If the game is already live/final, prefer the truthful
+                    # game-state status over a stale "Projected" badge.
+                    status = game_state_status or _LS_EXPECTED
+                    is_proj = status not in _LS_LOCKED
+                    return pws.lineup_from_rows(rows, is_projected=is_proj), status
             except Exception:
                 pass
-        # Last resort — anonymous 1..9 slots, projected.
-        return [pws.make_projected_batter(s) for s in range(1, 10)], "not_posted"
+        # Last resort — anonymous 1..9 slots, but honor live/final state when
+        # we have it so the user sees "Live - lineup unavailable" instead of
+        # "Lineup pending".
+        return (
+            [pws.make_projected_batter(s) for s in range(1, 10)],
+            game_state_status or _LS_NOT_POSTED,
+        )
 
-    @st.cache_data(ttl=300, show_spinner=False)
+    @st.cache_data(ttl=90, show_spinner=False)
     def _pws_build_cards(date_iso: str):
-        """Build every card for the slate. Cached so filter/sort interactions
-        don't trigger a rebuild on each rerun."""
+        """Build every card for the slate. Cached short enough that live
+        lineup status flips through within a couple refreshes, while filter/
+        sort widget interactions still hit the cache."""
         cards: list[pws.WeakSpotCard] = []
         for _, gr in schedule_df.iterrows():
             game_pk = gr.get("game_pk")
@@ -15999,11 +16038,19 @@ if _view == "🎯 Pitcher Weak Spots":
         st.info("No probable starters posted yet for this slate. Check back closer to first pitch.")
         st.stop()
 
-    # ---- Filters + sort ----
+    # ---- Filters + sort -----------------------------------------------------
+    # Single-select segmented filter keeps mobile usable (no crowded
+    # multiselect chips) and the sort selectbox is paired alongside. Filter
+    # names are grouped into a tighter, clearer vocabulary so users can scan
+    # the bar at a glance against the app's dark background.
     _filter_options = [
-        "All games", "Confirmed only", "Lefty weakness", "Righty weakness",
-        "Top-order targets", "Middle-order targets", "Value bats",
-        "High-confidence spots",
+        "All",
+        "Confirmed",
+        "Lefty weakness",
+        "Righty weakness",
+        "Top-order targets",
+        "Value bats",
+        "High confidence",
     ]
     _sort_options = [
         "Highest overall pitcher weakness",
@@ -16013,13 +16060,14 @@ if _view == "🎯 Pitcher Weak Spots":
         "Confirmed lineups first",
         "Earliest game time",
     ]
-    _filter_col, _sort_col = st.columns([1.3, 1.3])
+    st.markdown('<div class="pws-controls">', unsafe_allow_html=True)
+    _filter_col, _sort_col = st.columns([1.0, 1.0])
     with _filter_col:
-        _flt = st.multiselect(
-            "Filter",
+        _flt_choice = st.selectbox(
+            "Show",
             _filter_options,
-            default=["All games"],
-            key="pws_filter",
+            index=0,
+            key="pws_filter_single",
         )
     with _sort_col:
         _sort_choice = st.selectbox(
@@ -16028,35 +16076,30 @@ if _view == "🎯 Pitcher Weak Spots":
             index=0,
             key="pws_sort",
         )
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    def _passes_filters(card: pws.WeakSpotCard, flt: list[str]) -> bool:
-        if not flt or "All games" in flt:
-            base = True
-        else:
-            base = True
-        if "Confirmed only" in flt and not card.is_lineup_confirmed:
-            return False
-        if "Lefty weakness" in flt and not card.has_lefty_weakness:
-            return False
-        if "Righty weakness" in flt and not card.has_righty_weakness:
-            return False
-        if "Top-order targets" in flt and not card.has_top_order_target:
-            return False
-        if "Middle-order targets" in flt and not card.has_middle_order_target:
-            return False
-        if "Value bats" in flt:
-            # Value bats = at least 2 attack-zone hits outside the top-3.
+    def _passes_filter(card: pws.WeakSpotCard, flt: str) -> bool:
+        if flt == "All":
+            return True
+        if flt == "Confirmed":
+            return card.is_lineup_confirmed
+        if flt == "Lefty weakness":
+            return card.has_lefty_weakness
+        if flt == "Righty weakness":
+            return card.has_righty_weakness
+        if flt == "Top-order targets":
+            return card.has_top_order_target
+        if flt == "Value bats":
             value = sum(
                 1 for s in card.slot_scores
                 if s["slot"] >= 4 and s["zone"] in (pws.ZONE_PRIMARY, pws.ZONE_SECONDARY)
             )
-            if value < 2:
-                return False
-        if "High-confidence spots" in flt and card.confidence < 60.0:
-            return False
-        return base
+            return value >= 2
+        if flt == "High confidence":
+            return card.confidence >= 60.0
+        return True
 
-    _filtered = [c for c in _all_cards if _passes_filters(c, _flt)]
+    _filtered = [c for c in _all_cards if _passes_filter(c, _flt_choice)]
 
     def _sort_key(card: pws.WeakSpotCard):
         if _sort_choice == "Highest overall pitcher weakness":
@@ -16080,71 +16123,149 @@ if _view == "🎯 Pitcher Weak Spots":
 
     _filtered.sort(key=_sort_key)
 
-    # ---- Tab-scoped CSS ----
+    # ---- Tab-scoped CSS -----------------------------------------------------
+    # Color system (chosen against the app's dark #0f172a background):
+    #   primary   = red/orange (#ef4444) — strong attack
+    #   secondary = amber/yellow (#f59e0b) — worth a look
+    #   neutral   = slate gray (#64748b) — fade
+    # Confirmed lineup uses a green halo (#22c55e) layered on top of the
+    # zone color so the "target this slot" cue is independent of attack
+    # zone (red can still be a confirmed target without color noise).
+    # Mobile (max-width 640px) collapses the 9-slot grid into a vertical
+    # list so each slot's batter name fits without truncating.
     st.markdown(
         "<style>"
+        ":root { --pws-primary:#ef4444; --pws-secondary:#f59e0b; "
+        "  --pws-neutral:#64748b; --pws-confirmed:#22c55e; }"
+        ".pws-controls { background:#1a0b3a; border:1px solid #4c1d95; "
+        "  border-radius:12px; padding:10px 12px; margin:2px 0 12px; }"
+        ".pws-controls [data-testid=\"stWidgetLabel\"] p, "
+        ".pws-controls label, "
+        ".pws-controls label * { color:#facc15 !important; "
+        "  font-weight:800 !important; font-size:.85rem !important; "
+        "  letter-spacing:.04em; text-transform:uppercase; }"
+        ".pws-controls [data-baseweb=\"select\"] > div { "
+        "  background:#ffffff !important; border-radius:10px !important; "
+        "  border:1.5px solid #facc15 !important; color:#0f172a !important; "
+        "  font-weight:700 !important; }"
+        ".pws-controls [data-baseweb=\"select\"] svg { color:#3b1f6b !important; }"
+        ".pws-summary { color:#fde68a; font-weight:700; font-size:.92rem; "
+        "  margin:0 4px 10px; }"
         ".pws-card { background:#ffffff; border-radius:16px; padding:14px 16px; "
         "  margin-bottom:14px; border:1.5px solid #e2e8f0; "
-        "  box-shadow:0 2px 10px rgba(15,23,42,.06); }"
-        ".pws-card.confirmed { border-color:#15803d; "
-        "  box-shadow:0 2px 12px rgba(21,128,61,.18); }"
-        ".pws-header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; "
-        "  justify-content:space-between; margin-bottom:8px; }"
-        ".pws-matchup { font-weight:900; font-size:1.05rem; color:#0f172a; }"
-        ".pws-matchup .time { color:#64748b; font-weight:600; margin-left:8px; "
-        "  font-size:.86rem; }"
-        ".pws-pitcher { font-size:.95rem; color:#1e293b; font-weight:700; }"
-        ".pws-pitcher .hand { display:inline-block; padding:1px 6px; border-radius:6px; "
-        "  background:#e0e7ff; color:#3730a3; font-weight:800; font-size:.74rem; "
-        "  margin-left:6px; }"
-        ".pws-badge { display:inline-block; padding:3px 9px; border-radius:999px; "
-        "  font-weight:800; font-size:.74rem; letter-spacing:.03em; "
-        "  text-transform:uppercase; }"
-        ".pws-badge.confirmed { background:#dcfce7; color:#166534; border:1.5px solid #15803d; }"
-        ".pws-badge.expected { background:#fef3c7; color:#92400e; border:1.5px solid #d97706; }"
-        ".pws-badge.pending  { background:#e2e8f0; color:#475569; border:1.5px solid #94a3b8; }"
-        ".pws-overall { background:#0f172a; color:#facc15; padding:6px 12px; "
-        "  border-radius:12px; font-weight:900; font-size:.92rem; "
-        "  display:inline-flex; align-items:center; gap:6px; }"
-        ".pws-meta { color:#475569; font-size:.84rem; margin-top:2px; }"
-        ".pws-tagrow { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 8px; }"
-        ".pws-tag { padding:2px 8px; border-radius:8px; font-size:.72rem; "
+        "  box-shadow:0 2px 12px rgba(15,23,42,.18); }"
+        ".pws-card.confirmed { border:2px solid var(--pws-confirmed); "
+        "  box-shadow:0 0 0 2px rgba(34,197,94,.18), 0 4px 16px rgba(21,128,61,.22); }"
+        ".pws-header { display:flex; align-items:flex-start; gap:12px; "
+        "  flex-wrap:wrap; justify-content:space-between; margin-bottom:8px; }"
+        ".pws-header .left { min-width:0; flex:1 1 auto; }"
+        ".pws-header .right { display:flex; flex-direction:column; "
+        "  align-items:flex-end; gap:6px; flex:0 0 auto; }"
+        ".pws-matchup { font-weight:900; font-size:1.05rem; color:#0f172a; "
+        "  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }"
+        ".pws-matchup .time { color:#475569; font-weight:700; font-size:.82rem; }"
+        ".pws-pitcher { font-size:.95rem; color:#1e293b; font-weight:700; "
+        "  margin-top:2px; }"
+        ".pws-pitcher .hand { display:inline-block; padding:1px 7px; "
+        "  border-radius:6px; background:#1e1147; color:#facc15; "
+        "  font-weight:800; font-size:.72rem; margin-left:6px; }"
+        ".pws-pitcher .vs { color:#475569; font-weight:600; margin-left:4px; }"
+        ".pws-badge { display:inline-flex; align-items:center; gap:5px; "
+        "  padding:4px 10px; border-radius:999px; font-weight:800; "
+        "  font-size:.74rem; letter-spacing:.04em; text-transform:uppercase; "
+        "  white-space:nowrap; }"
+        ".pws-badge .dot { width:7px; height:7px; border-radius:50%; "
+        "  display:inline-block; }"
+        ".pws-badge.confirmed { background:#dcfce7; color:#14532d; "
+        "  border:1.5px solid #15803d; }"
+        ".pws-badge.confirmed .dot { background:#16a34a; }"
+        ".pws-badge.live { background:#fee2e2; color:#7f1d1d; "
+        "  border:1.5px solid #dc2626; }"
+        ".pws-badge.live .dot { background:#dc2626; animation:pwsPulse 1.4s infinite; }"
+        ".pws-badge.final { background:#1e1147; color:#facc15; "
+        "  border:1.5px solid #facc15; }"
+        ".pws-badge.final .dot { background:#facc15; }"
+        ".pws-badge.expected { background:#fef3c7; color:#78350f; "
+        "  border:1.5px solid #d97706; }"
+        ".pws-badge.expected .dot { background:#d97706; }"
+        ".pws-badge.pending { background:#e2e8f0; color:#334155; "
+        "  border:1.5px solid #94a3b8; }"
+        ".pws-badge.pending .dot { background:#64748b; }"
+        ".pws-badge.postponed { background:#f5f3ff; color:#5b21b6; "
+        "  border:1.5px solid #7c3aed; }"
+        ".pws-badge.postponed .dot { background:#7c3aed; }"
+        "@keyframes pwsPulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }"
+        ".pws-overall { background:#1a0b3a; color:#facc15; padding:6px 12px; "
+        "  border-radius:12px; font-weight:900; font-size:.95rem; "
+        "  display:inline-flex; align-items:center; gap:6px; "
+        "  border:1.5px solid #facc15; }"
+        ".pws-meta { color:#475569; font-size:.84rem; margin-top:6px; "
+        "  display:flex; align-items:center; gap:8px; flex-wrap:wrap; }"
+        ".pws-meta b { color:#0f172a; }"
+        ".pws-tagrow { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 4px; }"
+        ".pws-tag { padding:3px 9px; border-radius:8px; font-size:.72rem; "
         "  font-weight:800; letter-spacing:.02em; }"
-        ".pws-tag.top { background:#fee2e2; color:#991b1b; }"
-        ".pws-tag.mid { background:#ffedd5; color:#9a3412; }"
-        ".pws-tag.bot { background:#f3e8ff; color:#6b21a8; }"
-        ".pws-tag.lefty { background:#dbeafe; color:#1e40af; }"
-        ".pws-tag.righty { background:#fce7f3; color:#9d174d; }"
-        ".pws-tag.ttop { background:#fef9c3; color:#854d0e; }"
-        ".pws-tag.power { background:#fecaca; color:#7f1d1d; }"
-        ".pws-tag.lowk { background:#cffafe; color:#155e75; }"
-        ".pws-tag.platoon { background:#dcfce7; color:#166534; }"
-        ".pws-target-list { background:#f8fafc; border-left:4px solid #f59e0b; "
-        "  padding:8px 12px; border-radius:8px; margin:6px 0 10px; "
-        "  font-size:.86rem; color:#1e293b; }"
+        ".pws-tag.top    { background:#fee2e2; color:#7f1d1d; }"
+        ".pws-tag.mid    { background:#ffedd5; color:#7c2d12; }"
+        ".pws-tag.bot    { background:#ede9fe; color:#5b21b6; }"
+        ".pws-tag.lefty  { background:#dbeafe; color:#1e3a8a; }"
+        ".pws-tag.righty { background:#fce7f3; color:#831843; }"
+        ".pws-tag.ttop   { background:#fef9c3; color:#713f12; }"
+        ".pws-tag.power  { background:#fecaca; color:#7f1d1d; }"
+        ".pws-tag.lowk   { background:#cffafe; color:#0e7490; }"
+        ".pws-tag.platoon{ background:#dcfce7; color:#14532d; }"
+        ".pws-target-list { background:#fffbeb; border-left:4px solid var(--pws-secondary); "
+        "  padding:9px 12px; border-radius:8px; margin:8px 0 6px; "
+        "  font-size:.88rem; color:#1e293b; line-height:1.45; }"
         ".pws-target-list b { color:#0f172a; }"
-        ".pws-reason { background:#f1f5f9; border-radius:8px; padding:8px 12px; "
-        "  margin-top:6px; font-size:.85rem; color:#334155; }"
-        ".pws-slot-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); "
-        "  gap:8px; margin-top:10px; }"
-        "@media (max-width: 720px) { .pws-slot-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } }"
-        "@media (max-width: 480px) { .pws-slot-grid { grid-template-columns:1fr; } }"
-        ".pws-slot { border:1.5px solid; border-radius:10px; padding:8px 10px; "
-        "  display:flex; flex-direction:column; gap:2px; position:relative; }"
-        ".pws-slot.projected { opacity:.86; }"
-        ".pws-slot.confirmed-target { box-shadow:0 0 0 3px rgba(22,163,74,.45); "
-        "  border-color:#15803d; }"
-        ".pws-slot .row1 { display:flex; align-items:center; justify-content:space-between; "
-        "  gap:6px; }"
-        ".pws-slot .spot { font-weight:900; font-size:.84rem; }"
-        ".pws-slot .score { font-weight:900; font-size:.92rem; }"
-        ".pws-slot .name { font-weight:700; font-size:.94rem; color:#0f172a; "
-        "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
-        ".pws-slot .meta { font-size:.74rem; color:#475569; }"
-        ".pws-slot .target-icon { font-size:.92rem; }"
+        ".pws-reason { background:#f1f5f9; border-radius:8px; padding:9px 12px; "
+        "  margin-top:8px; font-size:.85rem; color:#334155; line-height:1.45; }"
+        ".pws-reason b { color:#0f172a; }"
         ".pws-confidence-bar { height:6px; border-radius:3px; background:#e2e8f0; "
         "  margin-top:6px; overflow:hidden; }"
-        ".pws-confidence-bar > span { display:block; height:100%; background:#22c55e; }"
+        ".pws-confidence-bar > span { display:block; height:100%; background:var(--pws-confirmed); }"
+        # Lineup grid: 3 cols on desktop / 2 on tablet / 1 (vertical list) on phones.
+        ".pws-slot-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); "
+        "  gap:8px; margin-top:10px; }"
+        ".pws-slot { border:1.5px solid; border-radius:10px; padding:8px 10px; "
+        "  display:flex; flex-direction:column; gap:2px; position:relative; "
+        "  background:#ffffff; }"
+        ".pws-slot.projected { opacity:.92; border-style:dashed; }"
+        ".pws-slot.zone-primary   { background:#fef2f2; border-color:var(--pws-primary); }"
+        ".pws-slot.zone-secondary { background:#fffbeb; border-color:var(--pws-secondary); }"
+        ".pws-slot.zone-neutral   { background:#f8fafc; border-color:var(--pws-neutral); }"
+        ".pws-slot.confirmed-target { box-shadow:inset 0 0 0 2px var(--pws-confirmed); }"
+        ".pws-slot .row1 { display:flex; align-items:center; justify-content:space-between; "
+        "  gap:6px; }"
+        ".pws-slot .spot { font-weight:900; font-size:.86rem; color:#1e293b; "
+        "  display:inline-flex; align-items:center; gap:5px; }"
+        ".pws-slot .spot .side { color:#475569; font-weight:700; font-size:.72rem; "
+        "  background:#e2e8f0; border-radius:6px; padding:1px 6px; }"
+        ".pws-slot .score-pill { font-weight:900; font-size:.84rem; padding:2px 8px; "
+        "  border-radius:999px; }"
+        ".pws-slot.zone-primary   .score-pill { background:var(--pws-primary);   color:#fff; }"
+        ".pws-slot.zone-secondary .score-pill { background:var(--pws-secondary); color:#1e293b; }"
+        ".pws-slot.zone-neutral   .score-pill { background:#e2e8f0; color:#1e293b; }"
+        ".pws-slot .name { font-weight:800; font-size:.95rem; color:#0f172a; "
+        "  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+        ".pws-slot .meta { font-size:.74rem; color:#475569; display:flex; "
+        "  align-items:center; gap:4px; }"
+        ".pws-slot .meta .check { color:var(--pws-confirmed); font-weight:900; }"
+        # Tablet: 2 columns.
+        "@media (max-width: 900px) { .pws-slot-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } }"
+        # Phone: vertical compact list — name and score sit on the same row.
+        "@media (max-width: 640px) {"
+        "  .pws-slot-grid { grid-template-columns:1fr; gap:6px; }"
+        "  .pws-slot { padding:7px 10px; }"
+        "  .pws-slot .name { font-size:.92rem; }"
+        "  .pws-header { gap:8px; }"
+        "  .pws-header .right { align-items:flex-start; flex-direction:row; "
+        "    flex-wrap:wrap; }"
+        "  .pws-matchup { font-size:1.0rem; }"
+        "  .pws-pitcher { font-size:.9rem; }"
+        "  .pws-overall { font-size:.85rem; padding:5px 10px; }"
+        "  .pws-target-list, .pws-reason { font-size:.85rem; }"
+        "}"
         "</style>",
         unsafe_allow_html=True,
     )
@@ -16158,29 +16279,40 @@ if _view == "🎯 Pitcher Weak Spots":
         pws.TAG_PLATOON_EDGE: "platoon",
     }
 
+    # Map lineup_status → badge CSS class. Live/final/postponed each get
+    # their own visual treatment so the tab honestly reflects game state.
+    _badge_cls_by_status = {
+        _LS_CONFIRMED: "confirmed",
+        _LS_LIVE: "live",
+        _LS_FINAL: "final",
+        _LS_EXPECTED: "expected",
+        _LS_POSTPONED: "postponed",
+        _LS_NOT_POSTED: "pending",
+    }
+    _zone_cls = {
+        pws.ZONE_PRIMARY: "zone-primary",
+        pws.ZONE_SECONDARY: "zone-secondary",
+        pws.ZONE_NEUTRAL: "zone-neutral",
+    }
+
     def _render_card(card: pws.WeakSpotCard):
-        # Header
-        if card.is_lineup_confirmed:
-            badge_cls = "confirmed"
-        elif card.lineup_status == _LS_EXPECTED:
-            badge_cls = "expected"
-        else:
-            badge_cls = "pending"
+        badge_cls = _badge_cls_by_status.get(card.lineup_status, "pending")
         card_cls = "pws-card confirmed" if card.is_lineup_confirmed else "pws-card"
         html = [f'<div class="{card_cls}">']
         html.append('<div class="pws-header">')
         html.append(
-            f'<div><div class="pws-matchup">{card.away_abbr} @ {card.home_abbr}'
+            f'<div class="left">'
+            f'<div class="pws-matchup">{card.away_abbr} @ {card.home_abbr}'
             f'<span class="time">{card.game_time_label}</span></div>'
-            f'<div class="pws-pitcher">{card.pitcher_name} '
+            f'<div class="pws-pitcher">{card.pitcher_name}'
             f'<span class="hand">{card.pitcher_hand or "R"}HP</span>'
-            f' <span style="color:#64748b; font-weight:600;">'
-            f'vs {card.opponent_abbr} lineup</span></div></div>'
+            f'<span class="vs">vs {card.opponent_abbr} lineup</span></div></div>'
         )
         html.append(
-            f'<div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">'
+            f'<div class="right">'
             f'<span class="pws-overall">⚡ {card.overall_score:.0f} weak-spot</span>'
-            f'<span class="pws-badge {badge_cls}">{card.lineup_status_label}</span>'
+            f'<span class="pws-badge {badge_cls}">'
+            f'<span class="dot"></span>{card.lineup_status_label}</span>'
             f'</div>'
         )
         html.append('</div>')
@@ -16200,7 +16332,8 @@ if _view == "🎯 Pitcher Weak Spots":
                 + " · ".join(target_pieces) + '</div>'
             )
 
-        # Tags (collect from top 3 slot scores)
+        # Tags (collect from top 3 slot scores) — capped to 4 so the row
+        # stays scannable instead of sprouting a pill garden.
         top_tags: list[str] = []
         for s in sorted_scores[:3]:
             for t in s.get("tags", []):
@@ -16208,7 +16341,7 @@ if _view == "🎯 Pitcher Weak Spots":
                     top_tags.append(t)
         if top_tags:
             tag_html = []
-            for t in top_tags[:6]:
+            for t in top_tags[:4]:
                 cls = _tag_class.get(t, "mid")
                 tag_html.append(f'<span class="pws-tag {cls}">{t}</span>')
             html.append('<div class="pws-tagrow">' + "".join(tag_html) + '</div>')
@@ -16231,38 +16364,42 @@ if _view == "🎯 Pitcher Weak Spots":
             f'<div class="pws-confidence-bar"><span style="width:{pct}%;"></span></div>'
         )
 
-        # 9-slot grid
+        # 9-slot lineup: grid on desktop, vertical list on phones (handled by CSS).
         html.append('<div class="pws-slot-grid">')
         for row in pws.card_to_slot_rows(card):
             zone = row["zone"]
-            bg = pws.ZONE_COLOR_BG.get(zone, "#f1f5f9")
-            bd = pws.ZONE_COLOR_BORDER.get(zone, "#94a3b8")
-            tx = pws.ZONE_COLOR_TEXT.get(zone, "#334155")
-            cls = ["pws-slot"]
+            cls = ["pws-slot", _zone_cls.get(zone, "zone-neutral")]
             if row["is_projected"]:
                 cls.append("projected")
+            # Green halo: only on a *confirmed* slot that's a primary/secondary
+            # attack zone. This decouples the "lineup is real" cue from the
+            # color of the zone itself, so a confirmed red target shows a red
+            # background with a green inset ring rather than competing colors.
             if (not row["is_projected"]) and zone in (pws.ZONE_PRIMARY, pws.ZONE_SECONDARY):
                 cls.append("confirmed-target")
-            target_icon = "🎯" if zone in (pws.ZONE_PRIMARY, pws.ZONE_SECONDARY) else ""
-            proj_label = "Projected target" if row["is_projected"] else "Confirmed"
+            side_letter = (row["bat_side"] or "R")[:1].upper()
+            status_text = "Confirmed" if not row["is_projected"] else "Projected"
+            status_icon = '<span class="check">✓</span>' if not row["is_projected"] else ""
             html.append(
-                f'<div class="{" ".join(cls)}" '
-                f'style="background:{bg}; border-color:{bd}; color:{tx};">'
-                f'<div class="row1"><span class="spot">#{row["slot"]} '
-                f'<span style="color:#64748b; font-weight:600;">'
-                f'{(row["bat_side"] or "R")[:1]}HB</span></span>'
-                f'<span class="score">{row["score"]:.0f}</span></div>'
-                f'<div class="name">{target_icon} {row["name"] or "—"}</div>'
-                f'<div class="meta">{pws.ZONE_LABEL.get(zone, zone)} · {proj_label}</div>'
+                f'<div class="{" ".join(cls)}">'
+                f'<div class="row1">'
+                f'<span class="spot">#{row["slot"]}'
+                f'<span class="side">{side_letter}HB</span></span>'
+                f'<span class="score-pill">{row["score"]:.0f}</span>'
+                f'</div>'
+                f'<div class="name">{row["name"] or "—"}</div>'
+                f'<div class="meta">{status_icon}'
+                f'<span>{pws.ZONE_LABEL.get(zone, zone)} · {status_text}</span></div>'
                 f'</div>'
             )
         html.append('</div>')
         html.append('</div>')
         st.markdown("".join(html), unsafe_allow_html=True)
 
-    st.caption(
-        f"Showing **{len(_filtered)}** of {len(_all_cards)} pitcher-vs-lineup cards · "
-        f"refreshes with the rest of the slate."
+    st.markdown(
+        f'<div class="pws-summary">Showing <b>{len(_filtered)}</b> of '
+        f'{len(_all_cards)} pitcher-vs-lineup cards · auto-refreshes with the slate.</div>',
+        unsafe_allow_html=True,
     )
     for _card in _filtered:
         _render_card(_card)

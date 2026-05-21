@@ -26,6 +26,7 @@ export async function POST() {
         },
       ],
       success_url: `${appUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
+      allow_promotion_codes: true,
       cancel_url: `${appUrl}/#pricing`,
     });
 

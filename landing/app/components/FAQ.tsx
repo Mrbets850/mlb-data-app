@@ -8,12 +8,8 @@ const faqItems = [
     a: "Full access to every tool in the app: real-time matchup intelligence, pitcher breakdowns, HR and prop targets, AI-powered parlay builders, Statcast-driven leaderboards, and daily slate analysis — all updated for every MLB game day.",
   },
   {
-    q: "How does the 3-day free trial work?",
-    a: "You get full, unrestricted access to The MLB Edge for 3 days at no cost. If you cancel during the trial, you won't be charged at all. After the trial ends, you'll be charged a one-time payment of $4.99 — and that's it. No recurring fees, no auto-renewals.",
-  },
-  {
-    q: "Is this a subscription or a one-time payment?",
-    a: "It's a one-time payment. After your 3-day free trial, you're charged $4.99 once. There are no monthly bills, no recurring charges, and no surprises on your credit card.",
+    q: "Is this a one-time payment or a subscription?",
+    a: "One-time payment. You pay $4.99 once and get full access to The MLB Edge. No recurring charges, no auto-renewals, no surprises on your credit card.",
   },
   {
     q: "What data powers The MLB Edge?",
@@ -30,6 +26,10 @@ const faqItems = [
   {
     q: "Do I need to install anything?",
     a: "No. The MLB Edge runs in your browser on any device — phone, tablet, or desktop. No downloads, no app store. Just log in and go.",
+  },
+  {
+    q: "What if I have questions after I buy?",
+    a: "Reach out anytime. We're real people who use the product every day and we're happy to help you get the most out of it.",
   },
 ];
 

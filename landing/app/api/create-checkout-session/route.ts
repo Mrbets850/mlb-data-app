@@ -17,20 +17,14 @@ export async function POST() {
   }
 
   try {
-    // Uses subscription mode to enable the 3-day free trial.
-    // The webhook auto-cancels after the first charge so it
-    // behaves as a one-time payment with a trial.
     const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
+      mode: "payment",
       line_items: [
         {
           price: priceId,
           quantity: 1,
         },
       ],
-      subscription_data: {
-        trial_period_days: 3,
-      },
       success_url: `${appUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appUrl}/#pricing`,
     });

@@ -6,7 +6,11 @@ export const metadata = {
   description: "Your payment is complete. Start exploring MLB analytics.",
 };
 
+const ACCESS_CODE = process.env.ACCESS_CODE || "EDGE2026";
+
 export default function SuccessPage() {
+  const appLink = `https://app.themlbedge.com?token=${ACCESS_CODE}`;
+
   return (
     <div className="relative z-1 min-h-screen flex items-center justify-center px-6">
       <div
@@ -51,25 +55,9 @@ export default function SuccessPage() {
           The MLB Edge.
         </p>
 
-        <div className="mb-8 p-6 rounded-xl border border-border-gold bg-bg-card">
-          <p className="text-text-secondary text-sm mb-3">
-            To log in to the app, use the email you just checked out with.
-          </p>
-          <div
-            className="text-gold text-lg font-bold py-2 px-6 rounded-lg inline-block"
-            style={{ background: "rgba(250,204,21,0.08)", border: "1px solid rgba(250,204,21,0.2)" }}
-          >
-            Your checkout email = your login
-          </div>
-          <p className="text-text-muted text-xs mt-3 leading-relaxed">
-            No password needed. Just enter your email and we&apos;ll verify
-            your purchase automatically.
-          </p>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
           <a
-            href="https://app.themlbedge.com"
+            href={appLink}
             className="cta-primary"
           >
             Open The MLB Edge <span className="arrow">→</span>
@@ -80,6 +68,21 @@ export default function SuccessPage() {
           >
             Back to home
           </Link>
+        </div>
+
+        <div className="p-5 rounded-xl border border-border-gold bg-bg-card">
+          <p className="text-text-secondary text-sm mb-3">
+            If asked for an access code, use:
+          </p>
+          <div
+            className="stat-number text-2xl text-gold tracking-wider py-2 px-6 rounded-lg inline-block"
+            style={{ background: "rgba(250,204,21,0.08)", border: "1px solid rgba(250,204,21,0.2)" }}
+          >
+            {ACCESS_CODE}
+          </div>
+          <p className="text-text-muted text-xs mt-3 leading-relaxed">
+            Bookmark the button link above — it logs you in automatically.
+          </p>
         </div>
       </div>
     </div>

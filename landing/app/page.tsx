@@ -2,6 +2,7 @@ import Image from "next/image";
 import Header from "./components/Header";
 import CheckoutButton from "./components/CheckoutButton";
 import FAQ from "./components/FAQ";
+import AppPreview from "./components/AppPreview";
 
 const features = [
   {
@@ -134,7 +135,7 @@ export default function LandingPage() {
                 <CheckoutButton>
                   Get Access — $4.99 <span className="arrow">→</span>
                 </CheckoutButton>
-                <a href="#features" className="cta-secondary">
+                <a href="#preview" className="cta-secondary">
                   See what&apos;s inside
                 </a>
               </div>
@@ -203,6 +204,27 @@ export default function LandingPage() {
           </div>
         </section>
 
+
+        {/* ─── APP PREVIEW ─── */}
+        <section id="preview" className="relative z-1 py-20 md:py-28 px-[clamp(18px,5vw,80px)]">
+          <div className="max-w-[1200px] mx-auto">
+            <div className="text-center mb-4">
+              <span className="text-[0.7rem] font-extrabold tracking-[0.2em] uppercase text-purple mb-3 block">
+                Inside The App
+              </span>
+              <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">
+                See what you{"u0027"}re getting
+              </h2>
+              <p className="text-text-secondary text-lg max-w-xl mx-auto">
+                Real tools, real data. Hereu0027s what The MLB Edge looks like when youu0027re
+                breaking down tonightu0027s slate.
+              </p>
+            </div>
+            <AppPreview />
+          </div>
+        </section>
+
+        <div className="section-divider" />
         {/* ─── FEATURES ─── */}
         <section id="features" className="relative z-1 py-20 md:py-28 px-[clamp(18px,5vw,80px)]">
           <div className="max-w-[1200px] mx-auto">

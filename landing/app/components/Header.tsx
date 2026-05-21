@@ -26,7 +26,7 @@ export default function Header() {
 
   const navLinks = [
     { label: "Features", href: "#features" },
-    { label: "Pricing", href: "#pricing" },
+    { label: "Preview", href: "#preview" },
     { label: "FAQ", href: "#faq" },
   ];
 
@@ -64,60 +64,31 @@ export default function Header() {
               {link.label}
             </a>
           ))}
-          <a href="#pricing" className="cta-primary !py-[9px] !px-5 !text-[0.78rem] !animate-none">
-            Get Access — $4.99 <span className="arrow">→</span>
+          <a href="https://app.themlbedge.com" className="cta-primary !py-[9px] !px-5 !text-[0.78rem] !animate-none">
+            Try It Free <span className="arrow">→</span>
           </a>
         </div>
 
-        {/* Mobile hamburger */}
         <button
           className="md:hidden flex flex-col gap-[5px] p-2 bg-transparent border-none cursor-pointer"
           onClick={() => setMenuOpen(!menuOpen)}
           aria-label={menuOpen ? "Close menu" : "Open menu"}
           aria-expanded={menuOpen}
         >
-          <span
-            className={`block w-5 h-[2px] bg-text-primary transition-all duration-300 ${
-              menuOpen ? "rotate-45 translate-y-[7px]" : ""
-            }`}
-          />
-          <span
-            className={`block w-5 h-[2px] bg-text-primary transition-all duration-300 ${
-              menuOpen ? "opacity-0" : ""
-            }`}
-          />
-          <span
-            className={`block w-5 h-[2px] bg-text-primary transition-all duration-300 ${
-              menuOpen ? "-rotate-45 -translate-y-[7px]" : ""
-            }`}
-          />
+          <span className={`block w-5 h-[2px] bg-text-primary transition-all duration-300 ${menuOpen ? "rotate-45 translate-y-[7px]" : ""}`} />
+          <span className={`block w-5 h-[2px] bg-text-primary transition-all duration-300 ${menuOpen ? "opacity-0" : ""}`} />
+          <span className={`block w-5 h-[2px] bg-text-primary transition-all duration-300 ${menuOpen ? "-rotate-45 -translate-y-[7px]" : ""}`} />
         </button>
       </nav>
 
-      {/* Mobile menu */}
-      <div
-        className="mobile-menu"
-        data-open={menuOpen}
-        role="dialog"
-        aria-modal={menuOpen}
-        aria-label="Navigation menu"
-      >
+      <div className="mobile-menu" data-open={menuOpen} role="dialog" aria-modal={menuOpen} aria-label="Navigation menu">
         {navLinks.map((link) => (
-          <a
-            key={link.href}
-            href={link.href}
-            className="text-xl font-bold tracking-wide text-text-primary hover:text-gold transition-colors"
-            onClick={() => setMenuOpen(false)}
-          >
+          <a key={link.href} href={link.href} className="text-xl font-bold tracking-wide text-text-primary hover:text-gold transition-colors" onClick={() => setMenuOpen(false)}>
             {link.label}
           </a>
         ))}
-        <a
-          href="#pricing"
-          className="cta-primary mt-4"
-          onClick={() => setMenuOpen(false)}
-        >
-          Get Access — $4.99 <span className="arrow">→</span>
+        <a href="https://app.themlbedge.com" className="cta-primary mt-4" onClick={() => setMenuOpen(false)}>
+          Try It Free <span className="arrow">→</span>
         </a>
       </div>
     </>

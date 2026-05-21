@@ -72,8 +72,8 @@ const features = [
 const steps = [
   {
     num: "01",
-    title: "Get instant access",
-    desc: "One payment, no hoops. Pay $4.99 and you're in — full access to every tool in The MLB Edge, instantly.",
+    title: "Open the app",
+    desc: "Click the button, and you're in. No sign-up, no credit card, no hoops. Full access instantly.",
   },
   {
     num: "02",
@@ -133,7 +133,7 @@ export default function LandingPage() {
 
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mt-2">
                 <CheckoutButton>
-                  Get Access — $4.99 <span className="arrow">→</span>
+                  Try It Free <span className="arrow">→</span>
                 </CheckoutButton>
                 <a href="#preview" className="cta-secondary">
                   See what&apos;s inside
@@ -141,7 +141,7 @@ export default function LandingPage() {
               </div>
 
               <p className="text-text-muted text-[0.76rem] leading-relaxed mt-1">
-                One-time payment. Instant access. No subscriptions.
+                Free access. No credit card. No sign-up required.
               </p>
             </div>
 
@@ -204,7 +204,6 @@ export default function LandingPage() {
           </div>
         </section>
 
-
         {/* ─── APP PREVIEW ─── */}
         <section id="preview" className="relative z-1 py-20 md:py-28 px-[clamp(18px,5vw,80px)]">
           <div className="max-w-[1200px] mx-auto">
@@ -213,11 +212,11 @@ export default function LandingPage() {
                 Inside The App
               </span>
               <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">
-                See what you{"u0027"}re getting
+                See what you&apos;re getting
               </h2>
               <p className="text-text-secondary text-lg max-w-xl mx-auto">
-                Real tools, real data. Hereu0027s what The MLB Edge looks like when youu0027re
-                breaking down tonightu0027s slate.
+                Real tools, real data. Here&apos;s what The MLB Edge looks like when you&apos;re
+                breaking down tonight&apos;s slate.
               </p>
             </div>
             <AppPreview />
@@ -225,6 +224,7 @@ export default function LandingPage() {
         </section>
 
         <div className="section-divider" />
+
         {/* ─── FEATURES ─── */}
         <section id="features" className="relative z-1 py-20 md:py-28 px-[clamp(18px,5vw,80px)]">
           <div className="max-w-[1200px] mx-auto">
@@ -270,12 +270,12 @@ export default function LandingPage() {
                 Getting Started
               </span>
               <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">
-                Get in. Get the edge.{" "}
-                <span className="text-gradient">It&apos;s that simple.</span>
+                Open the app.{" "}
+                <span className="text-gradient">That&apos;s it.</span>
               </h2>
               <p className="text-text-secondary text-lg max-w-xl mx-auto">
-                No setup, no configuration, no learning curve. Pay once and start
-                using every tool on today&apos;s slate.
+                No setup, no configuration, no learning curve. Just open the app
+                and start using every tool on today&apos;s slate.
               </p>
             </div>
 
@@ -298,89 +298,6 @@ export default function LandingPage() {
                   )}
                 </div>
               ))}
-            </div>
-          </div>
-        </section>
-
-        <div className="section-divider" />
-
-        {/* ─── PRICING ─── */}
-        <section id="pricing" className="relative z-1 py-20 md:py-28 px-[clamp(18px,5vw,80px)]">
-          <div className="max-w-[1200px] mx-auto">
-            <div className="text-center mb-16">
-              <span className="text-[0.7rem] font-extrabold tracking-[0.2em] uppercase text-purple mb-3 block">
-                Pricing
-              </span>
-              <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">
-                One price.{" "}
-                <span className="text-gradient">Full access.</span>
-              </h2>
-              <p className="text-text-secondary text-lg max-w-xl mx-auto">
-                No subscriptions, no recurring charges, no feature gates.
-                Pay once and get everything.
-              </p>
-            </div>
-
-            <div className="max-w-md mx-auto">
-              <div className="pricing-card p-8 md:p-10">
-                <div className="text-center mb-8">
-                  <div className="inline-flex items-center gap-2 bg-[rgba(250,204,21,0.08)] border border-border-gold rounded-full px-4 py-1.5 mb-6">
-                    <span className="w-2 h-2 rounded-full bg-green" style={{ animation: "pulse-dot 1.7s ease infinite" }} />
-                    <span className="text-xs font-bold tracking-wider uppercase text-gold">
-                      One-Time Payment
-                    </span>
-                  </div>
-
-                  <h3 className="text-xl font-bold mb-1">The MLB Edge</h3>
-                  <p className="text-text-secondary text-sm mb-6">
-                    Full access to every tool
-                  </p>
-
-                  <div className="flex items-baseline justify-center gap-1 mb-2">
-                    <span className="stat-number text-5xl text-text-primary">$4</span>
-                    <span className="stat-number text-3xl text-text-primary">.99</span>
-                  </div>
-                  <p className="text-text-muted text-sm">
-                    one-time payment — no recurring fees
-                  </p>
-                </div>
-
-                <ul className="flex flex-col gap-3 mb-8 text-[0.92rem]">
-                  {[
-                    "Statcast-powered matchup scores",
-                    "Pitcher breakdown & vulnerability analysis",
-                    "AI parlay builders (HR, K, Hits)",
-                    "Daily ranked picks & targets",
-                    "Hot/cold batter leaderboards",
-                    "Real-time lineups & game state",
-                    "Ballpark weather intelligence",
-                    "Works on every device",
-                  ].map((item, i) => (
-                    <li key={i} className="flex items-start gap-3">
-                      <svg
-                        className="w-5 h-5 text-green flex-shrink-0 mt-0.5"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      <span className="text-text-secondary">{item}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                <CheckoutButton className="w-full !text-base !py-4">
-                  Get Access — $4.99 <span className="arrow">→</span>
-                </CheckoutButton>
-
-                <p className="text-text-muted text-xs text-center mt-4 leading-relaxed">
-                  Secure payment via Stripe. You will not be charged again.
-                </p>
-              </div>
             </div>
           </div>
         </section>
@@ -430,13 +347,13 @@ export default function LandingPage() {
                 </h2>
                 <p className="text-text-secondary text-lg mb-8 max-w-lg mx-auto">
                   Join the MLB fans who stopped guessing and started using real
-                  data. Full access for just $4.99.
+                  data. Free access — no credit card needed.
                 </p>
                 <CheckoutButton>
-                  Get Access — $4.99 <span className="arrow">→</span>
+                  Try It Free <span className="arrow">→</span>
                 </CheckoutButton>
                 <p className="text-text-muted text-xs mt-4">
-                  One-time payment · Instant access · No subscriptions
+                  Free access · No sign-up · No credit card
                 </p>
               </div>
             </div>
@@ -464,9 +381,6 @@ export default function LandingPage() {
             <div className="flex items-center gap-6 text-sm text-text-muted">
               <a href="#features" className="hover:text-text-secondary transition-colors">
                 Features
-              </a>
-              <a href="#pricing" className="hover:text-text-secondary transition-colors">
-                Pricing
               </a>
               <a href="#faq" className="hover:text-text-secondary transition-colors">
                 FAQ

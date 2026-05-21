@@ -8,8 +8,8 @@ const faqItems = [
     a: "Full access to every tool in the app: real-time matchup intelligence, pitcher breakdowns, HR and prop targets, AI-powered parlay builders, Statcast-driven leaderboards, and daily slate analysis — all updated for every MLB game day.",
   },
   {
-    q: "Is this a one-time payment or a subscription?",
-    a: "One-time payment. You pay $4.99 once and get full access to The MLB Edge. No recurring charges, no auto-renewals, no surprises on your credit card.",
+    q: "Is it really free?",
+    a: "Yes. Right now The MLB Edge is completely free to use. No credit card, no sign-up, no catch. Just open the app and start exploring.",
   },
   {
     q: "What data powers The MLB Edge?",
@@ -25,11 +25,7 @@ const faqItems = [
   },
   {
     q: "Do I need to install anything?",
-    a: "No. The MLB Edge runs in your browser on any device — phone, tablet, or desktop. No downloads, no app store. Just log in and go.",
-  },
-  {
-    q: "What if I have questions after I buy?",
-    a: "Reach out anytime. We're real people who use the product every day and we're happy to help you get the most out of it.",
+    a: "No. The MLB Edge runs in your browser on any device — phone, tablet, or desktop. No downloads, no app store. Just open the link and go.",
   },
 ];
 
@@ -43,26 +39,10 @@ export default function FAQ() {
   return (
     <div className="flex flex-col gap-3 max-w-2xl mx-auto">
       {faqItems.map((item, i) => (
-        <div
-          key={i}
-          className="faq-item bg-bg-card"
-          data-open={openIndex === i}
-        >
-          <button
-            className="faq-trigger"
-            onClick={() => toggle(i)}
-            aria-expanded={openIndex === i}
-            aria-controls={`faq-answer-${i}`}
-          >
+        <div key={i} className="faq-item bg-bg-card" data-open={openIndex === i}>
+          <button className="faq-trigger" onClick={() => toggle(i)} aria-expanded={openIndex === i} aria-controls={`faq-answer-${i}`}>
             <span>{item.q}</span>
-            <svg
-              className="faq-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            >
+            <svg className="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>

@@ -172,8 +172,8 @@ st.set_page_config(
 from pwa import inject_pwa_head_tags, render_install_help_expander
 inject_pwa_head_tags()
 
-from auth_gate import check_access
-check_access()
+# from auth_gate import check_access
+# check_access()
 
 # Team data (id used to fetch logos from MLB CDN)
 # ===========================================================================

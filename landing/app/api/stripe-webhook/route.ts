@@ -32,28 +32,55 @@ export async function POST(request: NextRequest) {
   switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
+      const subscriptionId = session.subscription as string | null;
       console.log(
-        `Checkout completed: customer=${session.customer}, payment_status=${session.payment_status}`
+        `Checkout completed: customer=${session.customer}, subscription=${subscriptionId}`
       );
+
+      // Auto-cancel after the first payment so it acts as a one-time charge.
+      // The customer keeps access through the end of the paid period.
+      if (subscriptionId) {
+        try {
+          await stripe.subscriptions.update(subscriptionId, {
+            cancel_at_period_end: true,
+          });
+          console.log(`Subscription ${subscriptionId} set to cancel at period end`);
+        } catch (err) {
+          console.error("Failed to set cancel_at_period_end:", err);
+        }
+      }
+
       // TODO: Provision access for the customer.
       // Look up or create your user record using session.customer_email or session.customer,
-      // then grant them lifetime access to The MLB Edge app.
+      // then grant them access to The MLB Edge app.
       break;
     }
 
-    case "payment_intent.succeeded": {
-      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+    case "customer.subscription.created": {
+      const subscription = event.data.object as Stripe.Subscription;
       console.log(
-        `Payment succeeded: id=${paymentIntent.id}, amount=${paymentIntent.amount}, customer=${paymentIntent.customer}`
+        `Subscription created: id=${subscription.id}, status=${subscription.status}, customer=${subscription.customer}`
       );
+      // Status will be "trialing" during the 3-day free trial.
       break;
     }
 
-    case "payment_intent.payment_failed": {
-      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+    case "customer.subscription.updated": {
+      const subscription = event.data.object as Stripe.Subscription;
       console.log(
-        `Payment failed: id=${paymentIntent.id}, customer=${paymentIntent.customer}`
+        `Subscription updated: id=${subscription.id}, status=${subscription.status}, cancel_at_period_end=${subscription.cancel_at_period_end}`
       );
+      // After trial ends the status moves to "active" and the $4.99 charge fires.
+      // cancel_at_period_end will be true (set by checkout.session.completed handler above).
+      break;
+    }
+
+    case "customer.subscription.deleted": {
+      const subscription = event.data.object as Stripe.Subscription;
+      console.log(
+        `Subscription ended: id=${subscription.id}, customer=${subscription.customer}`
+      );
+      // The single billing cycle is complete. No further charges will occur.
       break;
     }
 

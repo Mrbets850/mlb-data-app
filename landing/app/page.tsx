@@ -71,8 +71,8 @@ const features = [
 const steps = [
   {
     num: "01",
-    title: "Get instant access",
-    desc: "One payment, no hoops. Pay $4.99 and you're in — full access to every tool in The MLB Edge, instantly.",
+    title: "Start your free trial",
+    desc: "Sign up in seconds. You get 3 full days of access — no charge, no commitment.",
   },
   {
     num: "02",
@@ -81,8 +81,8 @@ const steps = [
   },
   {
     num: "03",
-    title: "Make sharper decisions",
-    desc: "Use real data instead of gut feel. Whether it's a DFS lineup, a player prop, or a parlay — you'll have the edge.",
+    title: "Keep your edge for $4.99",
+    desc: "Love it? Your one-time payment of $4.99 kicks in after the trial. No recurring charges, no surprises.",
   },
 ];
 
@@ -132,7 +132,7 @@ export default function LandingPage() {
 
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mt-2">
                 <CheckoutButton>
-                  Get Access — $4.99 <span className="arrow">→</span>
+                  Start Free 3-Day Trial <span className="arrow">→</span>
                 </CheckoutButton>
                 <a href="#features" className="cta-secondary">
                   See what&apos;s inside
@@ -140,7 +140,9 @@ export default function LandingPage() {
               </div>
 
               <p className="text-text-muted text-[0.76rem] leading-relaxed mt-1">
-                One-time payment. Instant access. No subscriptions.
+                Try free for 3 days, then just $4.99 — one time, not recurring.
+                <br />
+                Cancel during the trial and you won&apos;t be charged.
               </p>
             </div>
 
@@ -248,12 +250,12 @@ export default function LandingPage() {
                 Getting Started
               </span>
               <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">
-                Get in. Get the edge.{" "}
-                <span className="text-gradient">It&apos;s that simple.</span>
+                Try it free.{" "}
+                <span className="text-gradient">Keep it for $4.99.</span>
               </h2>
               <p className="text-text-secondary text-lg max-w-xl mx-auto">
-                No setup, no configuration, no learning curve. Pay once and start
-                using every tool on today&apos;s slate.
+                No setup, no configuration, no learning curve. Start your free
+                trial and explore every tool on today&apos;s slate.
               </p>
             </div>
 
@@ -290,12 +292,12 @@ export default function LandingPage() {
                 Pricing
               </span>
               <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">
-                One price.{" "}
-                <span className="text-gradient">Full access.</span>
+                Try free.{" "}
+                <span className="text-gradient">Pay once.</span>
               </h2>
               <p className="text-text-secondary text-lg max-w-xl mx-auto">
-                No subscriptions, no recurring charges, no feature gates.
-                Pay once and get everything.
+                3 days on the house, then a single payment of $4.99.
+                No subscriptions, no recurring charges.
               </p>
             </div>
 
@@ -305,7 +307,7 @@ export default function LandingPage() {
                   <div className="inline-flex items-center gap-2 bg-[rgba(250,204,21,0.08)] border border-border-gold rounded-full px-4 py-1.5 mb-6">
                     <span className="w-2 h-2 rounded-full bg-green" style={{ animation: "pulse-dot 1.7s ease infinite" }} />
                     <span className="text-xs font-bold tracking-wider uppercase text-gold">
-                      One-Time Payment
+                      3-Day Free Trial
                     </span>
                   </div>
 
@@ -319,19 +321,19 @@ export default function LandingPage() {
                     <span className="stat-number text-3xl text-text-primary">.99</span>
                   </div>
                   <p className="text-text-muted text-sm">
-                    one-time payment — no recurring fees
+                    one-time payment after 3-day free trial
                   </p>
                 </div>
 
                 <ul className="flex flex-col gap-3 mb-8 text-[0.92rem]">
                   {[
+                    "3-day free trial — no charge upfront",
                     "Statcast-powered matchup scores",
                     "Pitcher breakdown & vulnerability analysis",
                     "AI parlay builders (HR, K, Hits)",
                     "Daily ranked picks & targets",
                     "Hot/cold batter leaderboards",
                     "Real-time lineups & game state",
-                    "Ballpark weather intelligence",
                     "Works on every device",
                   ].map((item, i) => (
                     <li key={i} className="flex items-start gap-3">
@@ -352,11 +354,13 @@ export default function LandingPage() {
                 </ul>
 
                 <CheckoutButton className="w-full !text-base !py-4">
-                  Get Access — $4.99 <span className="arrow">→</span>
+                  Start Free 3-Day Trial <span className="arrow">→</span>
                 </CheckoutButton>
 
                 <p className="text-text-muted text-xs text-center mt-4 leading-relaxed">
-                  Secure payment via Stripe. You will not be charged again.
+                  Try free for 3 days. After the trial, you&apos;ll be charged $4.99
+                  once — no recurring fees, no auto-renewal.
+                  Cancel during the trial and you won&apos;t be charged.
                 </p>
               </div>
             </div>
@@ -408,13 +412,13 @@ export default function LandingPage() {
                 </h2>
                 <p className="text-text-secondary text-lg mb-8 max-w-lg mx-auto">
                   Join the MLB fans who stopped guessing and started using real
-                  data. Full access for just $4.99.
+                  data. Try free for 3 days, then just $4.99.
                 </p>
                 <CheckoutButton>
-                  Get Access — $4.99 <span className="arrow">→</span>
+                  Start Free 3-Day Trial <span className="arrow">→</span>
                 </CheckoutButton>
                 <p className="text-text-muted text-xs mt-4">
-                  One-time payment · Instant access · No subscriptions
+                  3-day free trial · $4.99 one-time after trial · No recurring charges
                 </p>
               </div>
             </div>

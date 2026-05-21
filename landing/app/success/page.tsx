@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export const metadata = {
   title: "Welcome to The MLB Edge",
-  description: "Your payment is complete. Start exploring MLB analytics.",
+  description: "Your trial is active. Start exploring MLB analytics.",
 };
 
 export default function SuccessPage() {
@@ -47,12 +47,13 @@ export default function SuccessPage() {
         </h1>
 
         <p className="text-text-secondary text-lg leading-relaxed mb-2">
-          Payment confirmed. You now have full access to every tool in
-          The MLB Edge.
+          Your 3-day free trial is active. You have full access to every tool in
+          The MLB Edge starting now.
         </p>
 
         <p className="text-text-muted text-sm mb-8">
-          Check your email for a receipt from Stripe.
+          After your trial, you&apos;ll be charged $4.99 once — no recurring fees.
+          Check your email for a confirmation from Stripe.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">

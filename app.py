@@ -175,13 +175,12 @@ inject_pwa_head_tags()
 # ===========================================================================
 # Access gate — require an access code to use the app.
 # Set ACCESS_CODE in your Railway environment variables.
+# Uses a query-param token so access survives page-reload navigation.
 # ===========================================================================
 _ACCESS_CODE = os.environ.get("ACCESS_CODE", "")
 if _ACCESS_CODE:
-    if "access_granted" not in st.session_state:
-        st.session_state["access_granted"] = False
-
-    if not st.session_state["access_granted"]:
+    _unlocked = st.query_params.get("token", "") == _ACCESS_CODE
+    if not _unlocked:
         st.markdown("""
         <style>
         .gate-wrap { max-width: 420px; margin: 15vh auto; text-align: center; }
@@ -204,12 +203,11 @@ if _ACCESS_CODE:
         code_input = st.text_input("Access Code", type="password", key="gate_code_input")
         if st.button("Unlock", type="primary", use_container_width=True):
             if code_input.strip() == _ACCESS_CODE:
-                st.session_state["access_granted"] = True
+                st.query_params["token"] = _ACCESS_CODE
                 st.rerun()
             else:
                 st.error("Invalid access code. Please try again.")
         st.stop()
-
 
 # ===========================================================================
 # Team data (id used to fetch logos from MLB CDN)

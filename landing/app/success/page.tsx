@@ -73,7 +73,7 @@ export default function SuccessPage() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <a
-            href="https://app.themlbedge.com"
+            href={`https://app.themlbedge.com?token=${ACCESS_CODE}`}
             className="cta-primary"
           >
             Open The MLB Edge <span className="arrow">→</span>

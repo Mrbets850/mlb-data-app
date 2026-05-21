@@ -172,44 +172,9 @@ st.set_page_config(
 from pwa import inject_pwa_head_tags, render_install_help_expander
 inject_pwa_head_tags()
 
-# ===========================================================================
-# Access gate — require an access code to use the app.
-# Set ACCESS_CODE in your Railway environment variables.
-# Uses a query-param token so access survives page-reload navigation.
-# ===========================================================================
-_ACCESS_CODE = os.environ.get("ACCESS_CODE", "")
-if _ACCESS_CODE:
-    _unlocked = st.query_params.get("token", "") == _ACCESS_CODE
-    if not _unlocked:
-        st.markdown("""
-        <style>
-        .gate-wrap { max-width: 420px; margin: 15vh auto; text-align: center; }
-        .gate-logo { font-size: 2.5rem; margin-bottom: 8px; }
-        .gate-title { font-size: 1.6rem; font-weight: 900; color: #e2eeff;
-                      letter-spacing: -.02em; margin-bottom: 6px; }
-        .gate-sub { font-size: .92rem; color: #4e6a8a; margin-bottom: 28px; line-height: 1.5; }
-        .gate-sub a { color: #facc15; text-decoration: none; }
-        .gate-sub a:hover { text-decoration: underline; }
-        </style>
-        <div class="gate-wrap">
-            <div class="gate-logo">⚾</div>
-            <div class="gate-title">Welcome to The MLB Edge</div>
-            <div class="gate-sub">
-                Enter your access code to continue.<br/>
-                Don't have one? <a href="https://themlbedge.com" target="_blank">Get access here</a>.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        code_input = st.text_input("Access Code", type="password", key="gate_code_input")
-        if st.button("Unlock", type="primary", use_container_width=True):
-            if code_input.strip() == _ACCESS_CODE:
-                st.query_params["token"] = _ACCESS_CODE
-                st.rerun()
-            else:
-                st.error("Invalid access code. Please try again.")
-        st.stop()
+from auth_gate import check_access
+check_access()
 
-# ===========================================================================
 # Team data (id used to fetch logos from MLB CDN)
 # ===========================================================================
 TEAM_INFO = {
@@ -11106,7 +11071,8 @@ with top_cols[2]:
         # widget is recreated, to avoid StreamlitAPIException.
         st.session_state["_reset_to_today"] = True
         try:
-            st.query_params.clear()
+            _t = st.query_params.get("token", ""); st.query_params.clear()
+            if _t: st.query_params["token"] = _t
         except Exception:
             pass
         st.rerun()
@@ -11442,7 +11408,8 @@ if _qp_top_view is not None:
         except Exception:
             # Older Streamlit query_params API — fall back to dict assignment.
             _remaining = {k: v for k, v in dict(_qp).items() if k != "top_view"}
-            st.query_params.clear()
+            _t2 = _remaining.pop("token", ""); st.query_params.clear()
+            if _t2: st.query_params["token"] = _t2
             for _k, _v in _remaining.items():
                 st.query_params[_k] = _v
     except Exception:

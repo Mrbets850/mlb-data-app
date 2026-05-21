@@ -6,8 +6,6 @@ export const metadata = {
   description: "Your payment is complete. Start exploring MLB analytics.",
 };
 
-const ACCESS_CODE = process.env.ACCESS_CODE || "EDGE2026";
-
 export default function SuccessPage() {
   return (
     <div className="relative z-1 min-h-screen flex items-center justify-center px-6">
@@ -53,27 +51,25 @@ export default function SuccessPage() {
           The MLB Edge.
         </p>
 
-        {/* Access code reveal */}
         <div className="mb-8 p-6 rounded-xl border border-border-gold bg-bg-card">
           <p className="text-text-secondary text-sm mb-3">
-            Your access code:
+            To log in to the app, use the email you just checked out with.
           </p>
           <div
-            className="stat-number text-3xl text-gold tracking-wider py-2 px-6 rounded-lg inline-block"
+            className="text-gold text-lg font-bold py-2 px-6 rounded-lg inline-block"
             style={{ background: "rgba(250,204,21,0.08)", border: "1px solid rgba(250,204,21,0.2)" }}
           >
-            {ACCESS_CODE}
+            Your checkout email = your login
           </div>
           <p className="text-text-muted text-xs mt-3 leading-relaxed">
-            Save this code — you&apos;ll need it to log in to the app.
-            <br />
-            A copy has also been sent to your email.
+            No password needed. Just enter your email and we&apos;ll verify
+            your purchase automatically.
           </p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <a
-            href={`https://app.themlbedge.com?token=${ACCESS_CODE}`}
+            href="https://app.themlbedge.com"
             className="cta-primary"
           >
             Open The MLB Edge <span className="arrow">→</span>

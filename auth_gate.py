@@ -32,28 +32,55 @@ def _make_token(email: str) -> str:
 
 
 def _verify_stripe_email(email: str) -> bool:
-    """Check Stripe for a completed checkout session from this email."""
+    """Check Stripe for a paying customer with this email.
+
+    Tries multiple API endpoints in order of most-common restricted-key
+    permissions so it works with both full (sk_) and restricted (rk_) keys.
+    """
     if not _STRIPE_SK:
         return False
     try:
         import stripe
-
         stripe.api_key = _STRIPE_SK
-        sessions = stripe.checkout.Session.list(
-            customer_details={"email": email.lower().strip()},
-            status="complete",
-            limit=1,
-        )
-        return len(sessions.data) > 0
-    except Exception as exc:
-        st.error(f"Could not verify payment. Please try again. ({exc})")
+        clean_email = email.lower().strip()
+
+        # Attempt 1: Search customers by email.
+        # Permission needed: customers:read
+        try:
+            customers = stripe.Customer.list(email=clean_email, limit=1)
+            if len(customers.data) > 0:
+                return True
+        except stripe.error.PermissionError:
+            pass
+
+        # Attempt 2: Search charges by receipt email.
+        # Permission needed: charges:read
+        try:
+            charges = stripe.Charge.search(
+                query=f'receipt_email:"{clean_email}" AND status:"succeeded"',
+                limit=1,
+            )
+            if len(charges.data) > 0:
+                return True
+        except (stripe.error.PermissionError, Exception):
+            pass
+
+        # Attempt 3: Checkout sessions (needs checkout_session:read).
+        try:
+            sessions = stripe.checkout.Session.list(
+                customer_details={"email": clean_email},
+                status="complete",
+                limit=1,
+            )
+            if len(sessions.data) > 0:
+                return True
+        except (stripe.error.PermissionError, Exception):
+            pass
+
         return False
-
-
-def _preserve_token_in_params():
-    """Return the current token value so callers can restore it after
-    clearing query params."""
-    return st.query_params.get("token", "")
+    except Exception as exc:
+        st.error(f"Could not verify payment. Please try again.")
+        return False
 
 
 def _render_login_ui():

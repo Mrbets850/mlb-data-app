@@ -3,3 +3,9 @@ __pycache__/
 *.pyo
 .venv/
 .DS_Store
+
+# Landing page (Next.js)
+landing/node_modules/
+landing/.next/
+landing/.env.local
+landing/.env

@@ -33,39 +33,27 @@ export async function POST(request: NextRequest) {
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
       console.log(
-        `Checkout completed: customer=${session.customer}, subscription=${session.subscription}`
+        `Checkout completed: customer=${session.customer}, payment_status=${session.payment_status}`
       );
       // TODO: Provision access for the customer.
       // Look up or create your user record using session.customer_email or session.customer,
-      // then grant them access to The MLB Edge app.
+      // then grant them lifetime access to The MLB Edge app.
       break;
     }
 
-    case "customer.subscription.created": {
-      const subscription = event.data.object as Stripe.Subscription;
+    case "payment_intent.succeeded": {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
       console.log(
-        `Subscription created: id=${subscription.id}, status=${subscription.status}, customer=${subscription.customer}`
+        `Payment succeeded: id=${paymentIntent.id}, amount=${paymentIntent.amount}, customer=${paymentIntent.customer}`
       );
-      // The subscription starts in "trialing" status during the 3-day free trial.
       break;
     }
 
-    case "customer.subscription.updated": {
-      const subscription = event.data.object as Stripe.Subscription;
+    case "payment_intent.payment_failed": {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
       console.log(
-        `Subscription updated: id=${subscription.id}, status=${subscription.status}`
+        `Payment failed: id=${paymentIntent.id}, customer=${paymentIntent.customer}`
       );
-      // Handle status changes: "trialing" -> "active", or cancellation/past_due.
-      // Update your database to reflect the current subscription status.
-      break;
-    }
-
-    case "customer.subscription.deleted": {
-      const subscription = event.data.object as Stripe.Subscription;
-      console.log(
-        `Subscription deleted: id=${subscription.id}, customer=${subscription.customer}`
-      );
-      // Revoke access for this customer.
       break;
     }
 

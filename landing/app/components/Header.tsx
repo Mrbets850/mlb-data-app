@@ -65,7 +65,7 @@ export default function Header() {
             </a>
           ))}
           <a href="#pricing" className="cta-primary !py-[9px] !px-5 !text-[0.78rem] !animate-none">
-            Start Free Trial <span className="arrow">→</span>
+            Get Access — $4.99 <span className="arrow">→</span>
           </a>
         </div>
 
@@ -117,7 +117,7 @@ export default function Header() {
           className="cta-primary mt-4"
           onClick={() => setMenuOpen(false)}
         >
-          Start Free Trial <span className="arrow">→</span>
+          Get Access — $4.99 <span className="arrow">→</span>
         </a>
       </div>
     </>

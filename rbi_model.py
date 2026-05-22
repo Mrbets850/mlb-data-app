@@ -1048,6 +1048,16 @@ _RBI_MOBILE_CSS = (
     ".rbi-empty { padding:16px 18px; color:#9590b8; "
     "  background: rgba(13,9,40,.80); "
     "  border:1px dashed rgba(255,182,18,.35); border-radius:16px; text-align:center; }"
+    ".rbi-card { background:#151515 !important; color:#f8fafc !important; "
+    "  border-color:rgba(255,182,18,.34) !important; }"
+    ".rbi-card :is(div,span,p,b,strong,small,a) { color:#f8fafc !important; "
+    "  font-weight:900 !important; opacity:1 !important; text-shadow:none !important; "
+    "  -webkit-text-fill-color:currentColor !important; }"
+    ".rbi-rank, .rbi-tier { background:#000000 !important; color:#ffb612 !important; "
+    "  border-color:#ffb612 !important; }"
+    ".rbi-chip { background:#1f2933 !important; border-color:rgba(255,182,18,.30) !important; }"
+    ".rbi-chip-label, .rbi-sub, .rbi-foot, .rbi-score small { color:#d1d5db !important; }"
+    ".rbi-chip-val, .rbi-score, .rbi-name { color:#f8fafc !important; }"
     "</style>"
 )
 

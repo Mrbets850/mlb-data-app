@@ -8129,7 +8129,7 @@ def render_slate_pitcher_html(df, schedule_df=None):
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
     tbody = "<tbody>" + "".join(body_rows) + "</tbody>"
 
-    return css + f'<div class="sp-wrap"><table class="sp-table">{thead}{tbody}</table></div>'
+    return css + STEELERS_THEME_CSS + f'<div class="sp-wrap"><table class="sp-table">{thead}{tbody}</table></div>'
 
 # ---------------------------------------------------------------------------
 # Mobile-first Slate Pitchers dashboard
@@ -8500,7 +8500,7 @@ def render_slate_pitcher_dashboard(df, schedule_df=None):
             '</div>'
         )
 
-    return css + '<div class="spd-wrap">' + "".join(cards) + "</div>"
+    return css + STEELERS_THEME_CSS + '<div class="spd-wrap">' + "".join(cards) + "</div>"
 
 
 def render_slate_pitcher_explainer():
@@ -8677,7 +8677,7 @@ def render_slate_pitcher_explainer():
             f'</div>'
         )
 
-    return css + (
+    return css + STEELERS_THEME_CSS + (
         '<div class="spc-row">'
         + _card("Away SP", away_row)
         + _card("Home SP", home_row)
@@ -9273,7 +9273,7 @@ def render_hr_sleepers_html(df):
         '</div></div>'
     )
 
-    return MOBILE_CARDS_CSS + css + (
+    return MOBILE_CARDS_CSS + css + STEELERS_THEME_CSS + (
         '<div class="mc-desktop">'
         '<div class="hrs-wrap"><table class="hrs-table">'
         '<thead><tr>'
@@ -9802,7 +9802,7 @@ def render_targets_html(df, mode="tb"):
         '</div></div>'
     )
 
-    return MOBILE_CARDS_CSS + css + (
+    return MOBILE_CARDS_CSS + css + STEELERS_THEME_CSS + (
         '<div class="mc-desktop">'
         f'<div class="tg-wrap"><table class="tg-table">'
         f'<thead><tr>{head_html}</tr></thead><tbody>'
@@ -11650,6 +11650,7 @@ def render_pitcher_breakdown_styles() -> str:
         "  }"
         "}"
         "</style>"
+        + globals().get("STEELERS_THEME_CSS", "")
     )
 
 
@@ -14124,6 +14125,7 @@ if _view == "🤖 AI HR Parlay":
         "</style>"
     )
     st.markdown(css, unsafe_allow_html=True)
+    st.markdown(STEELERS_THEME_CSS, unsafe_allow_html=True)
 
     badge_2 = f"{_risk} · 2-leg · #{_seed}"
     badge_3 = f"{_risk} · 3-leg · #{_seed}"
@@ -15547,6 +15549,7 @@ if _view == "🎯 AI K Generator":
         "</style>"
     )
     st.markdown(css, unsafe_allow_html=True)
+    st.markdown(STEELERS_THEME_CSS, unsafe_allow_html=True)
 
     # ---- Top-of-board: ranked starters table ----------------------------
     top_n = min(10, len(pool_k))
@@ -16886,6 +16889,7 @@ if _view == "🥎 AI 1+ Hits Parlay":
         "</style>"
     )
     st.markdown(h_css, unsafe_allow_html=True)
+    st.markdown(STEELERS_THEME_CSS, unsafe_allow_html=True)
 
     h_legs_2 = _h_pick_legs(h_pool, 2, _h_avoid_game, _h_avoid_team, seed=_h_seed)
     h_legs_3 = _h_pick_legs(h_pool, 3, _h_avoid_game, _h_avoid_team, seed=_h_seed * 1000 + 7)
@@ -18209,7 +18213,7 @@ def _df_with_cards(df, *, cards_only=False, **kwargs):
         )
         st.markdown('</div>', unsafe_allow_html=True)
     st.markdown(
-        MOBILE_CARDS_CSS + _df_mobile_cards_html(df, always_show=cards_only, **kwargs),
+        MOBILE_CARDS_CSS + STEELERS_THEME_CSS + _df_mobile_cards_html(df, always_show=cards_only, **kwargs),
         unsafe_allow_html=True,
     )
 
@@ -18299,7 +18303,7 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
             foot_html=foot,
         ))
     st.markdown(
-        MOBILE_CARDS_CSS +
+        MOBILE_CARDS_CSS + STEELERS_THEME_CSS +
         '<div class="mc-mobile mc-always"><div class="mc-grid">'
         + "".join(mobile_cards) +
         '</div></div>',
@@ -18460,7 +18464,7 @@ if _render_hr_milestones:
                 foot_html=foot,
             ))
         st.markdown(
-            MOBILE_CARDS_CSS +
+            MOBILE_CARDS_CSS + STEELERS_THEME_CSS +
             '<div class="mc-mobile mc-always"><div class="mc-grid">'
             + "".join(hrm_cards) +
             '</div></div>',
@@ -18677,7 +18681,7 @@ if _render_hr_milestones:
                     foot_html=foot,
                 ))
             st.markdown(
-                MOBILE_CARDS_CSS +
+                MOBILE_CARDS_CSS + STEELERS_THEME_CSS +
                 '<div class="mc-mobile mc-always"><div class="mc-grid">'
                 + "".join(hrd_cards) +
                 '</div></div>',

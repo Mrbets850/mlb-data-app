@@ -87,3 +87,22 @@ def test_steelers_theme_prevents_washed_out_text():
     assert "-webkit-text-fill-color: currentColor !important" in text
     assert "[style*=\"opacity:0.\"]" in text
     assert ".pdc-hrdue-score .num" in text
+
+
+def test_steelers_theme_loads_after_late_component_css():
+    text = _app_text()
+    assert "MOBILE_CARDS_CSS + STEELERS_THEME_CSS" in text
+    assert "css + STEELERS_THEME_CSS" in text
+    assert "st.markdown(STEELERS_THEME_CSS, unsafe_allow_html=True)" in text
+
+
+def test_steelers_theme_overrides_green_pill_families():
+    text = _app_text()
+    for selector in (
+        ".mc-tier, .rbi-tier, .spd-tier, .pbd-badge, .hrs-pill, .tg-pill",
+        ".scout-vs-hand, .pdc-hand-pill.pitch",
+        ".rbi-rank, .mc-rank, .aip-leg-num, .pbd-lineup-slot",
+    ):
+        assert selector in text
+    assert "color: var(--steelers-gold) !important" in text
+    assert "background: #000000 !important" in text

@@ -1424,16 +1424,16 @@ div[data-testid="element-container"]:has(.mhm-cta-click) +
    untouched while every board/card gets a brighter, readable surface.
    ==================================================================== */
 :root {
-    --edge-bg: #fffdf4;
-    --edge-surface: #ffffff;
-    --edge-surface-2: #fff7cc;
-    --edge-black: #111111;
-    --edge-gold: #facc15;
-    --edge-gold-2: #f59e0b;
-    --edge-ink: #111111;
-    --edge-muted: #3f3f46;
-    --edge-border: rgba(0,0,0,.22);
-    --edge-shadow: 0 10px 28px rgba(0,0,0,.12);
+    --edge-bg: #101820;
+    --edge-surface: #151515;
+    --edge-surface-2: #1f2933;
+    --edge-black: #000000;
+    --edge-gold: #FFB612;
+    --edge-gold-2: #FFB612;
+    --edge-ink: #F8FAFC;
+    --edge-muted: #D1D5DB;
+    --edge-border: rgba(255,182,18,.34);
+    --edge-shadow: 0 12px 28px rgba(0,0,0,.45);
 }
 html, body,
 [data-testid="stApp"],
@@ -1454,13 +1454,13 @@ section.main,
     color: var(--edge-ink) !important;
 }
 body::before {
-    background: linear-gradient(135deg, #fffdf4 0%, #ffffff 50%, #fff3b0 100%) !important;
+    background: linear-gradient(135deg, #000000 0%, #101820 58%, #181818 100%) !important;
 }
 body::after {
     background-image:
-        radial-gradient(circle at 16px 16px, rgba(250,204,21,.18) 1px, transparent 1px),
-        linear-gradient(rgba(0,0,0,.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,0,0,.04) 1px, transparent 1px) !important;
+        radial-gradient(circle at 16px 16px, rgba(255,182,18,.12) 1px, transparent 1px),
+        linear-gradient(rgba(255,182,18,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,182,18,.035) 1px, transparent 1px) !important;
     background-size: 44px 44px, 44px 44px, 44px 44px !important;
 }
 html, body, [class*="css"],
@@ -1972,17 +1972,20 @@ label {
 </style>
 """, unsafe_allow_html=True)
 
-BLACK_YELLOW_READABILITY_CSS = """
-<style id="mrb-yellow-black-readability">
+STEELERS_THEME_CSS = """
+<style id="mrb-steelers-theme">
 :root {
-  --edge-bg: #fffdf4;
-  --edge-surface: #ffffff;
-  --edge-surface-2: #fff7cc;
-  --edge-accent: #facc15;
-  --edge-accent-2: #f59e0b;
-  --edge-black: #111111;
-  --edge-muted: #3f3f46;
-  --edge-border: rgba(0,0,0,.22);
+  --steelers-black: #000000;
+  --steelers-bg: #101820;
+  --steelers-panel: #151515;
+  --steelers-panel-2: #1f2933;
+  --steelers-gold: #FFB612;
+  --steelers-gold-soft: #FFE08A;
+  --steelers-text: #F8FAFC;
+  --steelers-muted: #D1D5DB;
+  --steelers-border: rgba(255,182,18,.34);
+  --steelers-shadow: 0 12px 28px rgba(0,0,0,.45);
+  --steelers-radius: 14px;
 }
 html, body, .stApp,
 [data-testid="stApp"],
@@ -1990,8 +1993,8 @@ html, body, .stApp,
 [data-testid="stMain"],
 section.main,
 .main {
-  background: linear-gradient(135deg, #fffdf4 0%, #ffffff 55%, #fff3b0 100%) !important;
-  color: var(--edge-black) !important;
+  background: linear-gradient(135deg, #000000 0%, #101820 58%, #181818 100%) !important;
+  color: var(--steelers-text) !important;
 }
 [data-testid="stMarkdownContainer"],
 [data-testid="stMarkdownContainer"] *,
@@ -2001,7 +2004,7 @@ section.main,
 [data-testid="stWidgetLabel"] *,
 label,
 label * {
-  color: var(--edge-black) !important;
+  color: var(--steelers-text) !important;
   font-weight: 800 !important;
   text-shadow: none !important;
 }
@@ -2013,12 +2016,12 @@ label * {
 [data-testid="stMarkdownContainer"] h6,
 .section-title,
 .section-title-lg {
-  color: #000000 !important;
+  color: var(--steelers-gold) !important;
   font-weight: 900 !important;
   text-shadow: none !important;
 }
 
-/* Every visible card/board family gets a light yellow/white surface. */
+/* Every visible card/board family gets a dark Steelers surface. */
 .top-tab-row,
 .section-card,
 .section-card.dark,
@@ -2056,12 +2059,14 @@ label * {
 [data-testid="stExpander"],
 [data-testid="stDataFrame"],
 [data-testid="stTable"] {
-  background: #ffffff !important;
-  background-color: #ffffff !important;
+  background: var(--steelers-panel) !important;
+  background-color: var(--steelers-panel) !important;
   background-image: none !important;
-  color: var(--edge-black) !important;
-  border-color: var(--edge-border) !important;
-  box-shadow: 0 8px 22px rgba(0,0,0,.12) !important;
+  color: var(--steelers-text) !important;
+  border: 1px solid var(--steelers-border) !important;
+  border-color: var(--steelers-border) !important;
+  box-shadow: var(--steelers-shadow) !important;
+  border-radius: var(--steelers-radius) !important;
 }
 .mc-chip,
 .rbi-chip,
@@ -2075,10 +2080,10 @@ label * {
 .pdc-chip,
 .pdc-recap-tile,
 .sp-src {
-  background: var(--edge-surface-2) !important;
-  background-color: var(--edge-surface-2) !important;
-  color: var(--edge-black) !important;
-  border-color: rgba(0,0,0,.20) !important;
+  background: var(--steelers-panel-2) !important;
+  background-color: var(--steelers-panel-2) !important;
+  color: var(--steelers-text) !important;
+  border-color: rgba(255,182,18,.24) !important;
 }
 .top-tab-pill,
 .top-tab-pill:link,
@@ -2087,10 +2092,10 @@ label * {
 .top-tab-pill a,
 .top-tab-pill a:link,
 .top-tab-pill a:visited {
-  background: #fff7cc !important;
-  background-color: #fff7cc !important;
-  color: #111111 !important;
-  border: 2px solid #f59e0b !important;
+  background: var(--steelers-panel-2) !important;
+  background-color: var(--steelers-panel-2) !important;
+  color: var(--steelers-text) !important;
+  border: 2px solid rgba(255,182,18,.32) !important;
   font-weight: 900 !important;
   text-decoration: none !important;
   text-shadow: none !important;
@@ -2101,17 +2106,17 @@ label * {
 .top-tab-pill.active:visited,
 [data-testid="stButton"] button,
 [data-testid="stDownloadButton"] button {
-  background: #111111 !important;
-  background-color: #111111 !important;
+  background: var(--steelers-gold) !important;
+  background-color: var(--steelers-gold) !important;
   background-image: none !important;
-  color: #facc15 !important;
-  border-color: #facc15 !important;
+  color: #000000 !important;
+  border-color: var(--steelers-gold) !important;
   font-weight: 900 !important;
 }
 .top-tab-pill.active *,
 [data-testid="stButton"] button *,
 [data-testid="stDownloadButton"] button * {
-  color: #facc15 !important;
+  color: #000000 !important;
 }
 
 /* Text safety net for all generated cards, including late CSS. */
@@ -2131,7 +2136,7 @@ label * {
 .lineup-banner :is(div,span,p,b,strong,small,a),
 .game-header :is(div,span,p,b,strong,small,a),
 [data-testid="stMetric"] :is(div,span,p,b,strong,small) {
-  color: #111111 !important;
+  color: var(--steelers-text) !important;
   font-weight: 900 !important;
   text-shadow: none !important;
   opacity: 1 !important;
@@ -2140,33 +2145,33 @@ label * {
 .mc-chip-label, .rbi-chip-label, .spd-chip-label, .scout-metric-label,
 .pbd-kpi-label, .pbd-split-grid span, .pdc-chip .lab,
 .insight-stat-label, .mc-score small, .rbi-score small {
-  color: #3f3f46 !important;
+  color: var(--steelers-muted) !important;
   font-weight: 900 !important;
 }
 .mc-chip-val, .rbi-chip-val, .spd-chip-val, .scout-metric-val,
 .pbd-kpi-value, .pbd-split-grid b, .pdc-chip .val,
 .insight-stat-val, [data-testid="stMetricValue"],
 [data-testid="stMetricValue"] * {
-  color: #000000 !important;
+  color: var(--steelers-text) !important;
   font-weight: 900 !important;
   opacity: 1 !important;
-  -webkit-text-fill-color: #000000 !important;
+  -webkit-text-fill-color: var(--steelers-text) !important;
 }
 .scout-hand-badge, .pdc-hand-pill {
-  background: #facc15 !important;
-  color: #111111 !important;
-  border-color: #111111 !important;
+  background: var(--steelers-gold) !important;
+  color: #000000 !important;
+  border-color: #000000 !important;
 }
 .scout-vs-hand, .pdc-hand-pill.pitch,
 .rbi-rank, .mc-rank, .aip-leg-num, .pbd-lineup-slot {
-  background: #111111 !important;
-  color: #facc15 !important;
-  border-color: #facc15 !important;
+  background: #000000 !important;
+  color: var(--steelers-gold) !important;
+  border-color: var(--steelers-gold) !important;
 }
 .mc-tier, .rbi-tier, .spd-tier, .pbd-badge, .hrs-pill, .tg-pill {
-  background: #fff3b0 !important;
-  color: #111111 !important;
-  border-color: #f59e0b !important;
+  background: #000000 !important;
+  color: var(--steelers-gold) !important;
+  border-color: var(--steelers-gold) !important;
   font-weight: 900 !important;
   opacity: 1 !important;
 }
@@ -2191,35 +2196,29 @@ label * {
 .aip-score,
 .rr-score {
   -webkit-text-fill-color: currentColor !important;
-  color: #000000 !important;
+  color: var(--steelers-gold) !important;
   opacity: 1 !important;
   text-shadow: none !important;
 }
 .stTabs [data-baseweb="tab"], .stTabs [data-baseweb="tab"] * {
-  color: #111111 !important;
+  color: var(--steelers-text) !important;
   font-weight: 900 !important;
 }
 .stTabs [data-baseweb="tab-highlight"] {
-  background: #facc15 !important;
+  background: var(--steelers-gold) !important;
   height: 4px !important;
 }
 
 /* Kill visible black/gold/dark black inline backgrounds from older renderers. */
-[style*="background:#111111"], [style*="background: #111111"],
-[style*="background:#000000"], [style*="background: #000000"],
 [style*="background:#101820"], [style*="background: #101820"],
-[style*="background:#101820"], [style*="background: #101820"],
-[style*="background:#1f2937"], [style*="background: #1f2937"],
 [style*="background:#0b1220"], [style*="background: #0b1220"],
 [style*="background:#0a1628"], [style*="background: #0a1628"],
 [style*="background:#0c1a2e"], [style*="background: #0c1a2e"],
 [style*="background:#111827"], [style*="background: #111827"] {
-  background: #ffffff !important;
-  background-color: #ffffff !important;
+  background: var(--steelers-panel) !important;
+  background-color: var(--steelers-panel) !important;
   background-image: none !important;
 }
-[style*="color:#ffb612"], [style*="color: #ffb612"],
-[style*="color:#111111"], [style*="color: #111111"],
 [style*="color:#f5f5f5"], [style*="color: #f5f5f5"],
 [style*="color:#ffffff"], [style*="color: #ffffff"],
 [style*="color:#7dd3fc"], [style*="color: #7dd3fc"],
@@ -2232,14 +2231,14 @@ label * {
 [style*="color:#e2e8f0"], [style*="color: #e2e8f0"],
 [style*="color:#f8fafc"], [style*="color: #f8fafc"],
 [style*="color:#ffffff"], [style*="color: #ffffff"] {
-  color: #111111 !important;
+  color: var(--steelers-text) !important;
   font-weight: 900 !important;
   text-shadow: none !important;
 }
 </style>
 """
 
-st.markdown(BLACK_YELLOW_READABILITY_CSS, unsafe_allow_html=True)
+st.markdown(STEELERS_THEME_CSS, unsafe_allow_html=True)
 
 # ===========================================================================
 # Helpers
@@ -6777,7 +6776,7 @@ div[role="dialog"] button[aria-label="Close"] {
   .pdc-hrdue-d { font-size: .78rem; }
 }
 
-/* White/yellow/black Scout Report makeover. This modal CSS is injected after
+/* Steelers black/gold Scout Report makeover. This modal CSS is injected after
    the global app theme, so repeat the brand overrides here for readability. */
 div[data-testid="stDialog"] > div > div,
 div[role="dialog"] {
@@ -12415,7 +12414,7 @@ st.markdown(
     "</style>",
     unsafe_allow_html=True,
 )
-st.markdown(BLACK_YELLOW_READABILITY_CSS, unsafe_allow_html=True)
+st.markdown(STEELERS_THEME_CSS, unsafe_allow_html=True)
 
 # ---- Deep-link handler: ?view=games&g=<idx> AND ?top_view=<idx> ----
 # We drive selection through a plain session_state string (NOT a widget key,

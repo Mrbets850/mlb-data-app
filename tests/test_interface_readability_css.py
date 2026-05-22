@@ -20,7 +20,7 @@ def _app_text() -> str:
 def test_brand_theme_covers_apps_generator_tiles_and_links():
     text = _app_text()
     assert "HIGH-CONTRAST MRBETS850 BRAND THEME" in text
-    assert "BLACK_YELLOW_READABILITY_CSS" in text
+    assert "STEELERS_THEME_CSS" in text
     for selector in (
         ".top-tab-row",
         ".top-tab-pill",
@@ -28,14 +28,14 @@ def test_brand_theme_covers_apps_generator_tiles_and_links():
         "[data-testid=\"stMarkdownContainer\"] a",
     ):
         assert selector in text
-    assert ".top-tab-pill" in text and "color: #111111 !important" in text
+    assert ".top-tab-pill" in text and "color: var(--steelers-text) !important" in text
 
 
 def test_brand_theme_covers_streamlit_metrics():
     text = _app_text()
     assert "[data-testid=\"stMetric\"]" in text
     assert "[data-testid=\"stMetricValue\"]" in text
-    assert "color: #000000 !important" in text
+    assert "color: var(--steelers-text) !important" in text
 
 
 def test_brand_theme_covers_all_major_card_families():
@@ -57,12 +57,12 @@ def test_brand_theme_covers_all_major_card_families():
 
 def test_scout_report_modal_has_light_theme_override():
     text = _app_text()
-    assert "White/yellow/black Scout Report makeover" in text
+    assert "Steelers black/gold Scout Report makeover" in text
     assert "div[data-testid=\"stDialog\"] > div > div" in text
     assert ".pdc-hand-pill.pitch" in text
 
 
-def test_black_yellow_theme_removes_old_royal_color_sources():
+def test_steelers_theme_removes_old_royal_color_sources():
     text = _app_text()
     forbidden = (
         "#3b1f6b", "#5b21b6", "#5b21a8", "#1e0b4a", "#14062e",
@@ -77,11 +77,11 @@ def test_black_yellow_theme_removes_old_royal_color_sources():
     assert "royal" not in lowered
     for value in forbidden:
         assert value not in lowered
-    assert "--edge-black: #111111;" in text
-    assert "--edge-surface-2: #fff7cc;" in text
+    assert "--steelers-black: #000000;" in text
+    assert "--steelers-gold: #FFB612;" in text
 
 
-def test_black_yellow_theme_prevents_washed_out_text():
+def test_steelers_theme_prevents_washed_out_text():
     text = _app_text()
     assert "opacity: 1 !important" in text
     assert "-webkit-text-fill-color: currentColor !important" in text

@@ -2143,6 +2143,70 @@ label * {
   -webkit-text-fill-color: currentColor !important;
 }
 
+/* Screenshot-critical mobile surfaces. */
+.game-pill,
+.game-pill:hover,
+.game-pill:active,
+.game-pill:focus,
+.game-pill:focus-visible,
+.game-pill.active {
+  background: #151515 !important;
+  background-color: #151515 !important;
+  background-image: none !important;
+  color: var(--steelers-text) !important;
+  border: 1px solid var(--steelers-border) !important;
+  border-left: 2px solid var(--steelers-gold) !important;
+  outline: none !important;
+  box-shadow: 0 8px 20px rgba(0,0,0,.35) !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+.game-pill :is(span,div,b,strong,small),
+.game-pill .matchup-text,
+.game-pill .at,
+.game-pill .time,
+.game-pill .score-line {
+  color: var(--steelers-text) !important;
+  -webkit-text-fill-color: var(--steelers-text) !important;
+  font-weight: 900 !important;
+  opacity: 1 !important;
+  text-shadow: none !important;
+}
+.scout-row,
+.scout-row:hover,
+.scout-row:active,
+.scout-row:focus-within {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  background-image: none !important;
+  border-color: var(--steelers-border) !important;
+  border-left-color: var(--steelers-gold) !important;
+}
+.scout-player-name,
+.scout-player-meta,
+.scout-player-crush,
+.scout-player-form,
+.scout-likely,
+.scout-likely-reason,
+.scout-matchup-score,
+.scout-matchup-label {
+  color: var(--steelers-text) !important;
+  -webkit-text-fill-color: var(--steelers-text) !important;
+  font-weight: 900 !important;
+  opacity: 1 !important;
+  text-shadow: none !important;
+}
+.weather-impact-tile,
+.weather-impact-tile :is(div,span,b,strong,small) {
+  opacity: 1 !important;
+  text-shadow: none !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+.weather-impact-label,
+.weather-impact-sub {
+  color: var(--steelers-text) !important;
+  font-weight: 900 !important;
+}
+
 /* Dropdowns/selects: BaseWeb renders menus in a portal, so cover both the
    input shell and all popover/listbox descendants with high specificity. */
 [data-baseweb="select"] > div,
@@ -10260,19 +10324,19 @@ def _impact_tile(label: str, pct: int, sub: str = "") -> str:
     """One of the three Weather-Impact tiles (HR / Runs / K).
     Color: green for boost, red for suppress, amber for neutral.
     Always shows a signed number with %."""
-    if pct >= 4:    bg, fg, sign = "#dcfce7", "#15803d", "+"
-    elif pct >= 1:  bg, fg, sign = "#ecfdf5", "#16a34a", "+"
-    elif pct <= -4: bg, fg, sign = "#fee2e2", "#b91c1c", ""   # "-" already in number
-    elif pct <= -1: bg, fg, sign = "#fef2f2", "#dc2626", ""
-    else:           bg, fg, sign = "#fef9c3", "#a16207", "+" if pct >= 0 else ""
+    if pct >= 4:    fg, sign = "#22c55e", "+"
+    elif pct >= 1:  fg, sign = "#86efac", "+"
+    elif pct <= -4: fg, sign = "#f87171", ""   # "-" already in number
+    elif pct <= -1: fg, sign = "#fca5a5", ""
+    else:           fg, sign = "#FFB612", "+" if pct >= 0 else ""
     return (
-        f'<div style="flex:1; background:{bg}; border:1px solid #e2e8f0; '
+        f'<div class="weather-impact-tile" style="flex:1; background:#151515; border:1px solid rgba(255,182,18,.34); '
         f'border-radius:12px; padding:10px 12px; min-width:0;">'
-        f'<div style="font-size:0.66rem; color:#64748b; text-transform:uppercase; '
+        f'<div class="weather-impact-label" style="font-size:0.66rem; color:#D1D5DB; text-transform:uppercase; '
         f'letter-spacing:.08em; font-weight:800;">{label}</div>'
-        f'<div style="font-size:1.6rem; font-weight:900; color:{fg}; line-height:1.1; '
+        f'<div class="weather-impact-value" style="font-size:1.6rem; font-weight:900; color:{fg}; line-height:1.1; '
         f'margin-top:2px;">{sign}{pct}%</div>'
-        f'<div style="font-size:0.7rem; color:#475569; font-weight:700; margin-top:2px; '
+        f'<div class="weather-impact-sub" style="font-size:0.7rem; color:#F8FAFC; font-weight:800; margin-top:2px; '
         f'min-height:1em;">{sub}</div>'
         f'</div>'
     )

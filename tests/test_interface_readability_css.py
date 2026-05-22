@@ -135,3 +135,18 @@ def test_steelers_theme_covers_dropdown_portals():
         assert selector in text
     assert "background: var(--steelers-panel) !important" in text
     assert "background: var(--steelers-gold) !important" in text
+
+
+def test_steelers_theme_covers_mobile_game_and_weather_surfaces():
+    text = _app_text()
+    for selector in (
+        ".game-pill:active",
+        ".game-pill.active",
+        ".scout-row:active",
+        ".weather-impact-tile",
+        ".weather-impact-label",
+        ".weather-impact-sub",
+    ):
+        assert selector in text
+    assert "background:#151515" in text
+    assert "weather-impact-value" in text

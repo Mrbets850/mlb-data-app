@@ -124,6 +124,25 @@ def test_steelers_theme_overrides_status_and_scout_report_pills():
     assert "-webkit-text-fill-color: var(--steelers-gold) !important" in text
 
 
+def test_metric_chips_keep_good_ok_bad_heatmap_colors():
+    text = _app_text()
+    for selector in (
+        ".mc-chip.good",
+        ".mc-chip.mid",
+        ".mc-chip.bad",
+        ".rbi-chip.good",
+        ".rbi-chip.mid",
+        ".rbi-chip.bad",
+        ".scout-metric.metric-good",
+        ".pdc-hm-good",
+        ".pbd-glog-chip.pbd-metric-good",
+    ):
+        assert selector in text
+    assert "background: #15803d !important" in text
+    assert "background: #ffb612 !important" in text
+    assert "background: #b91c1c !important" in text
+
+
 def test_steelers_theme_covers_dropdown_portals():
     text = _app_text()
     for selector in (

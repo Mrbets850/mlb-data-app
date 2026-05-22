@@ -13,7 +13,9 @@ def _load_card_helpers():
         "_hand_code",
         "format_batter_stance",
         "format_pitcher_hand",
+        "_mc_chip_tone",
         "_mc_chip",
+        "infer_metric_tone",
         "_df_mobile_cards_html",
         "render_matchup_player_card_html",
     }
@@ -65,6 +67,24 @@ def test_generic_player_card_sub_adds_pitcher_hand():
     )
     assert "Framber Valdez" in html
     assert "Throws LHP" in html
+
+
+def test_generic_player_card_metric_chips_get_heatmap_tones():
+    ns = _load_card_helpers()
+    import pandas as pd
+    df = pd.DataFrame([
+        {"#": 1, "Hitter": "Power Bat", "Team": "PIT", "OPS": 0.950, "K%": 12.0, "ISO": 0.090},
+    ])
+    html = ns["_df_mobile_cards_html"](
+        df,
+        name_col="Hitter",
+        sub_col="Team",
+        chip_cols=["OPS", "K%", "ISO"],
+        rank_col="#",
+        always_show=True,
+    )
+    assert 'class="mc-chip good"' in html
+    assert 'class="mc-chip bad"' in html
 
 
 def test_matchup_scout_row_shows_batter_and_pitcher_hand_badges():

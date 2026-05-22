@@ -2323,9 +2323,6 @@ label * {
 .pdc-hm-good,
 .pdc-hm-okay,
 .pdc-hm-bad,
-.pdc-chip.pdc-hm-good,
-.pdc-chip.pdc-hm-okay,
-.pdc-chip.pdc-hm-bad,
 .pdc-rating-score.pdc-hm-good,
 .pdc-rating-score.pdc-hm-okay,
 .pdc-rating-score.pdc-hm-bad,
@@ -2345,9 +2342,6 @@ label * {
   -webkit-text-fill-color: var(--steelers-gold) !important;
 }
 .pdc-hm *,
-.pdc-chip.pdc-hm-good *,
-.pdc-chip.pdc-hm-okay *,
-.pdc-chip.pdc-hm-bad *,
 .tier *,
 .spc-pill *,
 .status-pill *,
@@ -2356,6 +2350,74 @@ label * {
 .pws-tag * {
   color: var(--steelers-gold) !important;
   -webkit-text-fill-color: var(--steelers-gold) !important;
+}
+
+/* Numeric metric heat-map colors: keep data chips green/yellow/red. */
+.mc-chip.good,
+.rbi-chip.good,
+.spd-chip.good,
+.scout-metric.metric-good,
+.pdc-hm-good,
+.pdc-chip.pdc-hm-good,
+.pbd-glog-chip.pbd-metric-good {
+  background: #15803d !important;
+  background-color: #15803d !important;
+  color: #ffffff !important;
+  border-color: #22c55e !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.mc-chip.mid,
+.rbi-chip.mid,
+.spd-chip.mid,
+.scout-metric.metric-mid,
+.pdc-hm-okay,
+.pdc-chip.pdc-hm-okay,
+.pbd-glog-chip.pbd-metric-warn {
+  background: #ffb612 !important;
+  background-color: #ffb612 !important;
+  color: #000000 !important;
+  border-color: #facc15 !important;
+  -webkit-text-fill-color: #000000 !important;
+}
+.mc-chip.bad,
+.rbi-chip.bad,
+.spd-chip.bad,
+.scout-metric.metric-bad,
+.pdc-hm-bad,
+.pdc-chip.pdc-hm-bad,
+.pbd-glog-chip.pbd-metric-bad {
+  background: #b91c1c !important;
+  background-color: #b91c1c !important;
+  color: #ffffff !important;
+  border-color: #ef4444 !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.mc-chip.good *,
+.mc-chip.bad *,
+.rbi-chip.good *,
+.rbi-chip.bad *,
+.spd-chip.good *,
+.spd-chip.bad *,
+.scout-metric.metric-good *,
+.scout-metric.metric-bad *,
+.pdc-hm-good *,
+.pdc-hm-bad *,
+.pdc-chip.pdc-hm-good *,
+.pdc-chip.pdc-hm-bad *,
+.pbd-glog-chip.pbd-metric-good *,
+.pbd-glog-chip.pbd-metric-bad * {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.mc-chip.mid *,
+.rbi-chip.mid *,
+.spd-chip.mid *,
+.scout-metric.metric-mid *,
+.pdc-hm-okay *,
+.pdc-chip.pdc-hm-okay *,
+.pbd-glog-chip.pbd-metric-warn * {
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
 }
 .pbd-split-empty,
 .pdc-hrdue-item.is-missing,
@@ -6033,7 +6095,7 @@ def render_matchup_player_card_html(row, display_cols):
         spec = HEATMAP_THRESHOLDS.get(col)
         if v is None or (isinstance(v, float) and pd.isna(v)):
             metric_tiles.append(
-                f'<div class="scout-metric">'
+                f'<div class="scout-metric metric-mid">'
                 f'<span class="scout-metric-label">{label}</span>'
                 f'<span class="scout-metric-val" style="color:#4e6a8a;">—</span>'
                 f'<div class="scout-metric-bar"></div>'
@@ -6075,9 +6137,10 @@ def render_matchup_player_card_html(row, display_cols):
                 bar_pct = int(100 - pct) if spec[2] else int(pct)
             except Exception:
                 bar_pct = 50
+        metric_tone = "good" if bar_pct >= 66 else ("bad" if bar_pct <= 33 else "mid")
 
         metric_tiles.append(
-            f'<div class="scout-metric">'
+            f'<div class="scout-metric metric-{metric_tone}">'
             f'<span class="scout-metric-label">{label}</span>'
             f'<span class="scout-metric-val" style="{val_style}">{txt}</span>'
             f'<div class="scout-metric-bar">'
@@ -9250,6 +9313,49 @@ def _mc_chip_tone(v, lo, hi, reverse=False):
         pct = 1.0 - pct
     if pct >= 0.66: return "good"
     if pct <= 0.33: return "bad"
+    return "mid"
+
+
+def infer_metric_tone(label, value):
+    """Best-effort good/ok/bad tone for generic metric chips."""
+    if value is None:
+        return "mid"
+    try:
+        raw = str(value).strip().replace("%", "").replace("+", "")
+        if raw in ("", "—", "-"):
+            return "mid"
+        v = float(raw)
+    except Exception:
+        return "mid"
+    key = str(label or "").strip().lower()
+    if any(tok in key for tok in ("score", "match", "ceiling", "sleeper", "target", "edge", "prob")):
+        return _mc_chip_tone(v, 45, 80)
+    if key in ("ops",):
+        return _mc_chip_tone(v, 0.650, 0.900)
+    if key in ("avg", "xba", "xba"):
+        return _mc_chip_tone(v, 0.230, 0.310)
+    if key in ("obp", "xobp"):
+        return _mc_chip_tone(v, 0.300, 0.400)
+    if key in ("slg", "xslg"):
+        return _mc_chip_tone(v, 0.380, 0.560)
+    if key in ("iso", "xiso"):
+        return _mc_chip_tone(v, 0.130, 0.260)
+    if "barrel" in key or "brl" in key:
+        return _mc_chip_tone(v, 5.0, 14.0)
+    if "hardhit" in key or key in ("hh%", "hh"):
+        return _mc_chip_tone(v, 32.0, 50.0)
+    if key in ("ev", "exit velo", "exit velocity", "bat speed", "batspeed"):
+        return _mc_chip_tone(v, 86.0, 94.0)
+    if "hr/fb" in key or "hr%" in key or "hr/pa" in key:
+        return _mc_chip_tone(v, 4.0, 16.0)
+    if key in ("k%", "whiff%", "bb%", "era", "whip", "babip"):
+        # In generic batter/target cards, lower K/Whiff/BB is usually better
+        # unless a pitcher-specific renderer supplies its own tone.
+        if key in ("era", "whip", "babip"):
+            return _mc_chip_tone(v, 2.5, 5.5, reverse=True)
+        return _mc_chip_tone(v, 16.0, 30.0, reverse=True)
+    if key in ("pa", "ip", "pitches", "p"):
+        return _mc_chip_tone(v, 40.0, 120.0)
     return "mid"
 
 
@@ -18382,7 +18488,7 @@ def _df_mobile_cards_html(df, *, name_col=None, sub_col=None, score_col=None,
                         txt = str(v)
                 except Exception:
                     txt = str(v)
-            chip_html_parts.append(_mc_chip(c, txt, "mid"))
+            chip_html_parts.append(_mc_chip(c, txt, infer_metric_tone(c, txt)))
         chips_html = (
             '<div class="mc-grid2">' + "".join(chip_html_parts) + "</div>"
             if chip_html_parts else ""

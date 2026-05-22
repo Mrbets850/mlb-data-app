@@ -1058,6 +1058,11 @@ _RBI_MOBILE_CSS = (
     ".rbi-chip { background:#1f2933 !important; border-color:rgba(255,182,18,.30) !important; }"
     ".rbi-chip-label, .rbi-sub, .rbi-foot, .rbi-score small { color:#d1d5db !important; }"
     ".rbi-chip-val, .rbi-score, .rbi-name { color:#f8fafc !important; }"
+    ".rbi-chip.good { background:#15803d !important; color:#ffffff !important; border-color:#22c55e !important; }"
+    ".rbi-chip.mid { background:#ffb612 !important; color:#000000 !important; border-color:#facc15 !important; }"
+    ".rbi-chip.bad { background:#b91c1c !important; color:#ffffff !important; border-color:#ef4444 !important; }"
+    ".rbi-chip.good *, .rbi-chip.bad * { color:#ffffff !important; -webkit-text-fill-color:#ffffff !important; }"
+    ".rbi-chip.mid * { color:#000000 !important; -webkit-text-fill-color:#000000 !important; }"
     "</style>"
 )
 
@@ -1071,15 +1076,56 @@ def _rbi_tier_from_label(label: str) -> Tuple[str, str]:
     return ("ok", s or "—")
 
 
+def _rbi_chip_tone(label: str, val: Any) -> str:
+    """Best-effort green/yellow/red tone for RBI Edge metric chips."""
+    try:
+        raw = str(val).strip().replace("%", "").replace("+", "")
+        if raw in ("", "—", "-"):
+            return "mid"
+        v = float(raw)
+    except Exception:
+        return "mid"
+    key = str(label or "").strip().lower()
+    def _tone(x, lo, hi, reverse=False):
+        if hi <= lo:
+            return "mid"
+        pct = max(0.0, min(1.0, (x - lo) / (hi - lo)))
+        if reverse:
+            pct = 1.0 - pct
+        if pct >= 0.66:
+            return "good"
+        if pct <= 0.33:
+            return "bad"
+        return "mid"
+    if "prob" in key or "score" in key:
+        return _tone(v, 0.10, 0.35) if v <= 1 else _tone(v, 45, 80)
+    if key == "ops":
+        return _tone(v, 0.650, 0.900)
+    if key in ("xba", "avg"):
+        return _tone(v, 0.230, 0.310)
+    if key in ("xwoba",):
+        return _tone(v, 0.300, 0.400)
+    if key in ("xslg",):
+        return _tone(v, 0.380, 0.560)
+    if "barrel" in key:
+        return _tone(v, 5.0, 14.0)
+    if "hard" in key or key == "hh%":
+        return _tone(v, 32.0, 50.0)
+    if key in ("k%", "opp k%"):
+        return _tone(v, 16.0, 30.0, reverse=True)
+    return "mid"
+
+
 def _rbi_chip(label: str, val: Any) -> str:
     if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
         return (
-            '<div class="rbi-chip">'
+            '<div class="rbi-chip mid">'
             f'<div class="rbi-chip-label">{label}</div>'
             f'<div class="rbi-chip-val na">—</div></div>'
         )
+    tone = _rbi_chip_tone(label, val)
     return (
-        '<div class="rbi-chip">'
+        f'<div class="rbi-chip {tone}">'
         f'<div class="rbi-chip-label">{label}</div>'
         f'<div class="rbi-chip-val">{val}</div></div>'
     )

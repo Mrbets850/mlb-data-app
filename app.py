@@ -1614,6 +1614,8 @@ label {
 
 /* Generic mobile/player cards and generator cards */
 .mc-card,
+.rbi-card,
+.rbi-page-header,
 .spd-card,
 .spc-card,
 .pbd-card,
@@ -1656,6 +1658,9 @@ label {
     color: var(--edge-ink);
 }
 .mc-name,
+.rbi-name,
+.rbi-page-title,
+.rbi-page-eyebrow,
 .spd-name,
 .spc-name,
 .pbd-title,
@@ -1674,6 +1679,10 @@ label {
 }
 .mc-sub,
 .mc-foot,
+.rbi-sub,
+.rbi-foot,
+.rbi-page-sub,
+.rbi-empty,
 .spd-sub,
 .spc-meta,
 .pbd-subtitle,
@@ -1689,6 +1698,7 @@ label {
     font-weight: 800 !important;
 }
 .mc-chip,
+.rbi-chip,
 .spd-chip,
 .pbd-kpi,
 .pbd-split-grid > div,
@@ -1701,6 +1711,7 @@ label {
     color: var(--edge-ink) !important;
 }
 .mc-chip-label,
+.rbi-chip-label,
 .spd-chip-label,
 .pbd-kpi-label,
 .pbd-split-grid span,
@@ -1709,6 +1720,7 @@ label {
     font-weight: 900 !important;
 }
 .mc-chip-val,
+.rbi-chip-val,
 .spd-chip-val,
 .pbd-kpi-value,
 .pbd-split-grid b,
@@ -1717,6 +1729,7 @@ label {
     font-weight: 900 !important;
 }
 .mc-score,
+.rbi-score,
 .spd-score,
 .spc-bigscore .val,
 .aip-score,
@@ -1724,6 +1737,17 @@ label {
 .pbd-rankbadge,
 .pdc-grade {
     color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+}
+.rbi-tier,
+.mc-tier,
+.spd-tier,
+.pbd-badge,
+.hrs-pill,
+.tg-pill {
+    background: #fff7d6 !important;
+    color: var(--edge-purple) !important;
+    border-color: var(--edge-gold-2) !important;
     font-weight: 900 !important;
 }
 
@@ -1800,6 +1824,109 @@ label {
     background: linear-gradient(135deg, var(--edge-gold) 0%, var(--edge-gold-2) 100%) !important;
     color: #1f123d !important;
     border-color: var(--edge-purple) !important;
+}
+
+/* Apps & Generators category tiles — override their later dark carousel CSS. */
+.top-tab-row {
+    background: #ffffff !important;
+    border: 2px solid var(--edge-purple) !important;
+    box-shadow: 0 10px 28px rgba(59,31,107,.16) !important;
+    animation: none !important;
+}
+.top-tab-row::before {
+    background-image: radial-gradient(circle, rgba(250,204,21,.22) 1px, transparent 1px) !important;
+}
+.apps-gen-title {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+    text-shadow: none !important;
+}
+.apps-gen-sub {
+    color: var(--edge-muted) !important;
+    font-weight: 800 !important;
+}
+.top-tab-pill,
+.top-tab-pill:link,
+.top-tab-pill:visited,
+.top-tab-pill *,
+.top-tab-pill a,
+.top-tab-pill a:link,
+.top-tab-pill a:visited {
+    background: var(--edge-purple-soft) !important;
+    color: var(--edge-purple) !important;
+    border: 2px solid rgba(91,33,182,.25) !important;
+    font-weight: 900 !important;
+    text-decoration: none !important;
+    text-shadow: none !important;
+}
+.top-tab-pill:hover,
+.top-tab-pill:hover * {
+    background: #fff7d6 !important;
+    color: #1f123d !important;
+    border-color: var(--edge-gold-2) !important;
+}
+.top-tab-pill.active,
+.top-tab-pill.active *,
+.top-tab-pill.active:link,
+.top-tab-pill.active:visited {
+    background: linear-gradient(135deg, var(--edge-purple) 0%, var(--edge-purple-2) 100%) !important;
+    color: #ffffff !important;
+    border-color: var(--edge-gold) !important;
+    box-shadow: 0 8px 18px rgba(59,31,107,.24) !important;
+}
+
+/* Streamlit metric output — fix washed-out white values on the light theme. */
+[data-testid="stMetric"] {
+    background: #ffffff !important;
+    border: 1px solid rgba(91,33,182,.18) !important;
+    border-radius: 14px !important;
+    padding: 8px 10px !important;
+    box-shadow: 0 6px 16px rgba(59,31,107,.10) !important;
+}
+[data-testid="stMetric"] [data-testid="stMetricLabel"],
+[data-testid="stMetric"] [data-testid="stMetricLabel"] *,
+[data-testid="stMetric"] [data-testid="stMetricDelta"],
+[data-testid="stMetric"] [data-testid="stMetricDelta"] * {
+    color: var(--edge-muted) !important;
+    font-weight: 900 !important;
+}
+[data-testid="stMetric"] [data-testid="stMetricValue"],
+[data-testid="stMetric"] [data-testid="stMetricValue"] * {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+    text-shadow: none !important;
+}
+
+/* Links inside generated cards/boards should never render default pale blue. */
+[data-testid="stMarkdownContainer"] a,
+[data-testid="stMarkdownContainer"] a *,
+.mc-card a, .mc-card a *,
+.aip-card a, .aip-card a *,
+.rr-card a, .rr-card a *,
+.pws-card a, .pws-card a *,
+.pbd-card a, .pbd-card a *,
+.section-card a, .section-card a * {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+    text-decoration-color: var(--edge-gold-2) !important;
+    text-decoration-thickness: 2px !important;
+    text-underline-offset: 3px !important;
+}
+
+/* Final text safety net for card descendants, including late-injected CSS. */
+.mc-card :is(div,span,p,b,strong,small),
+.rbi-card :is(div,span,p,b,strong,small),
+.rbi-page-header :is(div,span,p,b,strong,small),
+.spd-card :is(div,span,p,b,strong,small),
+.spc-card :is(div,span,p,b,strong,small),
+.pbd-card :is(div,span,p,b,strong,small),
+.aip-card :is(div,span,p,b,strong,small,li),
+.rr-card :is(div,span,p,b,strong,small,li),
+.pws-card :is(div,span,p,b,strong,small),
+.section-card :is(div,span,p,b,strong,small),
+.scout-row :is(div,span,p,b,strong,small),
+.insights-panel :is(div,span,p,b,strong,small) {
+    text-shadow: none !important;
 }
 
 /* Override common inline dark/muted colors produced by existing renderers. */

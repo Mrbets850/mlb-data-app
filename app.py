@@ -9698,6 +9698,42 @@ def format_pitcher_hand(pitch_hand, unknown="—") -> str:
     return {"L": "LHP", "R": "RHP"}.get(_hand_code(pitch_hand), unknown)
 
 
+def lookup_batter_stance(player_id=None, name=None, team=None, df=None) -> str:
+    """Return raw L/R/S batter stance from the loaded batter data."""
+    data = df
+    if data is None:
+        data = globals().get("batters_df")
+    if data is None or not isinstance(data, pd.DataFrame) or data.empty:
+        return ""
+    stance_col = "bat_side" if "bat_side" in data.columns else (
+        "Bat" if "Bat" in data.columns else None
+    )
+    if not stance_col:
+        return ""
+    if player_id is not None and "player_id" in data.columns:
+        try:
+            pid = int(float(player_id))
+            match = data[pd.to_numeric(data["player_id"], errors="coerce") == pid]
+            if not match.empty:
+                return _hand_code(match.iloc[0].get(stance_col))
+        except Exception:
+            pass
+    if name and "name_key" in data.columns:
+        try:
+            key = clean_name(str(name))
+            match = data[data["name_key"] == key]
+            if team and "team_key" in data.columns:
+                team_key = norm_team(team)
+                team_match = match[match["team_key"] == team_key]
+                if not team_match.empty:
+                    match = team_match
+            if not match.empty:
+                return _hand_code(match.iloc[0].get(stance_col))
+        except Exception:
+            pass
+    return ""
+
+
 def _safe_str(v, default=""):
     """Coerce arbitrary live-metadata values to a clean string for rendering.
 
@@ -16950,6 +16986,7 @@ if _render_matchup:
             # Score bar (0–200 scale)
             bar_pct = min(100, max(0, (float(matchup_v) / 200) * 100))
             rank_cls = f"rank-{i + 1}"
+            bat_label = format_batter_stance(bat, "")
 
             rows_html.append(
                 f'<div class="insight-row">'
@@ -16957,7 +16994,9 @@ if _render_matchup:
                 f'{photo_html}'
                 f'<div class="insight-player">'
                 f'<div class="insight-player-name">{name}</div>'
-                f'<div class="insight-player-meta">{team} &middot; #{spot} &middot; vs {opp_pitcher}</div>'
+                f'<div class="insight-player-meta">{team}'
+                f'{f" &middot; Bats {bat_label}" if bat_label else ""}'
+                f' &middot; #{spot} &middot; vs {opp_pitcher}</div>'
                 f'{crush_chips_html}'
                 f'</div>'
                 f'<div class="insight-stats">'
@@ -17089,6 +17128,17 @@ def _df_mobile_cards_html(df, *, name_col=None, sub_col=None, score_col=None,
     for _, r in df.iterrows():
         name = str(r.get(name_col, "")) if name_col else ""
         sub  = str(r.get(sub_col, ""))  if sub_col  else ""
+        sub_bits = [sub] if sub else []
+        bat_raw = r.get("Bat", None)
+        if bat_raw is None:
+            bat_raw = r.get("bat_side", None)
+        bat_label = format_batter_stance(bat_raw, "")
+        if bat_label and not any("Bats " in bit for bit in sub_bits):
+            sub_bits.append(f"Bats {bat_label}")
+        throws_label = format_pitcher_hand(r.get("Throws", None), "")
+        if throws_label and not any("Throws " in bit for bit in sub_bits):
+            sub_bits.append(f"Throws {throws_label}")
+        sub = " · ".join(sub_bits)
         score = r.get(score_col) if score_col else None
         # Render score as text directly (column may already be formatted)
         score_html = ""
@@ -17254,6 +17304,8 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
             foot_bits.append(f'<b>{r.get("Game")}</b>')
         if r.get("OppPitcher"):
             foot_bits.append(f'vs {r.get("OppPitcher")}')
+        if r.get("Bat") not in (None, ""):
+            foot_bits.append(f'Bats {format_batter_stance(r.get("Bat"))}')
         if r.get("Spot") not in (None, ""):
             foot_bits.append(f'Spot {r.get("Spot")}')
         if r.get("HR (L10G)") not in (None, ""):
@@ -17262,7 +17314,7 @@ def _render_leaderboard(df, title, top=True, n=15, sort_col="Matchup"):
         mobile_cards.append(_mc_card(
             rank=int(r.get("#")) if r.get("#") is not None else None,
             name=r.get("Hitter", ""),
-            sub=f'{r.get("Team","")}',
+            sub=f'{r.get("Team","")} · Bats {format_batter_stance(r.get("Bat",""))}',
             score=r.get("Matchup"),
             score_label="Matchup",
             tiers=tiers,
@@ -17423,7 +17475,7 @@ if _render_hr_milestones:
             hrm_cards.append(_mc_card(
                 rank=int(r.get("#")) if r.get("#") is not None else None,
                 name=r.get("Hitter", ""),
-                sub=f'{r.get("Team","")}',
+                sub=f'{r.get("Team","")} · Bats {format_batter_stance(r.get("Bat",""))}',
                 score=r.get("Season HR"),
                 score_label="HR",
                 tiers=tiers,
@@ -17510,8 +17562,19 @@ if _render_hr_milestones:
             "pitcher": "Off Pitcher",
             "description": "Play",
         })
+        display["Bat"] = display.apply(
+            lambda r: format_batter_stance(
+                lookup_batter_stance(
+                    player_id=r.get("batter_id"),
+                    name=r.get("Batter"),
+                    team=r.get("Team"),
+                ),
+                "",
+            ),
+            axis=1,
+        )
         cols_show = ["Game", "Inning", "Batter", "Team", "Off Pitcher",
-                     "Distance (ft)", "Exit Velo (mph)", "Play"]
+                     "Bat", "Distance (ft)", "Exit Velo (mph)", "Play"]
         cols_show = [c for c in cols_show if c in display.columns]
         out_hr = display[cols_show].reset_index(drop=True)
         out_hr.insert(0, "#", range(1, len(out_hr) + 1))
@@ -17622,10 +17685,14 @@ if _render_hr_milestones:
                     + (f' · {play}' if play else '')
                     + '</div>'
                 )
+                bat_label = format_batter_stance(hrr.get("Bat", ""), "")
+                sub_bits = [str(hrr.get("Team", "") or "")]
+                if bat_label:
+                    sub_bits.append(f"Bats {bat_label}")
                 hrd_cards.append(_mc_card(
                     rank=int(hrr.get("#")) if hrr.get("#") is not None else None,
                     name=hrr.get("Batter", ""),
-                    sub=f'{hrr.get("Team","")}',
+                    sub=" · ".join(bit for bit in sub_bits if bit),
                     score=None,
                     score_label="",
                     tiers=[tier],
@@ -17763,6 +17830,13 @@ if _render_day_night:
                 )]
             except Exception:
                 pass
+        if "player_id" in view_df.columns:
+            try:
+                view_df["bat_side"] = view_df["player_id"].apply(
+                    lambda pid: lookup_batter_stance(player_id=pid)
+                )
+            except Exception:
+                view_df["bat_side"] = ""
 
         # Helpers used by all sub-views below.
         def _fmt_rate(v, digits=3):
@@ -17794,6 +17868,7 @@ if _render_day_night:
             disp = pd.DataFrame({
                 "Player": out["player"],
                 "Team": out["team_abbr"],
+                "Bat": out["bat_side"].apply(format_batter_stance) if "bat_side" in out.columns else "—",
                 "Day HR": out["day_hr"].astype(int),
                 "Day PA": out["day_pa"].astype(int),
                 "Day AB": out["day_ab"].astype(int),
@@ -17814,6 +17889,7 @@ if _render_day_night:
             disp = pd.DataFrame({
                 "Player": out["player"],
                 "Team": out["team_abbr"],
+                "Bat": out["bat_side"].apply(format_batter_stance) if "bat_side" in out.columns else "—",
                 "Night HR": out["night_hr"].astype(int),
                 "Night PA": out["night_pa"].astype(int),
                 "Night AB": out["night_ab"].astype(int),
@@ -17839,6 +17915,7 @@ if _render_day_night:
             disp = pd.DataFrame({
                 "Player": out["player"],
                 "Team": out["team_abbr"],
+                "Bat": out["bat_side"].apply(format_batter_stance) if "bat_side" in out.columns else "—",
                 "Day HR": out["day_hr"].astype(int),
                 "Day PA": out["day_pa"].astype(int),
                 "Day HR/PA": out["day_hr_rate"].apply(_fmt_pct),
@@ -18176,12 +18253,13 @@ if _render_day_night:
                         disp = pd.DataFrame({
                             "Player": qualified["player"],
                             "Team": qualified["team_abbr"],
+                            "Bat": qualified["bat_side"].apply(format_batter_stance) if "bat_side" in qualified.columns else "—",
                             "Opp": qualified["opp_abbr"].apply(
                                 lambda v: f"vs {v}" if v else "—"
                             ),
                             "Opp SP": qualified["opp_sp_name"].apply(_fmt_opp_sp),
                             "Opp SP Hand": qualified["opp_sp_hand"].apply(
-                                lambda h: (h or "").upper() if (h or "").upper() in ("L", "R") else "—"
+                                lambda h: format_pitcher_hand(h)
                             ),
                             "Matchup": qualified["opp_sp_hand"].apply(_fmt_matchup),
                             "Game Time (CT)": qualified["game_time"].fillna("—"),

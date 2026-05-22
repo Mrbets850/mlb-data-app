@@ -1416,6 +1416,434 @@ div[data-testid="element-container"]:has(.mhm-cta-click) +
 [data-theme="dark"] .footer {
     background: rgba(255,255,255,0.02) !important; color: #3a5a7a !important;
 }
+
+/* ====================================================================
+   VIBRANT MRBETS850 BRAND THEME — white / purple / gold
+   --------------------------------------------------------------------
+   Kept as the final global override so existing layout + data logic stays
+   untouched while every board/card gets a brighter, readable surface.
+   ==================================================================== */
+:root {
+    --edge-bg: #fff8e7;
+    --edge-surface: #ffffff;
+    --edge-surface-2: #fffdf6;
+    --edge-purple: #3b1f6b;
+    --edge-purple-2: #5b21b6;
+    --edge-purple-soft: #f3e8ff;
+    --edge-gold: #facc15;
+    --edge-gold-2: #f59e0b;
+    --edge-ink: #1f123d;
+    --edge-muted: #5b4b79;
+    --edge-border: rgba(91,33,182,.22);
+    --edge-shadow: 0 10px 28px rgba(59,31,107,.14);
+}
+html, body,
+[data-testid="stApp"],
+[data-testid="stAppViewContainer"],
+[data-testid="stHeader"],
+[data-testid="stMain"],
+[data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+[data-testid="stBottom"],
+section.main,
+.main,
+.stApp {
+    background: var(--edge-bg) !important;
+    background-color: var(--edge-bg) !important;
+    color: var(--edge-ink) !important;
+}
+body::before {
+    background: linear-gradient(135deg, #fff8e7 0%, #ffffff 48%, #f3e8ff 100%) !important;
+}
+body::after {
+    background-image:
+        radial-gradient(circle at 16px 16px, rgba(250,204,21,.18) 1px, transparent 1px),
+        linear-gradient(rgba(91,33,182,.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(91,33,182,.04) 1px, transparent 1px) !important;
+    background-size: 44px 44px, 44px 44px, 44px 44px !important;
+}
+html, body, [class*="css"],
+[data-testid="stMarkdownContainer"],
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stMarkdownContainer"] span,
+[data-testid="stCaptionContainer"],
+[data-testid="stWidgetLabel"],
+label {
+    color: var(--edge-ink) !important;
+    font-weight: 700 !important;
+}
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4,
+[data-testid="stMarkdownContainer"] h5,
+[data-testid="stMarkdownContainer"] h6,
+.section-title,
+.section-title-lg {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+    text-shadow: none !important;
+}
+[data-testid="stMarkdownContainer"] strong,
+[data-testid="stMarkdownContainer"] b {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+}
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] *,
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] *,
+[data-testid="stRadio"] label,
+[data-testid="stRadio"] label *,
+[data-testid="stMarkdownContainer"] > p,
+[data-testid="stMarkdownContainer"] > p > * {
+    color: var(--edge-muted) !important;
+    font-weight: 800 !important;
+}
+
+/* Core app cards/boards */
+.section-card,
+.section-card.dark,
+.lineup-banner,
+.mhm-wrap,
+.scout-row,
+.insights-panel,
+.cmd-bar,
+.live-ticker,
+.carousel-wrap,
+.game-pill,
+.gh-scorebox,
+[data-testid="stExpander"],
+[data-testid="stDataFrame"],
+[data-testid="stTable"] {
+    background: var(--edge-surface) !important;
+    background-color: var(--edge-surface) !important;
+    color: var(--edge-ink) !important;
+    border-color: var(--edge-border) !important;
+    box-shadow: var(--edge-shadow) !important;
+}
+.section-card *,
+.section-card.dark *,
+.lineup-banner *,
+.mhm-wrap *,
+.scout-row *,
+.insights-panel *,
+.cmd-bar *,
+.live-ticker *,
+.carousel-wrap *,
+.game-pill *,
+.gh-scorebox *,
+[data-testid="stDataFrame"] *,
+[data-testid="stTable"] * {
+    color: var(--edge-ink);
+}
+.lineup-banner {
+    border-radius: 14px 14px 0 0 !important;
+    border: 2px solid var(--edge-purple) !important;
+    border-bottom: 0 !important;
+}
+.lineup-banner .lineup-title,
+.game-header .team-abbr,
+.scout-player-name,
+.insight-player-name,
+.cmd-game,
+.game-pill .matchup-text,
+.gh-scorebox table td.team {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+}
+.lineup-banner .vs-pitcher,
+.game-header .probables,
+.game-header .probables *,
+.scout-player-meta,
+.insight-player-meta,
+.cmd-sub,
+.game-header .meta,
+.game-pill .time,
+.gh-scorebox .status-meta {
+    color: var(--edge-muted) !important;
+    font-weight: 800 !important;
+}
+.scout-row {
+    border: 2px solid var(--edge-border) !important;
+    border-left: 6px solid var(--edge-purple) !important;
+    border-radius: 14px !important;
+    margin: 8px 0 !important;
+}
+.scout-row:hover {
+    background: #fff7d6 !important;
+    border-left-color: var(--edge-gold-2) !important;
+}
+.scout-spot,
+.scout-metric,
+.insight-stat,
+.pdc-recap-tile {
+    background: var(--edge-purple-soft) !important;
+    color: var(--edge-purple) !important;
+    border-color: rgba(91,33,182,.25) !important;
+}
+.scout-metric-label,
+.scout-matchup-label,
+.insight-stat-label {
+    color: var(--edge-muted) !important;
+    font-weight: 900 !important;
+}
+.scout-metric-val,
+.scout-matchup-score,
+.insight-stat-val,
+.insight-score-num {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+}
+.scout-hand-badge,
+.pdc-hand-pill {
+    background: var(--edge-gold) !important;
+    color: #1f123d !important;
+    border-color: var(--edge-gold-2) !important;
+}
+.scout-vs-hand,
+.pdc-hand-pill.pitch {
+    background: var(--edge-purple) !important;
+    color: #ffffff !important;
+    border-color: var(--edge-purple-2) !important;
+}
+
+/* Generic mobile/player cards and generator cards */
+.mc-card,
+.spd-card,
+.spc-card,
+.pbd-card,
+.pbd-split-card,
+.aip-card,
+.aip-leg,
+.rr-card,
+.pws-card,
+.pdc-card,
+.pdc-next,
+.pdc-hrdue,
+.pdc-log-table,
+.hrs-table,
+.tg-table,
+.sp-table,
+.sp-wrap,
+.hrs-wrap,
+.tg-wrap {
+    background: var(--edge-surface) !important;
+    background-color: var(--edge-surface) !important;
+    color: var(--edge-ink) !important;
+    border-color: var(--edge-border) !important;
+    box-shadow: var(--edge-shadow) !important;
+}
+.mc-card *,
+.spd-card *,
+.spc-card *,
+.pbd-card *,
+.pbd-split-card *,
+.aip-card *,
+.rr-card *,
+.pws-card *,
+.pdc-card *,
+.pdc-next *,
+.pdc-hrdue *,
+.pdc-log-table *,
+.hrs-table *,
+.tg-table *,
+.sp-table * {
+    color: var(--edge-ink);
+}
+.mc-name,
+.spd-name,
+.spc-name,
+.pbd-title,
+.pbd-id-name,
+.aip-leg-name,
+.aip-card-title,
+.rr-name,
+.pws-matchup,
+.pws-pitcher,
+.pdc-name,
+.hrs-name,
+.tg-name,
+.sp-pitcher {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+}
+.mc-sub,
+.mc-foot,
+.spd-sub,
+.spc-meta,
+.pbd-subtitle,
+.pbd-id-matchup,
+.aip-meta,
+.aip-ctx,
+.rr-meta,
+.pdc-meta,
+.pdc-empty,
+.hrs-meta,
+.tg-meta {
+    color: var(--edge-muted) !important;
+    font-weight: 800 !important;
+}
+.mc-chip,
+.spd-chip,
+.pbd-kpi,
+.pbd-split-grid > div,
+.aip-stats,
+.rbi-card,
+.tg-park,
+.sp-src {
+    background: var(--edge-purple-soft) !important;
+    border-color: rgba(91,33,182,.24) !important;
+    color: var(--edge-ink) !important;
+}
+.mc-chip-label,
+.spd-chip-label,
+.pbd-kpi-label,
+.pbd-split-grid span,
+.pdc-chip .lab {
+    color: var(--edge-muted) !important;
+    font-weight: 900 !important;
+}
+.mc-chip-val,
+.spd-chip-val,
+.pbd-kpi-value,
+.pbd-split-grid b,
+.pdc-chip .val {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+}
+.mc-score,
+.spd-score,
+.spc-bigscore .val,
+.aip-score,
+.rr-score,
+.pbd-rankbadge,
+.pdc-grade {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+}
+
+/* Tables, form controls, tabs, and buttons */
+.stTabs [data-baseweb="tab-list"] {
+    border-bottom-color: rgba(91,33,182,.25) !important;
+}
+.stTabs [data-baseweb="tab"],
+.stTabs [data-baseweb="tab"] * {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+}
+.stTabs [data-baseweb="tab"][aria-selected="true"],
+.stTabs [data-baseweb="tab"][aria-selected="true"] * {
+    color: #1f123d !important;
+}
+.stTabs [data-baseweb="tab-highlight"] {
+    background: var(--edge-gold) !important;
+    height: 4px !important;
+}
+[data-baseweb="select"] > div,
+[data-baseweb="select"] > div > div,
+[data-baseweb="select"] input,
+[data-testid="stDateInput"] input,
+[data-testid="stTimeInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+    background: #ffffff !important;
+    color: var(--edge-ink) !important;
+    border: 2px solid rgba(91,33,182,.28) !important;
+    font-weight: 800 !important;
+}
+[data-baseweb="popover"],
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="popover"] [role="listbox"],
+[data-baseweb="popover"] ul,
+[data-baseweb="menu"] [role="listbox"],
+[data-baseweb="menu"] ul,
+[data-baseweb="calendar"] {
+    background: #ffffff !important;
+    border: 2px solid rgba(91,33,182,.24) !important;
+    box-shadow: var(--edge-shadow) !important;
+}
+[data-baseweb="popover"] [role="option"],
+[data-baseweb="popover"] [role="option"] *,
+[data-baseweb="popover"] li,
+[data-baseweb="popover"] li *,
+[data-baseweb="menu"] [role="option"],
+[data-baseweb="menu"] [role="option"] *,
+[data-baseweb="menu"] li,
+[data-baseweb="menu"] li *,
+[data-baseweb="calendar"],
+[data-baseweb="calendar"] * {
+    color: var(--edge-ink) !important;
+    font-weight: 800 !important;
+}
+[data-testid="stDownloadButton"] button,
+[data-testid="stButton"] button {
+    background: linear-gradient(135deg, var(--edge-purple) 0%, var(--edge-purple-2) 100%) !important;
+    color: #ffffff !important;
+    border: 2px solid var(--edge-gold) !important;
+    border-radius: 999px !important;
+    font-weight: 900 !important;
+    box-shadow: 0 6px 14px rgba(59,31,107,.22) !important;
+}
+[data-testid="stDownloadButton"] button *,
+[data-testid="stButton"] button * {
+    color: #ffffff !important;
+    font-weight: 900 !important;
+}
+[data-testid="stDownloadButton"] button:hover,
+[data-testid="stButton"] button:hover {
+    background: linear-gradient(135deg, var(--edge-gold) 0%, var(--edge-gold-2) 100%) !important;
+    color: #1f123d !important;
+    border-color: var(--edge-purple) !important;
+}
+
+/* Override common inline dark/muted colors produced by existing renderers. */
+[style*="background:#0a1628"],
+[style*="background: #0a1628"],
+[style*="background:#0b1220"],
+[style*="background: #0b1220"],
+[style*="background:#0c1a2e"],
+[style*="background: #0c1a2e"],
+[style*="background:#111827"],
+[style*="background: #111827"],
+[style*="background:#15102b"],
+[style*="background: #15102b"],
+[style*="background:#1c1340"],
+[style*="background: #1c1340"] {
+    background: var(--edge-surface) !important;
+    background-color: var(--edge-surface) !important;
+}
+[style*="color:#475569"],
+[style*="color: #475569"],
+[style*="color:#64748b"],
+[style*="color: #64748b"],
+[style*="color:#4e6a8a"],
+[style*="color: #4e6a8a"],
+[style*="color:#3a5a7a"],
+[style*="color: #3a5a7a"],
+[style*="color:#94a3b8"],
+[style*="color: #94a3b8"],
+[style*="color:#a3a0c4"],
+[style*="color: #a3a0c4"],
+[style*="color:#b0c8e4"],
+[style*="color: #b0c8e4"],
+[style*="color:#e2e8f0"],
+[style*="color: #e2e8f0"] {
+    color: var(--edge-ink) !important;
+    font-weight: 800 !important;
+}
+[style*="color:#7dd3fc"],
+[style*="color: #7dd3fc"],
+[style*="color:#00c896"],
+[style*="color: #00c896"] {
+    color: var(--edge-purple) !important;
+    font-weight: 900 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -5953,6 +6381,82 @@ div[role="dialog"] button[aria-label="Close"] {
   .pdc-hrdue-item { padding: 8px 10px; gap: 10px; }
   .pdc-hrdue-h { font-size: .95rem; }
   .pdc-hrdue-d { font-size: .78rem; }
+}
+
+/* White/purple/gold Scout Report makeover. This modal CSS is injected after
+   the global app theme, so repeat the brand overrides here for readability. */
+div[data-testid="stDialog"] > div > div,
+div[role="dialog"] {
+  background: linear-gradient(135deg, #fff8e7 0%, #ffffff 55%, #f3e8ff 100%) !important;
+  color: #1f123d !important;
+}
+div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] *,
+div[role="dialog"] [data-testid="stMarkdownContainer"] *,
+div[data-testid="stDialog"] label, div[role="dialog"] label,
+div[data-testid="stDialog"] p, div[role="dialog"] p,
+div[data-testid="stDialog"] span, div[role="dialog"] span,
+div[data-testid="stDialog"] h1, div[role="dialog"] h1,
+div[data-testid="stDialog"] h2, div[role="dialog"] h2,
+div[data-testid="stDialog"] h3, div[role="dialog"] h3,
+div[data-testid="stDialog"] header, div[role="dialog"] header {
+  color: #1f123d !important;
+  font-weight: 800;
+}
+.pdc-root { color:#1f123d !important; }
+.pdc-card,
+.pdc-rating-score,
+.pdc-log-table,
+.pdc-chip,
+.pdc-recap-tile,
+.pdc-hrdue,
+.pdc-hrdue-item,
+.pdc-next {
+  background: #ffffff !important;
+  color: #1f123d !important;
+  border-color: rgba(91,33,182,.24) !important;
+  box-shadow: 0 10px 28px rgba(59,31,107,.14) !important;
+}
+.pdc-name,
+.pdc-rating-name,
+.pdc-section-title,
+.pdc-table .row-label,
+.pdc-log-table td,
+.pdc-recap-tile .val,
+.pdc-chip .val,
+.pdc-hrdue-h,
+.pdc-hrdue-score .lbl {
+  color: #3b1f6b !important;
+  font-weight: 900 !important;
+}
+.pdc-meta,
+.pdc-next-left,
+.pdc-next-right,
+.pdc-rating-bullets li,
+.pdc-empty,
+.pdc-table td,
+.pdc-log-table th,
+.pdc-log-opp,
+.pdc-hrdue-d,
+.pdc-hrdue-title,
+.pdc-hrdue-score .den {
+  color: #5b4b79 !important;
+  font-weight: 800 !important;
+}
+.pdc-table th,
+.pdc-recap-tile .lab,
+.pdc-chip .lab {
+  color: #5b21b6 !important;
+  font-weight: 900 !important;
+}
+.pdc-hand-pill {
+  background:#facc15 !important;
+  color:#1f123d !important;
+  border-color:#f59e0b !important;
+}
+.pdc-hand-pill.pitch {
+  background:#3b1f6b !important;
+  color:#ffffff !important;
+  border-color:#5b21b6 !important;
 }
 </style>
 """

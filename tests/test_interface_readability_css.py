@@ -106,3 +106,32 @@ def test_steelers_theme_overrides_green_pill_families():
         assert selector in text
     assert "color: var(--steelers-gold) !important" in text
     assert "background: #000000 !important" in text
+
+
+def test_steelers_theme_overrides_status_and_scout_report_pills():
+    text = _app_text()
+    for selector in (
+        ".tier-elite",
+        ".tier-strong",
+        ".spc-pill.elite",
+        ".pdc-hm-good",
+        ".pdc-chip.pdc-hm-good",
+        ".tg-lp.confirmed",
+        ".pws-badge",
+        ".pws-tag",
+    ):
+        assert selector in text
+    assert "-webkit-text-fill-color: var(--steelers-gold) !important" in text
+
+
+def test_steelers_theme_covers_dropdown_portals():
+    text = _app_text()
+    for selector in (
+        '[data-baseweb="select"] > div',
+        '[data-baseweb="popover"] [role="option"]',
+        '[data-baseweb="menu"] [role="option"]',
+        '[data-baseweb="popover"] [role="option"]:hover',
+    ):
+        assert selector in text
+    assert "background: var(--steelers-panel) !important" in text
+    assert "background: var(--steelers-gold) !important" in text

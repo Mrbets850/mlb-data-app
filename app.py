@@ -2142,6 +2142,74 @@ label * {
   opacity: 1 !important;
   -webkit-text-fill-color: currentColor !important;
 }
+
+/* Dropdowns/selects: BaseWeb renders menus in a portal, so cover both the
+   input shell and all popover/listbox descendants with high specificity. */
+[data-baseweb="select"] > div,
+[data-baseweb="select"] > div > div,
+[data-baseweb="select"] input,
+[data-testid="stDateInput"] input,
+[data-testid="stTimeInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+  background: var(--steelers-panel) !important;
+  background-color: var(--steelers-panel) !important;
+  color: var(--steelers-text) !important;
+  -webkit-text-fill-color: var(--steelers-text) !important;
+  border: 2px solid var(--steelers-border) !important;
+  font-weight: 900 !important;
+  opacity: 1 !important;
+}
+[data-baseweb="select"] *,
+[data-baseweb="select"] input::placeholder,
+[data-baseweb="select"] svg {
+  color: var(--steelers-text) !important;
+  fill: var(--steelers-text) !important;
+  -webkit-text-fill-color: var(--steelers-text) !important;
+  opacity: 1 !important;
+  font-weight: 900 !important;
+}
+[data-baseweb="popover"],
+[data-baseweb="popover"] *,
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="popover"] [role="listbox"],
+[data-baseweb="popover"] ul,
+[data-baseweb="menu"],
+[data-baseweb="menu"] *,
+[data-baseweb="menu"] [role="listbox"],
+[data-baseweb="menu"] ul {
+  background: var(--steelers-panel) !important;
+  background-color: var(--steelers-panel) !important;
+  color: var(--steelers-text) !important;
+  -webkit-text-fill-color: var(--steelers-text) !important;
+  border-color: var(--steelers-border) !important;
+  opacity: 1 !important;
+  font-weight: 900 !important;
+}
+[data-baseweb="popover"] [role="option"],
+[data-baseweb="popover"] li,
+[data-baseweb="menu"] [role="option"],
+[data-baseweb="menu"] li {
+  background: var(--steelers-panel) !important;
+  color: var(--steelers-text) !important;
+  -webkit-text-fill-color: var(--steelers-text) !important;
+  font-weight: 900 !important;
+  opacity: 1 !important;
+}
+[data-baseweb="popover"] [role="option"]:hover,
+[data-baseweb="popover"] li:hover,
+[data-baseweb="menu"] [role="option"]:hover,
+[data-baseweb="menu"] li:hover,
+[data-baseweb="popover"] [role="option"][aria-selected="true"],
+[data-baseweb="popover"] li[aria-selected="true"],
+[data-baseweb="menu"] [role="option"][aria-selected="true"],
+[data-baseweb="menu"] li[aria-selected="true"] {
+  background: var(--steelers-gold) !important;
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+  font-weight: 900 !important;
+}
 .mc-chip-label, .rbi-chip-label, .spd-chip-label, .scout-metric-label,
 .pbd-kpi-label, .pbd-split-grid span, .pdc-chip .lab,
 .insight-stat-label, .mc-score small, .rbi-score small {
@@ -2174,6 +2242,56 @@ label * {
   border-color: var(--steelers-gold) !important;
   font-weight: 900 !important;
   opacity: 1 !important;
+}
+.tier,
+.tier-elite,
+.tier-strong,
+.tier-ok,
+.tier-avoid,
+.tier-neutral,
+.spc-pill,
+.spc-pill.elite,
+.spc-pill.strong,
+.spc-pill.ok,
+.spc-pill.soft,
+.spc-pill.poor,
+.pdc-hm,
+.pdc-hm-good,
+.pdc-hm-okay,
+.pdc-hm-bad,
+.pdc-chip.pdc-hm-good,
+.pdc-chip.pdc-hm-okay,
+.pdc-chip.pdc-hm-bad,
+.pdc-rating-score.pdc-hm-good,
+.pdc-rating-score.pdc-hm-okay,
+.pdc-rating-score.pdc-hm-bad,
+.status-pill,
+.badge,
+.sp-src,
+.tg-lp,
+.tg-lp.confirmed,
+.tg-lp.projected,
+.tg-lp.notposted,
+.pws-badge,
+.pws-tag {
+  background: #000000 !important;
+  color: var(--steelers-gold) !important;
+  border-color: var(--steelers-gold) !important;
+  box-shadow: none !important;
+  -webkit-text-fill-color: var(--steelers-gold) !important;
+}
+.pdc-hm *,
+.pdc-chip.pdc-hm-good *,
+.pdc-chip.pdc-hm-okay *,
+.pdc-chip.pdc-hm-bad *,
+.tier *,
+.spc-pill *,
+.status-pill *,
+.badge *,
+.pws-badge *,
+.pws-tag * {
+  color: var(--steelers-gold) !important;
+  -webkit-text-fill-color: var(--steelers-gold) !important;
 }
 .pbd-split-empty,
 .pdc-hrdue-item.is-missing,
@@ -6780,8 +6898,8 @@ div[role="dialog"] button[aria-label="Close"] {
    the global app theme, so repeat the brand overrides here for readability. */
 div[data-testid="stDialog"] > div > div,
 div[role="dialog"] {
-  background: linear-gradient(135deg, #fff8e7 0%, #ffffff 55%, #f3e8ff 100%) !important;
-  color: #1f123d !important;
+  background: linear-gradient(135deg, #000000 0%, #101820 58%, #181818 100%) !important;
+  color: #f8fafc !important;
 }
 div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] *,
 div[role="dialog"] [data-testid="stMarkdownContainer"] *,
@@ -6792,10 +6910,10 @@ div[data-testid="stDialog"] h1, div[role="dialog"] h1,
 div[data-testid="stDialog"] h2, div[role="dialog"] h2,
 div[data-testid="stDialog"] h3, div[role="dialog"] h3,
 div[data-testid="stDialog"] header, div[role="dialog"] header {
-  color: #1f123d !important;
-  font-weight: 800;
+  color: #f8fafc !important;
+  font-weight: 900;
 }
-.pdc-root { color:#1f123d !important; }
+.pdc-root { color:#f8fafc !important; }
 .pdc-card,
 .pdc-rating-score,
 .pdc-log-table,
@@ -6804,10 +6922,10 @@ div[data-testid="stDialog"] header, div[role="dialog"] header {
 .pdc-hrdue,
 .pdc-hrdue-item,
 .pdc-next {
-  background: #ffffff !important;
-  color: #1f123d !important;
-  border-color: rgba(0,0,0,.24) !important;
-  box-shadow: 0 10px 28px rgba(0,0,0,.14) !important;
+  background: #151515 !important;
+  color: #f8fafc !important;
+  border-color: rgba(255,182,18,.34) !important;
+  box-shadow: 0 12px 28px rgba(0,0,0,.45) !important;
 }
 .pdc-name,
 .pdc-rating-name,
@@ -6818,7 +6936,7 @@ div[data-testid="stDialog"] header, div[role="dialog"] header {
 .pdc-chip .val,
 .pdc-hrdue-h,
 .pdc-hrdue-score .lbl {
-  color: #111111 !important;
+  color: #f8fafc !important;
   font-weight: 900 !important;
 }
 .pdc-meta,
@@ -6832,24 +6950,24 @@ div[data-testid="stDialog"] header, div[role="dialog"] header {
 .pdc-hrdue-d,
 .pdc-hrdue-title,
 .pdc-hrdue-score .den {
-  color: #5b4b79 !important;
+  color: #d1d5db !important;
   font-weight: 800 !important;
 }
 .pdc-table th,
 .pdc-recap-tile .lab,
 .pdc-chip .lab {
-  color: #111111 !important;
+  color: #ffb612 !important;
   font-weight: 900 !important;
 }
 .pdc-hand-pill {
-  background:#facc15 !important;
-  color:#1f123d !important;
-  border-color:#f59e0b !important;
+  background:#ffb612 !important;
+  color:#000000 !important;
+  border-color:#000000 !important;
 }
 .pdc-hand-pill.pitch {
-  background:#111111 !important;
-  color:#ffffff !important;
-  border-color:#111111 !important;
+  background:#000000 !important;
+  color:#ffb612 !important;
+  border-color:#ffb612 !important;
 }
 </style>
 """

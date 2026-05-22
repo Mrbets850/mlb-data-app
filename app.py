@@ -1056,7 +1056,7 @@ html, body, [class*="css"] {
 }
 .lineup-banner img { width: 26px; height: 26px; }
 .lineup-banner .lineup-title { font-weight: 700; font-size: 0.88rem; color: #e2eeff; }
-.lineup-banner .vs-pitcher { color: #4e6a8a; font-size: 0.8rem; font-weight: 500; margin-left: 5px; }
+.lineup-banner .vs-pitcher { color: #dbeafe; font-size: 0.8rem; font-weight: 800; margin-left: 5px; }
 .lineup-banner .badge { margin-left: auto; }
 
 /* ====================================================================
@@ -1122,6 +1122,27 @@ html, body, [class*="css"] {
 .scout-player-meta {
     font-size: 0.62rem; font-weight: 600; color: #7dd3fc;
     display: block; margin-top: 2px; letter-spacing: 0.02em;
+}
+.scout-hand-row {
+    display:flex; flex-wrap:wrap; gap:4px; align-items:center;
+    margin-top:4px;
+}
+.scout-hand-badge {
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:2px 7px; border-radius:999px;
+    background:#facc15; color:#0f172a !important;
+    border:1px solid rgba(250,204,21,.75);
+    font-size:.6rem; font-weight:900; letter-spacing:.06em;
+    text-transform:uppercase; line-height:1.15;
+    box-shadow:0 1px 3px rgba(0,0,0,.45);
+}
+.scout-vs-hand {
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:2px 7px; border-radius:999px;
+    background:rgba(125,211,252,.18); color:#e0f2fe !important;
+    border:1px solid rgba(125,211,252,.45);
+    font-size:.6rem; font-weight:900; letter-spacing:.04em;
+    text-transform:uppercase; line-height:1.15;
 }
 .scout-player-crush {
     font-size: 0.6rem; font-weight: 600; color: #00c896;
@@ -3979,6 +4000,8 @@ def build_matchup_table(lineup_df, batters_df, pitchers_df, opp_pitcher_name, we
             "_PA": safe_float(b_row.get("pa") if b_row is not None else None, 0),
             "_player_id": pid,
             "_bat_side": r["bat_side"] or "",
+            "_opp_pitch_hand": opp_hand or "",
+            "_OppPitcherName": r.get("opposing_pitcher", "") or "",
             # HR context (last HR date + HR over batter's last 10 games),
             # populated from MLB StatsAPI gameLog. Carried as underscore-prefixed
             # internal fields so existing styler/leaderboard helpers don't
@@ -4672,6 +4695,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
             "Crushes": crushes,
             "_PlayerId": int(pid) if pid is not None and not (isinstance(pid, float) and pd.isna(pid)) else None,
             "_BatSide": r.get("bat_side", ""),
+            "_OppPitchHand": opp_hand or "",
             "_OppPitcherId": int(opp_pitcher_id) if opp_pitcher_id else None,
             "_OppPitcherName": opp_pitcher_name or "",
             "_SlateDate": slate_iso,
@@ -4719,7 +4743,7 @@ def build_matchup_heatmap_board(lineup_df, batters_df, pitchers_df, opp_pitcher_
 _MATCHUP_HIDDEN_COLS = (
     "Spot", "_HR Trend", "_Form", "_FormL5_AVG", "_FormL10_AVG", "_FormL30_AVG",
     "_LastHR", "_HRLast10", "_LastHRDate", "_HRLast10N", "_LikelyReason",
-    "_PlayerId", "_BatSide", "_OppPitcherId", "_OppPitcherName", "_SlateDate",
+    "_PlayerId", "_BatSide", "_OppPitchHand", "_OppPitcherId", "_OppPitcherName", "_SlateDate",
     "_HomeAbbr", "_Venue", "Loc", "Opp",
 )
 
@@ -4930,7 +4954,11 @@ def render_matchup_player_card_html(row, display_cols):
     spot = r.get("Spot", "")
     hitter_name = r.get("Hitter", "")
     team = r.get("Team", "")
-    bat_side = r.get("_bat_side", "") or ""
+    bat_side = r.get("_bat_side", "") or r.get("_BatSide", "") or r.get("Bat", "") or ""
+    bat_label = format_batter_stance(bat_side, "")
+    opp_pitcher_name = r.get("_OppPitcherName", "") or r.get("_opposing_pitcher", "") or ""
+    opp_pitch_hand = r.get("_opp_pitch_hand", "") or r.get("_OppPitchHand", "") or ""
+    opp_hand_label = format_pitcher_hand(opp_pitch_hand, "")
 
     crushes = r.get("Crushes", "")
     if crushes is None or (isinstance(crushes, float) and pd.isna(crushes)):
@@ -4960,9 +4988,23 @@ def render_matchup_player_card_html(row, display_cols):
         hr_note = f'<span class="scout-player-form" style="color:#fca5a5;">HR: {last_hr}</span>'
 
     meta_parts = [team]
-    if bat_side:
-        meta_parts.append(f"Bats {format_batter_stance(bat_side)}")
+    if bat_label:
+        meta_parts.append(f"Bats {bat_label}")
+    if opp_pitcher_name:
+        meta_parts.append(
+            f"vs {opp_pitcher_name}"
+            + (f" ({opp_hand_label})" if opp_hand_label else "")
+        )
     meta_str = " &middot; ".join(p for p in meta_parts if p)
+    hand_badges = []
+    if bat_label:
+        hand_badges.append(f'<span class="scout-hand-badge">{bat_label}</span>')
+    if opp_hand_label:
+        hand_badges.append(f'<span class="scout-vs-hand">vs {opp_hand_label}</span>')
+    hand_badges_html = (
+        f'<div class="scout-hand-row">{"".join(hand_badges)}</div>'
+        if hand_badges else ""
+    )
 
     # Tier from matchup score
     matchup_v = r.get("Matchup")
@@ -5066,6 +5108,7 @@ def render_matchup_player_card_html(row, display_cols):
         f'<div class="scout-spot">{spot}</div>'
         f'<div class="scout-player">'
         f'<span class="scout-player-name">{hitter_name}</span>'
+        f'{hand_badges_html}'
         f'<span class="scout-player-meta">{meta_str}</span>'
         f'{crush_html}{form_html}{hr_note}'
         f'</div>'
@@ -5490,6 +5533,20 @@ div[role="dialog"] button[aria-label="Close"] {
 .pdc-name-row { display:flex; align-items:center; gap: 8px; flex-wrap: wrap; }
 .pdc-name { font-size: 1.25rem; font-weight: 900; color:#f8fafc; }
 .pdc-meta { font-size: .78rem; color:#cbd5e1; font-weight: 700; margin-top: 2px; }
+.pdc-hand-pills { display:flex; gap:6px; flex-wrap:wrap; margin-top:7px; }
+.pdc-hand-pill {
+  display:inline-flex; align-items:center; justify-content:center;
+  padding:4px 10px; border-radius:999px;
+  background:#facc15; color:#0f172a !important;
+  border:1px solid rgba(250,204,21,.75);
+  font-size:.7rem; font-weight:900; letter-spacing:.05em;
+  text-transform:uppercase; line-height:1.15;
+  box-shadow:0 1px 3px rgba(0,0,0,.45);
+}
+.pdc-hand-pill.pitch {
+  background:rgba(125,211,252,.18); color:#e0f2fe !important;
+  border-color:rgba(125,211,252,.45);
+}
 /* Composite slate grade badge — A best, D worst. Colors mirror the heat-map
    palette but sit on a distinct rounded pill so users read it as a verdict,
    not a metric value. */
@@ -5512,7 +5569,7 @@ div[role="dialog"] button[aria-label="Close"] {
   background: rgba(56,189,248,.12); border:1px solid rgba(56,189,248,.35); border-radius: 12px;
   margin-top: 10px; }
 .pdc-next-left  { font-size:.85rem; font-weight:800; color:#f8fafc; }
-.pdc-next-right { font-size:.72rem; font-weight:800; color:#7dd3fc; }
+.pdc-next-right { font-size:.72rem; font-weight:900; color:#fde68a; }
 .pdc-section-title { font-size:.8rem; font-weight:900; color:#7dd3fc; text-transform:uppercase;
   letter-spacing:.08em; margin: 12px 0 6px 0; display:flex; align-items:center; gap:8px; }
 .pdc-section-title::before { content:""; width: 4px; height: 14px; background:#38bdf8; border-radius:3px; display:inline-block; }
@@ -5957,6 +6014,17 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     next_right = ""
     if h.get("pitch_hand"):
         next_right = format_pitcher_hand(h["pitch_hand"], h["pitch_hand"])
+    batter_stance_label = format_batter_stance(h.get("bat_side"), "")
+    pitcher_hand_label = format_pitcher_hand(h.get("pitch_hand"), "")
+    hand_pills = []
+    if batter_stance_label:
+        hand_pills.append(f'<span class="pdc-hand-pill">Bats {batter_stance_label}</span>')
+    if pitcher_hand_label:
+        hand_pills.append(f'<span class="pdc-hand-pill pitch">vs {pitcher_hand_label}</span>')
+    hand_pills_html = (
+        f'<div class="pdc-hand-pills">{"".join(hand_pills)}</div>'
+        if hand_pills else ""
+    )
     next_pitcher_html = ""
     if h.get("opp_pitcher"):
         next_pitcher_html = (
@@ -6083,6 +6151,7 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
         f'      <span class="pdc-name">{h["name"]}</span>'
         f'      {grade_badge_html}'
         f'    </div>'
+        f'    {hand_pills_html}'
         f'    <div class="pdc-meta">{meta}</div>'
         f'    {likely_html}'
         f'  </div>'
@@ -9546,7 +9615,7 @@ def get_lineup_freshness(game_pk):
 
 
 def render_lineup_banner(team_id, team_abbr, opp_pitcher, status, *,
-                          freshness_text: str = ""):
+                          freshness_text: str = "", opp_pitch_hand: str = ""):
     if status == "Confirmed": pill_cls = "tier-strong"
     elif status == "Projected": pill_cls = "tier-ok"
     else: pill_cls = "tier-avoid"
@@ -9562,11 +9631,13 @@ def render_lineup_banner(team_id, team_abbr, opp_pitcher, status, *,
     # indented line would otherwise become a blank line after textwrap.dedent
     # inside st.markdown, closing the HTML block and rendering the rest as
     # literal code.
+    hand_label = format_pitcher_hand(opp_pitch_hand, "")
+    opp_text = f"vs {opp_pitcher}" + (f" ({hand_label})" if hand_label else "")
     banner_html = (
         '<div class="lineup-banner">'
         f'<img src="{logo}" alt="{team_abbr}" />'
         f'<div class="lineup-title">{team_abbr} Lineup</div>'
-        f'<div class="vs-pitcher">vs {opp_pitcher}</div>'
+        f'<div class="vs-pitcher">{opp_text}</div>'
         f'{fresh_html}'
         f'<div class="badge"><span class="tier {pill_cls}">{status}</span></div>'
         '</div>'
@@ -16878,7 +16949,11 @@ if _render_matchup:
     # in Streamlit's session_state when the user switches between games.
     _board_key_base = str(game_row.get("game_pk", selected_idx))
     _freshness_text, _, _ = get_lineup_freshness(game_row["game_pk"])
-    render_lineup_banner(game_row["away_id"], game_row["away_abbr"], game_row["home_probable"], ctx["away_status"], freshness_text=_freshness_text)
+    render_lineup_banner(
+        game_row["away_id"], game_row["away_abbr"], game_row["home_probable"],
+        ctx["away_status"], freshness_text=_freshness_text,
+        opp_pitch_hand=ctx.get("home_pitch_hand", ""),
+    )
     if away_board.empty:
         st.info(f"{game_row['away_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:
@@ -16890,7 +16965,11 @@ if _render_matchup:
             slate_date=selected_date,
         )
     # home lineup
-    render_lineup_banner(game_row["home_id"], game_row["home_abbr"], game_row["away_probable"], ctx["home_status"], freshness_text=_freshness_text)
+    render_lineup_banner(
+        game_row["home_id"], game_row["home_abbr"], game_row["away_probable"],
+        ctx["home_status"], freshness_text=_freshness_text,
+        opp_pitch_hand=ctx.get("away_pitch_hand", ""),
+    )
     if home_board.empty:
         st.info(f"{game_row['home_abbr']} lineup not available yet — not enough recent games on file to project.")
     else:

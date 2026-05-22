@@ -15,6 +15,7 @@ def _load_card_helpers():
         "format_pitcher_hand",
         "_mc_chip",
         "_df_mobile_cards_html",
+        "render_matchup_player_card_html",
     }
     keep = [
         n for n in tree.body
@@ -24,6 +25,9 @@ def _load_card_helpers():
     ns = {}
     import pandas as pd
     ns["pd"] = pd
+    ns["HEATMAP_THRESHOLDS"] = {}
+    ns["score_tier"] = lambda score: ("strong", "Strong")
+    ns["_heatmap_color_for"] = lambda col, value: (None, "")
     exec(compile(ast.Module(body=keep, type_ignores=[]), str(src), "exec"), ns)
     return ns
 
@@ -61,3 +65,24 @@ def test_generic_player_card_sub_adds_pitcher_hand():
     )
     assert "Framber Valdez" in html
     assert "Throws LHP" in html
+
+
+def test_matchup_scout_row_shows_batter_and_pitcher_hand_badges():
+    ns = _load_card_helpers()
+    html = ns["render_matchup_player_card_html"](
+        {
+            "Spot": 2,
+            "Hitter": "Kyle Schwarber",
+            "Team": "PHI",
+            "_BatSide": "L",
+            "_OppPitcherName": "Gerrit Cole",
+            "_OppPitchHand": "R",
+            "Matchup": 118.2,
+            "Likely": "Strong",
+        },
+        [],
+    )
+    assert "Kyle Schwarber" in html
+    assert "LHB" in html
+    assert "vs RHP" in html
+    assert "Gerrit Cole (RHP)" in html

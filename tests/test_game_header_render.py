@@ -186,7 +186,7 @@ def test_card_renders_probable_pitchers():
     html = out["html"]
     assert "Spencer Strider" in html
     assert "Sandy Alcantara" in html
-    assert ">(R)<" in html  # handedness rendered, not the raw {ctx[...]} key
+    assert ">(RHP)<" in html  # handedness rendered, not the raw {ctx[...]} key
 
 
 def test_card_uses_team_abbrs_and_logos():

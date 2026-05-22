@@ -4961,7 +4961,7 @@ def render_matchup_player_card_html(row, display_cols):
 
     meta_parts = [team]
     if bat_side:
-        meta_parts.append(f"Bats {bat_side}")
+        meta_parts.append(f"Bats {format_batter_stance(bat_side)}")
     meta_str = " &middot; ".join(p for p in meta_parts if p)
 
     # Tier from matchup score
@@ -5952,11 +5952,11 @@ def _render_player_detail_html(payload: dict, active_chip: str) -> str:
     # Header card.
     meta_bits = []
     if h.get("team"): meta_bits.append(h["team"])
-    if h.get("bat_side"): meta_bits.append(f"Bats {h['bat_side']}")
+    if h.get("bat_side"): meta_bits.append(f"Bats {format_batter_stance(h['bat_side'])}")
     meta = " • ".join(meta_bits)
     next_right = ""
     if h.get("pitch_hand"):
-        next_right = f"{h['pitch_hand']}HP" if h["pitch_hand"] in ("L","R") else h["pitch_hand"]
+        next_right = format_pitcher_hand(h["pitch_hand"], h["pitch_hand"])
     next_pitcher_html = ""
     if h.get("opp_pitcher"):
         next_pitcher_html = (
@@ -7119,7 +7119,8 @@ def render_slate_pitcher_html(df, schedule_df=None):
                 cells.append(f'<td class="sp-pitcher">{v}</td>')
                 continue
             if c in ("Throws", "Game", "Time", "Opp"):
-                cells.append(f"<td>{v if v not in (None, '') else '<span class=\"sp-na\">—</span>'}</td>")
+                display_v = format_pitcher_hand(v) if c == "Throws" else v
+                cells.append(f"<td>{display_v if display_v not in (None, '') else '<span class=\"sp-na\">—</span>'}</td>")
                 continue
             if c == "Source":
                 tag = str(v or "")
@@ -7428,6 +7429,7 @@ def render_slate_pitcher_dashboard(df, schedule_df=None):
         logo = rd.get("_logo") or ""
         name = str(rd.get("Pitcher") or "—")
         throws = rd.get("Throws") or ""
+        throws_label = format_pitcher_hand(throws, "")
         team = rd.get("Team") or ""
         opp  = rd.get("Opp") or ""
         loc  = rd.get("Loc") or ""
@@ -7440,8 +7442,8 @@ def render_slate_pitcher_dashboard(df, schedule_df=None):
 
         # Header sub: TEAM (throws) loc OPP · time
         sub_bits = [team]
-        if throws:
-            sub_bits[-1] += f" ({throws}HP)"
+        if throws_label:
+            sub_bits[-1] += f" ({throws_label})"
         if opp:
             sub_bits.append(f"{loc or 'vs'} {opp}")
         if time_:
@@ -7683,7 +7685,7 @@ def render_slate_pitcher_explainer():
         name_html = name
         logo = row.get("_logo", "")
         logo_html = f'<img class="spc-logo" src="{logo}" alt=""/>' if logo else ""
-        throws = row.get("Throws") or "?"
+        throws = format_pitcher_hand(row.get("Throws"), "?")
         team = row.get("Team", "")
         return (
             f'<div class="spc-card spc-tier-{tier_cls}">'
@@ -8234,7 +8236,7 @@ def render_hr_sleepers_html(df):
             "<tr>"
             f'<td class="hrs-num">{i+1}</td>'
             f'<td><div class="hrs-name">{r.get("Hitter","")}</div>'
-            f'<div class="hrs-meta">{r.get("Team","")} · Bat {r.get("Bat","")} · Spot {r.get("Spot","")}</div></td>'
+            f'<div class="hrs-meta">{r.get("Team","")} · Bat {format_batter_stance(r.get("Bat",""))} · Spot {r.get("Spot","")}</div></td>'
             f'<td class="hrs-meta">{r.get("Game","")}<br/><span style="color:#475569;">vs {r.get("Opp SP","")}</span></td>'
             f'<td><span class="hrs-score">{r.get("Sleeper Score",0):.1f}</span> '
             f'<span class="hrs-pill {tier_cls}" style="margin-left:6px;">{tier_label}</span></td>'
@@ -8292,7 +8294,7 @@ def render_hr_sleepers_html(df):
         mobile_cards.append(_mc_card(
             rank=i + 1,
             name=r.get("Hitter", ""),
-            sub=f'{r.get("Team","")} · Bats {r.get("Bat","")}',
+            sub=f'{r.get("Team","")} · Bats {format_batter_stance(r.get("Bat",""))}',
             score=r.get("Sleeper Score"),
             score_label="Sleeper",
             tiers=[(tier_label, tier_cls)],
@@ -8676,7 +8678,7 @@ def render_targets_html(df, mode="tb"):
         opp_hand = (r.get("OppHand") or "").upper()
         opp_hand_chip = (
             f'<span style="color:#475569;font-weight:700;font-size:.72rem;'
-            f'margin-left:4px;">({opp_hand}HP)</span>' if opp_hand else ""
+            f'margin-left:4px;">({format_pitcher_hand(opp_hand)})</span>' if opp_hand else ""
         )
         platoon = _platoon_marker(r.get("Bat", ""), opp_hand)
         park_chip = _park_chip(r.get("Park", ""), r.get("ParkFactor", 100))
@@ -8685,7 +8687,7 @@ def render_targets_html(df, mode="tb"):
             "<tr>"
             f'<td class="tg-num">{i+1}</td>'
             f'<td><div class="tg-name">{r.get("Hitter","")}{platoon}{lineup_pill}</div>'
-            f'<div class="tg-meta">{r.get("Team","")} · Bat {r.get("Bat","")} · Spot {r.get("Spot","")}</div></td>'
+            f'<div class="tg-meta">{r.get("Team","")} · Bat {format_batter_stance(r.get("Bat",""))} · Spot {r.get("Spot","")}</div></td>'
             f'<td class="tg-meta">{r.get("Game","")}<br/>'
             f'<span style="color:#475569;">vs {r.get("Opp SP","")}{opp_hand_chip}</span></td>'
             f'<td class="tg-meta">{park_chip}<br/>'
@@ -8813,7 +8815,7 @@ def render_targets_html(df, mode="tb"):
         foot = (
             f'<div class="mc-foot">'
             f'<b>{r.get("Game","")}</b>'
-            f' · vs {opp_sp}{f" ({opp_hand}HP)" if opp_hand else ""}'
+            f' · vs {opp_sp}{f" ({format_pitcher_hand(opp_hand)})" if opp_hand else ""}'
             f' · Park {park} {int(round(pf))}'
             f' · {weather}'
             f'</div>'
@@ -8821,7 +8823,7 @@ def render_targets_html(df, mode="tb"):
         mobile_cards.append(_mc_card(
             rank=i + 1,
             name=r.get("Hitter", ""),
-            sub=f'{r.get("Team","")} · Bats {r.get("Bat","")} · Spot {r.get("Spot","")}',
+            sub=f'{r.get("Team","")} · Bats {format_batter_stance(r.get("Bat",""))} · Spot {r.get("Spot","")}',
             score=r.get("Score"),
             score_label=score_label,
             tiers=tiers,
@@ -9400,8 +9402,8 @@ def render_game_header(game_row, ctx, weather):
         '</div>'
         '<div class="probables">'
         '<div class="label">Probables</div>'
-        f'<div>{game_row["away_probable"]} <span class="hand">({ctx["away_pitch_hand"] or "?"})</span></div>'
-        f'<div>vs {game_row["home_probable"]} <span class="hand">({ctx["home_pitch_hand"] or "?"})</span></div>'
+        f'<div>{game_row["away_probable"]} <span class="hand">({format_pitcher_hand(ctx["away_pitch_hand"], "?")})</span></div>'
+        f'<div>vs {game_row["home_probable"]} <span class="hand">({format_pitcher_hand(ctx["home_pitch_hand"], "?")})</span></div>'
         '</div>'
         '</div>'
         f'{box_html}'
@@ -9667,6 +9669,33 @@ def _pp_tone(v, lo, hi, reverse=False):
     if t < 0.66:
         return "mid"
     return "good"
+
+
+def _hand_code(value) -> str:
+    """Normalize handedness-like values to L/R/S for display helpers."""
+    try:
+        if value is None:
+            return ""
+        if isinstance(value, float) and value != value:
+            return ""
+        s = str(value).strip().upper()
+        if not s or s in ("NAN", "NONE", "<NA>", "?", "-", "—"):
+            return ""
+        return s[:1]
+    except Exception:
+        return ""
+
+
+def format_batter_stance(bat_side, unknown="—") -> str:
+    """Display MLB batter stance as LHB/RHB/SHB while preserving raw codes."""
+    return {"L": "LHB", "R": "RHB", "S": "SHB"}.get(
+        _hand_code(bat_side), unknown
+    )
+
+
+def format_pitcher_hand(pitch_hand, unknown="—") -> str:
+    """Display MLB pitcher throwing hand as LHP/RHP."""
+    return {"L": "LHP", "R": "RHP"}.get(_hand_code(pitch_hand), unknown)
 
 
 def _safe_str(v, default=""):
@@ -9971,7 +10000,7 @@ def render_pitcher_breakdown_header(p_row: dict, ranking_label: str = "") -> str
     opp = _safe_str(p_row.get("Opp"), "")
     loc = _safe_str(p_row.get("Loc"), "@")
     throws = _safe_str(p_row.get("Throws"), "?")
-    hand_label = f"{throws}HP" if throws in ("L", "R") else "SP"
+    hand_label = format_pitcher_hand(throws, "SP")
     matchup_line = f"{team} {loc} {opp} · {hand_label}"
 
     pid = p_row.get("_player_id") or p_row.get("player_id")
@@ -10377,6 +10406,7 @@ def render_pitcher_breakdown_lineup(game_pk, opp_team_id, opp_abbr: str) -> str:
         pos = _safe_str(p.position, "")
         side = _safe_str(p.bat_side, "?")
         side_class = {"L": "L", "R": "R", "S": "S"}.get(side, "")
+        side_label = format_batter_stance(side, "?")
         rows.append(
             '<div class="pbd-lineup-row">'
             f'<div class="pbd-lineup-slot">{slot}</div>'
@@ -10384,7 +10414,7 @@ def render_pitcher_breakdown_lineup(game_pk, opp_team_id, opp_abbr: str) -> str:
             f'<div class="pbd-lineup-nm">{nm}</div>'
             f'<div class="pbd-lineup-pos">{pos}</div>'
             '</div>'
-            f'<div class="pbd-lineup-hand pbd-hand-{side_class}">{side}</div>'
+            f'<div class="pbd-lineup-hand pbd-hand-{side_class}">{side_label}</div>'
             '</div>'
         )
     head = (
@@ -10627,7 +10657,7 @@ def render_pitcher_panel(label, pitcher_name, pitch_hand, p_row, pitch_mix_df=No
     import html as _html
     label_s = _safe_str(label, "SP")
     pitcher_name_s = _safe_str(pitcher_name, "TBD")
-    pitch_hand_s = _safe_str(pitch_hand, "?")
+    pitch_hand_s = format_pitcher_hand(pitch_hand, "?")
     original_name_s = _safe_str(original_name, "")
     pitcher_changed_b = bool(pitcher_changed)
     score, key, verdict = pitcher_vulnerability(p_row)
@@ -11254,7 +11284,7 @@ def _render_rbi_hero_strip():
             f'<span class="rbi-card-rank">#{i+1}</span>'
             f'<span class="rbi-card-score">{r.get("Score",0):.0f}</span>'
             f'<div class="rbi-card-name">{r.get("Hitter","")}</div>'
-            f'<div class="rbi-card-meta">{r.get("Team","")} · Bat {r.get("Bat","")} · Spot {r.get("Spot","")}</div>'
+            f'<div class="rbi-card-meta">{r.get("Team","")} · Bat {format_batter_stance(r.get("Bat",""))} · Spot {r.get("Spot","")}</div>'
             f'<div class="rbi-card-game">{r.get("Game","")}<br/>vs {r.get("Opp SP","")}</div>'
             f'<div class="rbi-card-stats"><span>ISO <b>{iso_s}</b></span>'
             f'<span>Barrel <b>{bar_s}</b></span></div>'
@@ -13009,7 +13039,7 @@ if _view == "🤖 AI HR Parlay":
                 f'    <div class="aip-leg-num">Leg {i}</div>'
                 f'    <div class="aip-leg-name">{leg.get("Hitter","")}'
                 f'      <span class="aip-meta">· {leg.get("Team","")} · '
-                f'Bat {leg.get("Bat","") or "—"} · Spot {leg.get("Spot","")}</span>'
+                f'Bat {format_batter_stance(leg.get("Bat",""))} · Spot {leg.get("Spot","")}</span>'
                 f'    </div>'
                 f'    <div class="aip-leg-score">'
                 f'      <span class="aip-score">{ai_str}</span>'
@@ -13676,7 +13706,7 @@ if _view == "👑 HR Round Robin":
             f'    <span class="rr-score">{score_str}</span>'
             f'  </div>'
             f'  <div class="rr-meta">{row.get("Team","")} · '
-            f'Bat {row.get("Bat","") or "—"} · '
+            f'Bat {format_batter_stance(row.get("Bat",""))} · '
             f'{row.get("Game","")} <span style="color:#94a3b8;">·</span> '
             f'vs <b>{row.get("Opp SP","")}</b></div>'
             f'  <div class="rr-stats">{stats_line}</div>'
@@ -14416,8 +14446,8 @@ if _view == "🎯 AI K Generator":
                 line_str = f"{line:.1f}"
             except Exception:
                 line_str = "—"
-            throws = leg.get("Throws") or ""
-            throws_chip = f" · {throws}HP" if throws else ""
+            throws_chip = format_pitcher_hand(leg.get("Throws"), "")
+            throws_chip = f" · {throws_chip}" if throws_chip else ""
             leg_html.append(
                 f'<div class="kgen-leg">'
                 f'  <div class="kgen-leg-head">'
@@ -15771,7 +15801,7 @@ if _view == "🥎 AI 1+ Hits Parlay":
                 f'    <div class="aip-leg-num">Leg {i}</div>'
                 f'    <div class="aip-leg-name">{leg.get("Hitter","")}'
                 f'      <span class="aip-meta">· {leg.get("Team","")} · '
-                f'Bat {leg.get("Bat","") or "—"} · Spot {leg.get("Spot","")}</span>'
+                f'Bat {format_batter_stance(leg.get("Bat",""))} · Spot {leg.get("Spot","")}</span>'
                 f'    </div>'
                 f'    <div class="aip-leg-score">'
                 f'      <span class="aip-score">{ai_str}</span>'
@@ -16462,7 +16492,7 @@ if _view == "🎯 Pitcher Weak Spots":
             f'<div class="pws-matchup">{card.away_abbr} @ {card.home_abbr}'
             f'<span class="time">{card.game_time_label}</span></div>'
             f'<div class="pws-pitcher">{card.pitcher_name}'
-            f'<span class="hand">{card.pitcher_hand or "R"}HP</span>'
+            f'<span class="hand">{format_pitcher_hand(card.pitcher_hand or "R", "RHP")}</span>'
             f'<span class="vs">vs {card.opponent_abbr} lineup</span></div></div>'
         )
         html.append(
@@ -17388,7 +17418,7 @@ if _render_hr_milestones:
             if r.get("Game"):  foot_bits.append(f'<b>{r.get("Game")}</b>')
             if r.get("OppPitcher"): foot_bits.append(f'vs {r.get("OppPitcher")}')
             if r.get("Spot") not in (None, ""): foot_bits.append(f'Spot {r.get("Spot")}')
-            if r.get("Bat") not in (None, ""):  foot_bits.append(f'Bats {r.get("Bat")}')
+            if r.get("Bat") not in (None, ""):  foot_bits.append(f'Bats {format_batter_stance(r.get("Bat"))}')
             foot = f'<div class="mc-foot">{" · ".join(foot_bits)}</div>' if foot_bits else ""
             hrm_cards.append(_mc_card(
                 rank=int(r.get("#")) if r.get("#") is not None else None,

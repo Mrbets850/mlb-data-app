@@ -77,7 +77,8 @@ def _get_render():
     import pathlib
     src = pathlib.Path(__file__).resolve().parent.parent / "app.py"
     tree = ast.parse(src.read_text())
-    wanted = {"_safe_str", "_pp_tone", "pitcher_vulnerability",
+    wanted = {"_hand_code", "format_pitcher_hand",
+              "_safe_str", "_pp_tone", "pitcher_vulnerability",
               "_sp_is_hr_target", "render_pitch_mix_block",
               "render_pitcher_panel", "_fetch_pitcher_season_stats"}
     keep_nodes = []
@@ -153,6 +154,14 @@ def test_safe_str_handles_none_nan_and_dict():
     assert safe(42) == "42"
 
 
+def test_pitcher_hand_display_expands_to_rhp_lhp():
+    ns = _get_render()
+    fmt = ns["format_pitcher_hand"]
+    assert fmt("R") == "RHP"
+    assert fmt("L") == "LHP"
+    assert fmt(None, "?") == "?"
+
+
 # ---------------------------------------------------------------------------
 # render_pitcher_panel — the regression that motivated this file
 # ---------------------------------------------------------------------------
@@ -184,6 +193,7 @@ def test_default_panel_has_no_blank_indented_line():
     )
     html = out["html"]
     assert out["unsafe"] is True
+    assert "(RHP)" in html
     # No "replaced" hint should appear when the pitcher hasn't changed.
     assert "replaced" not in html
     # And, critically, no line should consist solely of >=4 spaces — which

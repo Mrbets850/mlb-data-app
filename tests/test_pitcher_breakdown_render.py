@@ -62,6 +62,9 @@ def _load_helpers():
     src = pathlib.Path(__file__).resolve().parent.parent / "app.py"
     tree = ast.parse(src.read_text())
     wanted = {
+        "_hand_code",
+        "format_batter_stance",
+        "format_pitcher_hand",
         "_safe_str",
         "_fmt_or_dash",
         "_kpi_tile_html",
@@ -111,7 +114,17 @@ def test_header_renders_pill_title_and_identity():
     assert "Pitcher Breakdown" in html
     assert "Spencer Strider" in html
     assert "ATL" in html and "NYM" in html
+    assert "RHP" in html
     assert "#1 Projected Ks" in html
+
+
+def test_hand_display_helpers_expand_codes():
+    ns = _load_helpers()
+    assert ns["format_batter_stance"]("L") == "LHB"
+    assert ns["format_batter_stance"]("R") == "RHB"
+    assert ns["format_batter_stance"]("S") == "SHB"
+    assert ns["format_pitcher_hand"]("L") == "LHP"
+    assert ns["format_pitcher_hand"]("R") == "RHP"
 
 
 def test_kpi_block_renders_six_tiles_with_dashes_when_missing():

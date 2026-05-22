@@ -33,8 +33,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import hashlib
+import io
+import json
 import os
 import sys
 import time
@@ -182,6 +185,103 @@ HEADERS = {
 MIN_CSV_BYTES = 1024  # smaller than this = something went wrong
 
 
+def handedness_kind_for_filename(filename: str) -> str | None:
+    """Return which MLB handedness column should be added for a Savant file."""
+    if filename.startswith("Data:savant_batters"):
+        return "batter"
+    if filename in ("Data:savant_pitchers.csv.csv", "Data:savant_pitcher_stats.csv"):
+        return "pitcher"
+    return None
+
+
+def _player_ids_from_rows(rows: list[dict]) -> list[int]:
+    ids: list[int] = []
+    for row in rows:
+        raw = row.get("player_id") or row.get("id")
+        try:
+            pid = int(float(str(raw).strip()))
+        except Exception:
+            continue
+        if pid > 0:
+            ids.append(pid)
+    return sorted(set(ids))
+
+
+def fetch_people_handedness(player_ids: list[int], *, timeout: int = 30) -> dict[int, dict[str, str]]:
+    """Batch-fetch bat/pitch handedness from the free MLB StatsAPI."""
+    out: dict[int, dict[str, str]] = {}
+    ids = sorted(set(int(pid) for pid in player_ids if pid))
+    for i in range(0, len(ids), 100):
+        chunk = ids[i:i + 100]
+        url = (
+            "https://statsapi.mlb.com/api/v1/people?personIds="
+            + ",".join(str(pid) for pid in chunk)
+        )
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={**HEADERS, "Accept": "application/json,*/*;q=0.8"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            print(f"  handedness lookup failed for {len(chunk)} ids: {exc}", flush=True)
+            continue
+        for person in payload.get("people", []) or []:
+            try:
+                pid = int(person.get("id"))
+            except Exception:
+                continue
+            out[pid] = {
+                "bat_side": ((person.get("batSide") or {}).get("code") or "").strip().upper(),
+                "pitch_hand": ((person.get("pitchHand") or {}).get("code") or "").strip().upper(),
+            }
+    return out
+
+
+def add_handedness_column(data: bytes, kind: str | None) -> bytes:
+    """Add bat_side for batter CSVs and pitch_hand for pitcher CSVs."""
+    if kind not in ("batter", "pitcher"):
+        return data
+    text = data.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    rows = list(reader)
+    if not rows or not reader.fieldnames:
+        return data
+
+    ids = _player_ids_from_rows(rows)
+    lookup = fetch_people_handedness(ids)
+    if not lookup:
+        print("  handedness lookup returned no rows; keeping Savant CSV unchanged", flush=True)
+        return data
+
+    column = "bat_side" if kind == "batter" else "pitch_hand"
+    source_key = column
+    fieldnames = list(reader.fieldnames)
+    if column not in fieldnames:
+        insert_at = fieldnames.index("player_id") + 1 if "player_id" in fieldnames else len(fieldnames)
+        fieldnames.insert(insert_at, column)
+
+    filled = 0
+    for row in rows:
+        raw = row.get("player_id") or row.get("id")
+        try:
+            pid = int(float(str(raw).strip()))
+        except Exception:
+            continue
+        value = lookup.get(pid, {}).get(source_key, "")
+        if value:
+            row[column] = value
+            filled += 1
+
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    print(f"  added {column} for {filled:,}/{len(rows):,} rows", flush=True)
+    return out.getvalue().encode("utf-8")
+
+
 def download(url: str, retries: int = 3, timeout: int = 60) -> bytes:
     """Download a URL with retries. Raises RuntimeError on persistent failure."""
     last_err = None
@@ -252,6 +352,7 @@ def main() -> int:
         print(f"\n-> {filename}", flush=True)
         try:
             data = download(url)
+            data = add_handedness_column(data, handedness_kind_for_filename(filename))
             if write_if_changed(out_path, data):
                 changes += 1
         except Exception as e:

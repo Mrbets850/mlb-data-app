@@ -58,7 +58,7 @@ def _load_render_game_header():
     import pathlib
     src = pathlib.Path(__file__).resolve().parent.parent / "app.py"
     tree = ast.parse(src.read_text())
-    wanted = {"render_game_header"}
+    wanted = {"_hand_code", "format_pitcher_hand", "render_game_header"}
     keep_nodes = [
         n for n in tree.body
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -129,6 +129,7 @@ def test_pregame_card_has_no_blank_indented_lines():
     out = _capture(ns, _base_row(), _base_ctx(), {})
     html = out["html"]
     assert out["unsafe"] is True
+    assert "(RHP)" in html
     # The outer div must be at column 0 — anything else risks
     # an indented-code-block fallback.
     assert html.startswith('<div class="section-card dark">'), html[:80]

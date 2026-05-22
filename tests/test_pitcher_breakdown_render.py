@@ -216,6 +216,9 @@ def test_game_log_renders_recent_starts():
     html = ns["render_pitcher_breakdown_game_log"](df, n=5)
     assert "BOS" in html and "TOR" in html
     assert "pbd-glog-row" in html
+    assert "pbd-glog-chip" in html
+    assert "pbd-metric-good" in html
+    assert "pbd-metric-warn" in html or "pbd-metric-bad" in html
 
 
 def test_splits_renders_present_buckets():
@@ -244,8 +247,10 @@ def test_styles_block_exposes_required_class_names():
     css = ns["render_pitcher_breakdown_styles"]()
     for cls in (
         "pbd-card", "pbd-pill", "pbd-title", "pbd-kpi-grid",
-        "pbd-arsenal", "pbd-glog", "pbd-lineup", "pbd-splits",
+        "pbd-arsenal", "pbd-glog", "pbd-glog-chip", "pbd-lineup", "pbd-splits",
     ):
+        assert cls in css
+    for cls in ("pbd-metric-good", "pbd-metric-warn", "pbd-metric-bad"):
         assert cls in css
 
 

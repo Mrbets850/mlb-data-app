@@ -11492,6 +11492,32 @@ def render_pitcher_breakdown_game_log(log_df: pd.DataFrame, n: int = 6) -> str:
         )
     tail = log_df.tail(n).iloc[::-1]  # most recent first
     rows_html = []
+
+    def _metric_tone(value, *, good_high: bool, good, warn) -> str:
+        """Return good/warn/bad/neutral for one game-log metric."""
+        try:
+            x = float(value)
+        except Exception:
+            return "neutral"
+        if good_high:
+            if x >= good:
+                return "good"
+            if x >= warn:
+                return "warn"
+            return "bad"
+        if x <= good:
+            return "good"
+        if x <= warn:
+            return "warn"
+        return "bad"
+
+    def _metric_chip(label: str, value, tone: str) -> str:
+        return (
+            f'<div class="pbd-glog-stat pbd-glog-stat-{tone}">'
+            f'<span>{label}</span><b class="pbd-glog-chip pbd-metric-{tone}">{value}</b>'
+            f'</div>'
+        )
+
     for _, r in tail.iterrows():
         d = r.get("date")
         try:
@@ -11521,6 +11547,12 @@ def render_pitcher_breakdown_game_log(log_df: pd.DataFrame, n: int = 6) -> str:
             er_tone = "good" if int(er) <= 2 else ("warn" if int(er) <= 4 else "bad")
         except Exception:
             er_tone = ""
+        ip_tone = _metric_tone(r.get("ip"), good_high=True, good=6.0, warn=5.0)
+        h_tone = _metric_tone(h, good_high=False, good=4, warn=6)
+        bb_tone = _metric_tone(bb, good_high=False, good=1, warn=3)
+        hr_tone = _metric_tone(hr, good_high=False, good=0, warn=1)
+        p_tone = _metric_tone(pitches, good_high=True, good=90, warn=75)
+        era_tone = _metric_tone(era_g, good_high=False, good=3.50, warn=5.00)
         rows_html.append(
             '<div class="pbd-glog-row">'
             '<div class="pbd-glog-date">'
@@ -11528,14 +11560,14 @@ def render_pitcher_breakdown_game_log(log_df: pd.DataFrame, n: int = 6) -> str:
             f'<div class="pbd-glog-opp">vs {opp}</div>'
             '</div>'
             '<div class="pbd-glog-stats">'
-            f'<div><span>IP</span><b>{ip}</b></div>'
-            f'<div><span>K</span><b class="pbd-tone-{k_tone}">{k}</b></div>'
-            f'<div><span>H</span><b>{h}</b></div>'
-            f'<div><span>BB</span><b>{bb}</b></div>'
-            f'<div><span>ER</span><b class="pbd-tone-{er_tone}">{er}</b></div>'
-            f'<div><span>HR</span><b>{hr}</b></div>'
-            f'<div><span>P</span><b>{pitches_str}</b></div>'
-            f'<div><span>ERA</span><b>{era_g_str}</b></div>'
+            f'{_metric_chip("IP", ip, ip_tone)}'
+            f'{_metric_chip("K", k, k_tone or "neutral")}'
+            f'{_metric_chip("H", h, h_tone)}'
+            f'{_metric_chip("BB", bb, bb_tone)}'
+            f'{_metric_chip("ER", er, er_tone or "neutral")}'
+            f'{_metric_chip("HR", hr, hr_tone)}'
+            f'{_metric_chip("P", pitches_str, p_tone)}'
+            f'{_metric_chip("ERA", era_g_str, era_tone)}'
             '</div>'
             '</div>'
         )
@@ -11766,6 +11798,20 @@ def render_pitcher_breakdown_styles() -> str:
         ".pbd-glog-stats span { display:block; font-size:.56rem; font-weight:800; "
         "  letter-spacing:.06em; color:#94a3b8; text-transform:uppercase; }"
         ".pbd-glog-stats b { font-size:.82rem; color:#f8fafc; font-variant-numeric: tabular-nums; }"
+        ".pbd-glog-stat { text-align:center; }"
+        ".pbd-glog-chip { display:inline-flex; align-items:center; justify-content:center; "
+        "  min-width:34px; padding:3px 8px; border-radius:999px; margin-top:3px; "
+        "  font-size:.82rem; font-weight:900; font-variant-numeric: tabular-nums; "
+        "  border:1px solid transparent; opacity:1 !important; text-shadow:none !important; "
+        "  -webkit-text-fill-color:currentColor !important; }"
+        ".pbd-glog-chip.pbd-metric-good { background:#16a34a !important; color:#ffffff !important; "
+        "  border-color:#22c55e !important; }"
+        ".pbd-glog-chip.pbd-metric-warn { background:#ffb612 !important; color:#000000 !important; "
+        "  border-color:#facc15 !important; }"
+        ".pbd-glog-chip.pbd-metric-bad { background:#dc2626 !important; color:#ffffff !important; "
+        "  border-color:#ef4444 !important; }"
+        ".pbd-glog-chip.pbd-metric-neutral { background:#1f2933 !important; color:#f8fafc !important; "
+        "  border-color:rgba(255,182,18,.34) !important; }"
         ".pbd-tone-good { color:#34d399 !important; }"
         ".pbd-tone-warn { color:#fbbf24 !important; }"
         ".pbd-tone-bad  { color:#f87171 !important; }"

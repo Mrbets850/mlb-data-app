@@ -62,12 +62,23 @@ def test_scout_report_modal_has_light_theme_override():
     assert ".pdc-hand-pill.pitch" in text
 
 
-def test_black_yellow_theme_explicitly_overrides_old_purple_sources():
+def test_black_yellow_theme_removes_old_royal_color_sources():
     text = _app_text()
-    assert "[style*=\"background:#3b1f6b\"]" in text
-    assert "[style*=\"color:#7c3aed\"]" in text
-    assert "--edge-purple: #111111;" in text
-    assert "--edge-purple-soft: #fff3b0;" in text
+    forbidden = (
+        "#3b1f6b", "#5b21b6", "#5b21a8", "#1e0b4a", "#14062e",
+        "#0c0420", "#1a0840", "#15102b", "#1c1340", "#2a1e4a",
+        "#130b38", "#0d0928", "#1a0f42", "#7c3aed", "#a78bfa",
+        "#8b5cf6", "#c4b5fd", "#ddd6fe", "#6b21a8", "#5b3aa0",
+        "#4c1d95",
+    )
+    lowered = text.lower()
+    assert "purple" not in lowered
+    assert "violet" not in lowered
+    assert "royal" not in lowered
+    for value in forbidden:
+        assert value not in lowered
+    assert "--edge-black: #111111;" in text
+    assert "--edge-surface-2: #fff7cc;" in text
 
 
 def test_black_yellow_theme_prevents_washed_out_text():

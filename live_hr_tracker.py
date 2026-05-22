@@ -330,7 +330,7 @@ def build_hr_card(player_data: Any, *, dim: bool = False) -> str:
 _PAGE_CSS = """
 <style>
 .lhrt-wrap { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color: #f8fafc; background: linear-gradient(180deg, #0b1020 0%, #14062e 60%, #1a0f3d 100%);
+  color: #f8fafc; background: linear-gradient(180deg, #0b1020 0%, #101820 60%, #1a0f3d 100%);
   border-radius: 18px; padding: 14px 14px 18px; border: 2px solid #312e81;
   box-shadow: 0 10px 40px rgba(20, 5, 50, .5); position: relative; overflow: hidden; }
 
@@ -571,7 +571,7 @@ _TEAM_NAME_TO_ABBR: dict[str, str] = {
     "Chicago Cubs": "CHC", "Chicago White Sox": "CWS",
     "Cincinnati Reds": "CIN", "Cleveland Guardians": "CLE",
     "Colorado Rockies": "COL", "Detroit Tigers": "DET",
-    "Houston Astros": "HOU", "Kansas City Royals": "KC",
+    "Houston Astros": "HOU", "Kansas City Blacks": "KC",
     "Los Angeles Angels": "LAA", "Los Angeles Dodgers": "LAD",
     "Miami Marlins": "MIA", "Milwaukee Brewers": "MIL",
     "Minnesota Twins": "MIN", "New York Mets": "NYM",
@@ -1227,7 +1227,7 @@ def _confetti_html(count: int) -> str:
   resize();
   window.addEventListener('resize', resize);
   const colors = ['#fcd34d', '#fb923c', '#f97316', '#ef4444', '#ec4899',
-                  '#a78bfa', '#34d399', '#60a5fa'];
+                  '#ffb612', '#34d399', '#60a5fa'];
   const parts = [];
   for (let i = 0; i < cfg.count; i++) {{
     parts.push({{

@@ -959,7 +959,7 @@ def _label_style(label: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Mobile player-card stack — matches the universal Slate-Pitchers visual
-# language used elsewhere in app.py (purple/gold brand, dark gradient cards,
+# language used elsewhere in app.py (black/gold/gold brand, dark gradient cards,
 # colored stat chips, no horizontal scrolling). Kept inline here so the module
 # stays self-contained.
 # ---------------------------------------------------------------------------
@@ -981,10 +981,10 @@ _RBI_MOBILE_CSS = (
     "@media (min-width: 480px) and (max-width: 640px) {"
     "  .rbi-grid { grid-template-columns: repeat(2, 1fr); }"
     "}"
-    ".rbi-card { background: linear-gradient(160deg, #0d0928 0%, #130b38 50%, #1a0f42 100%); "
-    "  border:1px solid rgba(92,64,180,.35); border-radius:16px; padding:13px 14px; "
+    ".rbi-card { background: linear-gradient(160deg, #101820 0%, #101820 50%, #101820 100%); "
+    "  border:1px solid rgba(255,182,18,.35); border-radius:16px; padding:13px 14px; "
     "  color:#e9e6f5; "
-    "  box-shadow: 0 6px 18px rgba(0,0,0,.40), 0 0 0 1px rgba(92,64,180,.12); "
+    "  box-shadow: 0 6px 18px rgba(0,0,0,.40), 0 0 0 1px rgba(255,182,18,.12); "
     "  display:flex; flex-direction:column; gap:8px; min-width:0; "
     "  position: relative; overflow: hidden; "
     "  transition: border-color .2s, box-shadow .2s; }"
@@ -994,10 +994,10 @@ _RBI_MOBILE_CSS = (
     ".rbi-head { display:flex; align-items:flex-start; gap:8px; min-width:0; position: relative; z-index:1; }"
     ".rbi-rank { font-variant-numeric: tabular-nums; font-weight:900; "
     "  font-size:.76rem; color:#fcd34d; "
-    "  background: linear-gradient(135deg, #3b1f6b, #1e0b4a); "
-    "  border:1px solid rgba(124,58,237,.55); padding:3px 9px; border-radius:8px; "
+    "  background: linear-gradient(135deg, #111111, #000000); "
+    "  border:1px solid rgba(255,182,18,.55); padding:3px 9px; border-radius:8px; "
     "  flex:0 0 auto; line-height:1.3; "
-    "  box-shadow: 0 2px 6px rgba(20,5,50,.40); }"
+    "  box-shadow: 0 2px 6px rgba(0,0,0,.40); }"
     ".rbi-id { display:flex; flex-direction:column; min-width:0; flex:1 1 auto; }"
     ".rbi-name { font-weight:800; font-size:1.0rem; line-height:1.15; "
     "  color:#f4f0ff; word-break:break-word; }"
@@ -1026,12 +1026,12 @@ _RBI_MOBILE_CSS = (
     "  border-color: rgba(252,165,165,.35); }"
     ".rbi-tier.gold   { background: rgba(252,211,77,.14); color:#fde68a; "
     "  border-color: rgba(253,224,71,.40); }"
-    ".rbi-tier.info   { background: rgba(139,92,246,.18); color:#c4b5fd; "
-    "  border-color: rgba(196,181,253,.35); }"
+    ".rbi-tier.info   { background: rgba(255,182,18,.18); color:#f5f5f5; "
+    "  border-color: rgba(255,255,255,.35); }"
     ".rbi-grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 6px; "
     "  position: relative; z-index:1; }"
     ".rbi-chip { background: rgba(255,255,255,.04); "
-    "  border:1px solid rgba(92,64,180,.25); "
+    "  border:1px solid rgba(255,182,18,.25); "
     "  border-radius:10px; padding:6px 9px; min-width:0; "
     "  transition: border-color .18s; }"
     ".rbi-chip-label { font-size:.60rem; color:#8a87b0; "
@@ -1043,11 +1043,11 @@ _RBI_MOBILE_CSS = (
     ".rbi-chip-val.na { color:#5a5778; }"
     ".rbi-foot { font-size:.71rem; color:#9590b8; display:flex; "
     "  flex-wrap:wrap; gap:6px 10px; position: relative; z-index:1; "
-    "  border-top: 1px solid rgba(92,64,180,.18); padding-top: 6px; margin-top: 2px; }"
+    "  border-top: 1px solid rgba(255,182,18,.18); padding-top: 6px; margin-top: 2px; }"
     ".rbi-foot b { color:#d4d0f0; }"
     ".rbi-empty { padding:16px 18px; color:#9590b8; "
     "  background: rgba(13,9,40,.80); "
-    "  border:1px dashed rgba(92,64,180,.35); border-radius:16px; text-align:center; }"
+    "  border:1px dashed rgba(255,182,18,.35); border-radius:16px; text-align:center; }"
     "</style>"
 )
 

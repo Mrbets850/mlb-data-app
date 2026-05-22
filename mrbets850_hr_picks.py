@@ -649,22 +649,22 @@ def compute_hr_hits(picks: list[dict[str, Any]],
 # ---------------------------------------------------------------------------
 def _inject_css() -> None:
     # MLB Edge palette (matches app.py brand bar):
-    #   deep-purple gradient #14062e → #2a0f5c → #4c1d95
-    #   gold accent #facc15, light gold #fde68a, electric violet #7c3aed
+    #   deep-black/gold gradient #101820 → #101820 → #111111
+    #   gold accent #facc15, light gold #fde68a, electric gold #ffb612
     #
-    # The header keeps the dark purple/gold look in BOTH themes — gold-on-
-    # purple is the brand mark and reads cleanly against either Streamlit
+    # The header keeps the dark black/gold/gold look in BOTH themes — gold-on-
+    # black/gold is the brand mark and reads cleanly against either Streamlit
     # background. The cards, stat grid, notes, empty-state, and editor
     # surfaces use CSS custom properties scoped to `.mrbets850-hr-wrap`
     # that flip via `@media (prefers-color-scheme: dark)`, so body text
     # never lands as low-contrast gold-on-white in light mode or
-    # dark-purple-on-dark in dark mode.
+    # dark-black/gold-on-dark in dark mode.
     st.markdown(
         """
 <style>
 .mrbets850-hr-wrap {
     /* Always dark — this app runs in dark mode */
-    --mrb-card-bg: linear-gradient(160deg, #0e0628 0%, #1a0b3a 50%, #221152 100%);
+    --mrb-card-bg: linear-gradient(160deg, #0e0628 0%, #101820 50%, #221152 100%);
     --mrb-card-border: rgba(250,204,21,0.45);
     --mrb-card-shadow: 0 6px 22px rgba(0,0,0,0.50);
     --mrb-text-strong: #f4f0ff;
@@ -681,8 +681,8 @@ def _inject_css() -> None:
     --mrb-empty-text: #fde68a;
     --mrb-accent: #facc15;
     --mrb-accent-soft: #fde68a;
-    --mrb-violet: #7c3aed;
-    --mrb-editor-bg: linear-gradient(180deg, #14062e 0%, #1f0c44 100%);
+    --mrb-gold: #ffb612;
+    --mrb-editor-bg: linear-gradient(180deg, #101820 0%, #101820 100%);
     --mrb-editor-border: rgba(250,204,21,0.35);
     --mrb-editor-text: #fafafa;
     --mrb-editor-muted: #fde68a;
@@ -696,15 +696,15 @@ def _inject_css() -> None:
     100% { transform: translateX(250%); opacity:0; }
 }
 @keyframes mrbHeaderGlow {
-    0%, 100% { box-shadow: 0 12px 32px rgba(20,5,50,.50), 0 0 0 1px rgba(250,204,21,.25); }
-    50%       { box-shadow: 0 16px 42px rgba(20,5,50,.65), 0 0 0 1px rgba(250,204,21,.50); }
+    0%, 100% { box-shadow: 0 12px 32px rgba(0,0,0,.50), 0 0 0 1px rgba(250,204,21,.25); }
+    50%       { box-shadow: 0 16px 42px rgba(0,0,0,.65), 0 0 0 1px rgba(250,204,21,.50); }
 }
 
-/* ---- Brand header (always dark purple + gold) ---- */
+/* ---- Brand header (always dark black/gold + gold) ---- */
 .mrbets850-hr-wrap .mrbets850-hr-header {
     display: flex; align-items: center; gap: 14px;
     padding: 16px 20px; border-radius: 20px;
-    background: linear-gradient(115deg, #080220 0%, #1e0b4a 40%, #2e1065 70%, #4c1d95 100%);
+    background: linear-gradient(115deg, #000000 0%, #000000 40%, #111111 70%, #111111 100%);
     border: 1px solid rgba(250,204,21,0.52);
     animation: mrbHeaderGlow 4s ease-in-out infinite;
     color: #fff; position: relative; overflow: hidden;
@@ -757,7 +757,7 @@ def _inject_css() -> None:
     text-shadow: 0 0 20px rgba(250,204,21,.35), 0 2px 6px rgba(0,0,0,.60);
 }
 .mrbets850-hr-wrap .mrbets850-hr-sub {
-    color: #c4b5fd; font-size: 0.88rem; font-weight: 600; margin-top: 3px;
+    color: #f5f5f5; font-size: 0.88rem; font-weight: 600; margin-top: 3px;
 }
 .mrbets850-hr-wrap .mrbets850-hr-meta {
     margin-left: auto; text-align: right;
@@ -809,7 +809,7 @@ def _inject_css() -> None:
     flex: 0 0 auto;
     min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px;
     background: linear-gradient(135deg, #ffe042 0%, #facc15 50%, #f59e0b 100%);
-    color: #14062e; font-weight: 900; font-size: 0.78rem;
+    color: #101820; font-weight: 900; font-size: 0.78rem;
     display: inline-flex; align-items: center; justify-content: center;
     border: 1px solid rgba(20,6,46,0.25);
     box-shadow: 0 2px 6px rgba(0,0,0,.30), 0 0 0 1px rgba(255,255,255,.15) inset;
@@ -819,7 +819,7 @@ def _inject_css() -> None:
 .mrbets850-hr-wrap .mrbets850-card .head .headshot {
     width: 36px; height: 36px; flex: 0 0 36px;
     border-radius: 50%;
-    object-fit: cover; background: #1a0b3a;
+    object-fit: cover; background: #101820;
     border: 2px solid var(--mrb-accent);
     box-shadow: 0 0 0 1px rgba(250,204,21,.12);
 }
@@ -844,7 +844,7 @@ def _inject_css() -> None:
     display: inline-block;
     padding: 1px 7px; border-radius: 999px;
     font-size: 0.62rem; font-weight: 800;
-    background: var(--mrb-accent); color: #14062e;
+    background: var(--mrb-accent); color: #101820;
     border: 1px solid rgba(20,6,46,0.20);
     line-height: 1.4;
 }
@@ -947,23 +947,23 @@ def _inject_css() -> None:
     margin-top: 16px; padding: 14px 16px;
     border-radius: 16px;
     background: linear-gradient(180deg, #faf8ff 0%, #f3eeff 100%);
-    border: 1.5px solid rgba(124,58,237,0.25);
-    color: #1a0b3a;
+    border: 1.5px solid rgba(255,182,18,0.25);
+    color: #101820;
 }
 .mrbets850-editor-title {
-    color: #7c3aed; font-weight: 900; font-size: 1.05rem;
+    color: #ffb612; font-weight: 900; font-size: 1.05rem;
     letter-spacing: 0.01em; margin: 0 0 4px 0;
 }
 .mrbets850-editor-sub {
-    color: #4c1d95; font-weight: 600; font-size: 0.85rem;
+    color: #111111; font-weight: 600; font-size: 0.85rem;
 }
 .mrbets850-row-team {
-    color: #4c1d95; font-size: 0.85rem; font-weight: 700;
+    color: #111111; font-size: 0.85rem; font-weight: 700;
     letter-spacing: 0.04em;
 }
 @media (prefers-color-scheme: dark) {
     .mrbets850-editor-panel {
-        background: linear-gradient(180deg, #14062e 0%, #1f0c44 100%);
+        background: linear-gradient(180deg, #101820 0%, #101820 100%);
         border-color: rgba(250,204,21,0.35);
         color: #fafafa;
     }

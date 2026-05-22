@@ -1418,24 +1418,24 @@ div[data-testid="element-container"]:has(.mhm-cta-click) +
 }
 
 /* ====================================================================
-   VIBRANT MRBETS850 BRAND THEME — white / purple / gold
+   HIGH-CONTRAST MRBETS850 BRAND THEME — white / yellow / black
    --------------------------------------------------------------------
    Kept as the final global override so existing layout + data logic stays
    untouched while every board/card gets a brighter, readable surface.
    ==================================================================== */
 :root {
-    --edge-bg: #fff8e7;
+    --edge-bg: #fffdf4;
     --edge-surface: #ffffff;
-    --edge-surface-2: #fffdf6;
-    --edge-purple: #3b1f6b;
-    --edge-purple-2: #5b21b6;
-    --edge-purple-soft: #f3e8ff;
+    --edge-surface-2: #fff7cc;
+    --edge-purple: #111111;
+    --edge-purple-2: #000000;
+    --edge-purple-soft: #fff3b0;
     --edge-gold: #facc15;
     --edge-gold-2: #f59e0b;
-    --edge-ink: #1f123d;
-    --edge-muted: #5b4b79;
-    --edge-border: rgba(91,33,182,.22);
-    --edge-shadow: 0 10px 28px rgba(59,31,107,.14);
+    --edge-ink: #111111;
+    --edge-muted: #3f3f46;
+    --edge-border: rgba(0,0,0,.22);
+    --edge-shadow: 0 10px 28px rgba(0,0,0,.12);
 }
 html, body,
 [data-testid="stApp"],
@@ -1456,7 +1456,7 @@ section.main,
     color: var(--edge-ink) !important;
 }
 body::before {
-    background: linear-gradient(135deg, #fff8e7 0%, #ffffff 48%, #f3e8ff 100%) !important;
+    background: linear-gradient(135deg, #fffdf4 0%, #ffffff 50%, #fff3b0 100%) !important;
 }
 body::after {
     background-image:
@@ -1973,6 +1973,275 @@ label {
 }
 </style>
 """, unsafe_allow_html=True)
+
+BLACK_YELLOW_READABILITY_CSS = """
+<style id="mrb-yellow-black-readability">
+:root {
+  --edge-bg: #fffdf4;
+  --edge-surface: #ffffff;
+  --edge-surface-2: #fff7cc;
+  --edge-accent: #facc15;
+  --edge-accent-2: #f59e0b;
+  --edge-black: #111111;
+  --edge-muted: #3f3f46;
+  --edge-border: rgba(0,0,0,.22);
+}
+html, body, .stApp,
+[data-testid="stApp"],
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+section.main,
+.main {
+  background: linear-gradient(135deg, #fffdf4 0%, #ffffff 55%, #fff3b0 100%) !important;
+  color: var(--edge-black) !important;
+}
+[data-testid="stMarkdownContainer"],
+[data-testid="stMarkdownContainer"] *,
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] *,
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] *,
+label,
+label * {
+  color: var(--edge-black) !important;
+  font-weight: 800 !important;
+  text-shadow: none !important;
+}
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4,
+[data-testid="stMarkdownContainer"] h5,
+[data-testid="stMarkdownContainer"] h6,
+.section-title,
+.section-title-lg {
+  color: #000000 !important;
+  font-weight: 900 !important;
+  text-shadow: none !important;
+}
+
+/* Every visible card/board family gets a light yellow/white surface. */
+.top-tab-row,
+.section-card,
+.section-card.dark,
+.lineup-banner,
+.mhm-wrap,
+.scout-row,
+.insights-panel,
+.cmd-bar,
+.live-ticker,
+.carousel-wrap,
+.game-pill,
+.gh-scorebox,
+.mc-card,
+.rbi-card,
+.rbi-page-header,
+.spd-card,
+.spc-card,
+.pbd-card,
+.pbd-split-card,
+.aip-card,
+.aip-leg,
+.rr-card,
+.pws-card,
+.pdc-card,
+.pdc-next,
+.pdc-hrdue,
+.pdc-log-table,
+.hrs-table,
+.tg-table,
+.sp-table,
+.sp-wrap,
+.hrs-wrap,
+.tg-wrap,
+[data-testid="stMetric"],
+[data-testid="stExpander"],
+[data-testid="stDataFrame"],
+[data-testid="stTable"] {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  background-image: none !important;
+  color: var(--edge-black) !important;
+  border-color: var(--edge-border) !important;
+  box-shadow: 0 8px 22px rgba(0,0,0,.12) !important;
+}
+.mc-chip,
+.rbi-chip,
+.spd-chip,
+.scout-metric,
+.insight-stat,
+.pbd-kpi,
+.pbd-split-grid > div,
+.aip-stats,
+.tg-park,
+.pdc-chip,
+.pdc-recap-tile,
+.sp-src {
+  background: var(--edge-surface-2) !important;
+  background-color: var(--edge-surface-2) !important;
+  color: var(--edge-black) !important;
+  border-color: rgba(0,0,0,.20) !important;
+}
+.top-tab-pill,
+.top-tab-pill:link,
+.top-tab-pill:visited,
+.top-tab-pill *,
+.top-tab-pill a,
+.top-tab-pill a:link,
+.top-tab-pill a:visited {
+  background: #fff7cc !important;
+  background-color: #fff7cc !important;
+  color: #111111 !important;
+  border: 2px solid #f59e0b !important;
+  font-weight: 900 !important;
+  text-decoration: none !important;
+  text-shadow: none !important;
+}
+.top-tab-pill.active,
+.top-tab-pill.active *,
+.top-tab-pill.active:link,
+.top-tab-pill.active:visited,
+[data-testid="stButton"] button,
+[data-testid="stDownloadButton"] button {
+  background: #111111 !important;
+  background-color: #111111 !important;
+  background-image: none !important;
+  color: #facc15 !important;
+  border-color: #facc15 !important;
+  font-weight: 900 !important;
+}
+.top-tab-pill.active *,
+[data-testid="stButton"] button *,
+[data-testid="stDownloadButton"] button * {
+  color: #facc15 !important;
+}
+
+/* Text safety net for all generated cards, including late CSS. */
+.mc-card :is(div,span,p,b,strong,small,a),
+.rbi-card :is(div,span,p,b,strong,small,a),
+.rbi-page-header :is(div,span,p,b,strong,small,a),
+.spd-card :is(div,span,p,b,strong,small,a),
+.spc-card :is(div,span,p,b,strong,small,a),
+.pbd-card :is(div,span,p,b,strong,small,a),
+.aip-card :is(div,span,p,b,strong,small,li,a),
+.rr-card :is(div,span,p,b,strong,small,li,a),
+.pws-card :is(div,span,p,b,strong,small,a),
+.pdc-card :is(div,span,p,b,strong,small,a),
+.section-card :is(div,span,p,b,strong,small,a),
+.scout-row :is(div,span,p,b,strong,small,a),
+.insights-panel :is(div,span,p,b,strong,small,a),
+.lineup-banner :is(div,span,p,b,strong,small,a),
+.game-header :is(div,span,p,b,strong,small,a),
+[data-testid="stMetric"] :is(div,span,p,b,strong,small) {
+  color: #111111 !important;
+  font-weight: 900 !important;
+  text-shadow: none !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+.mc-chip-label, .rbi-chip-label, .spd-chip-label, .scout-metric-label,
+.pbd-kpi-label, .pbd-split-grid span, .pdc-chip .lab,
+.insight-stat-label, .mc-score small, .rbi-score small {
+  color: #3f3f46 !important;
+  font-weight: 900 !important;
+}
+.mc-chip-val, .rbi-chip-val, .spd-chip-val, .scout-metric-val,
+.pbd-kpi-value, .pbd-split-grid b, .pdc-chip .val,
+.insight-stat-val, [data-testid="stMetricValue"],
+[data-testid="stMetricValue"] * {
+  color: #000000 !important;
+  font-weight: 900 !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #000000 !important;
+}
+.scout-hand-badge, .pdc-hand-pill {
+  background: #facc15 !important;
+  color: #111111 !important;
+  border-color: #111111 !important;
+}
+.scout-vs-hand, .pdc-hand-pill.pitch,
+.rbi-rank, .mc-rank, .aip-leg-num, .pbd-lineup-slot {
+  background: #111111 !important;
+  color: #facc15 !important;
+  border-color: #facc15 !important;
+}
+.mc-tier, .rbi-tier, .spd-tier, .pbd-badge, .hrs-pill, .tg-pill {
+  background: #fff3b0 !important;
+  color: #111111 !important;
+  border-color: #f59e0b !important;
+  font-weight: 900 !important;
+  opacity: 1 !important;
+}
+.pbd-split-empty,
+.pdc-hrdue-item.is-missing,
+.pdc-hrdue-item.is-miss,
+.sp-na,
+.mc-chip-val.na,
+.rbi-chip-val.na,
+.spd-chip-na,
+.pws-card .pending,
+[style*="opacity:0."],
+[style*="opacity: 0."],
+[style*="opacity:."] {
+  opacity: 1 !important;
+}
+.pdc-hrdue-score .num,
+.pdc-grade,
+.mc-score,
+.rbi-score,
+.spd-score,
+.aip-score,
+.rr-score {
+  -webkit-text-fill-color: currentColor !important;
+  color: #000000 !important;
+  opacity: 1 !important;
+  text-shadow: none !important;
+}
+.stTabs [data-baseweb="tab"], .stTabs [data-baseweb="tab"] * {
+  color: #111111 !important;
+  font-weight: 900 !important;
+}
+.stTabs [data-baseweb="tab-highlight"] {
+  background: #facc15 !important;
+  height: 4px !important;
+}
+
+/* Kill visible purple/dark royal inline backgrounds from older renderers. */
+[style*="background:#3b1f6b"], [style*="background: #3b1f6b"],
+[style*="background:#1e0b4a"], [style*="background: #1e0b4a"],
+[style*="background:#14062e"], [style*="background: #14062e"],
+[style*="background:#15102b"], [style*="background: #15102b"],
+[style*="background:#1c1340"], [style*="background: #1c1340"],
+[style*="background:#0b1220"], [style*="background: #0b1220"],
+[style*="background:#0a1628"], [style*="background: #0a1628"],
+[style*="background:#0c1a2e"], [style*="background: #0c1a2e"],
+[style*="background:#111827"], [style*="background: #111827"] {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  background-image: none !important;
+}
+[style*="color:#7c3aed"], [style*="color: #7c3aed"],
+[style*="color:#5b21b6"], [style*="color: #5b21b6"],
+[style*="color:#c4b5fd"], [style*="color: #c4b5fd"],
+[style*="color:#ddd6fe"], [style*="color: #ddd6fe"],
+[style*="color:#7dd3fc"], [style*="color: #7dd3fc"],
+[style*="color:#00c896"], [style*="color: #00c896"],
+[style*="color:#94a3b8"], [style*="color: #94a3b8"],
+[style*="color:#64748b"], [style*="color: #64748b"],
+[style*="color:#475569"], [style*="color: #475569"],
+[style*="color:#4e6a8a"], [style*="color: #4e6a8a"],
+[style*="color:#3a5a7a"], [style*="color: #3a5a7a"],
+[style*="color:#e2e8f0"], [style*="color: #e2e8f0"],
+[style*="color:#f8fafc"], [style*="color: #f8fafc"],
+[style*="color:#ffffff"], [style*="color: #ffffff"] {
+  color: #111111 !important;
+  font-weight: 900 !important;
+  text-shadow: none !important;
+}
+</style>
+"""
+
+st.markdown(BLACK_YELLOW_READABILITY_CSS, unsafe_allow_html=True)
 
 # ===========================================================================
 # Helpers
@@ -6510,7 +6779,7 @@ div[role="dialog"] button[aria-label="Close"] {
   .pdc-hrdue-d { font-size: .78rem; }
 }
 
-/* White/purple/gold Scout Report makeover. This modal CSS is injected after
+/* White/yellow/black Scout Report makeover. This modal CSS is injected after
    the global app theme, so repeat the brand overrides here for readability. */
 div[data-testid="stDialog"] > div > div,
 div[role="dialog"] {
@@ -12148,6 +12417,7 @@ st.markdown(
     "</style>",
     unsafe_allow_html=True,
 )
+st.markdown(BLACK_YELLOW_READABILITY_CSS, unsafe_allow_html=True)
 
 # ---- Deep-link handler: ?view=games&g=<idx> AND ?top_view=<idx> ----
 # We drive selection through a plain session_state string (NOT a widget key,

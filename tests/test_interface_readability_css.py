@@ -46,6 +46,9 @@ def test_brand_theme_covers_all_major_card_families():
         ".spd-card",     # Slate Pitcher dashboard
         ".spc-card",     # Game matchup pitcher mini-cards
         ".pbd-card",     # Pitcher Breakdown
+        ".kgen-card",    # AI K Generator
+        ".bw-wrap",      # Ballpark Weather
+        ".ds-tbl",       # Data status table
         ".aip-card",     # AI parlay cards
         ".rr-card",      # Round Robin cards
         ".pws-card",     # Pitcher Weak Spots
@@ -135,6 +138,7 @@ def test_metric_chips_keep_good_ok_bad_heatmap_colors():
         ".rbi-chip.bad",
         ".scout-metric.metric-good",
         ".pdc-hm-good",
+        ".pbd-arsenal-metric-good",
         ".pbd-glog-chip.pbd-metric-good",
     ):
         assert selector in text
@@ -169,3 +173,14 @@ def test_steelers_theme_covers_mobile_game_and_weather_surfaces():
         assert selector in text
     assert "background:#151515" in text
     assert "weather-impact-value" in text
+
+
+def test_steelers_theme_covers_apps_generator_special_cards():
+    text = _app_text()
+    for selector in (
+        ".kgen-card :is(div,span,p,b,strong,small,li,a)",
+        ".kgen-board :is(div,span,p,b,strong,small,td,th,a)",
+        ".bw-wrap :is(div,span,p,b,strong,small,a)",
+        ".ds-tbl :is(td,th,div,span,p,b,strong,small,a)",
+    ):
+        assert selector in text

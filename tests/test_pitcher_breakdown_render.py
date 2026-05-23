@@ -188,6 +188,23 @@ def test_arsenal_empty_renders_friendly_fallback():
     assert len(html) > 50
 
 
+def test_arsenal_metrics_render_heatmap_chips():
+    ns = _load_helpers()
+    import pandas as pd
+    df = pd.DataFrame([
+        {"pitch_type": "FF", "pitch_name": "4-Seam", "pitch_usage": 45.0,
+         "woba": 0.280, "whiff_percent": 34.0, "run_value_per_100": -0.8,
+         "velocity": 96.4},
+        {"pitch_type": "SL", "pitch_name": "Slider", "pitch_usage": 25.0,
+         "woba": 0.410, "whiff_percent": 14.0, "run_value_per_100": 2.1,
+         "velocity": 86.2},
+    ])
+    html = ns["render_pitcher_breakdown_arsenal"](df)
+    assert "pbd-arsenal-metric" in html
+    assert "pbd-arsenal-metric-good" in html
+    assert "pbd-arsenal-metric-bad" in html
+
+
 def test_game_log_empty_renders_friendly_fallback():
     ns = _load_helpers()
     import pandas as pd
@@ -247,8 +264,10 @@ def test_styles_block_exposes_required_class_names():
     css = ns["render_pitcher_breakdown_styles"]()
     for cls in (
         "pbd-card", "pbd-pill", "pbd-title", "pbd-kpi-grid",
-        "pbd-arsenal", "pbd-glog", "pbd-glog-chip", "pbd-lineup", "pbd-splits",
+        "pbd-arsenal", "pbd-arsenal-metric", "pbd-glog", "pbd-glog-chip", "pbd-lineup", "pbd-splits",
     ):
+        assert cls in css
+    for cls in ("pbd-arsenal-metric-good", "pbd-arsenal-metric-warn", "pbd-arsenal-metric-bad"):
         assert cls in css
     for cls in ("pbd-metric-good", "pbd-metric-warn", "pbd-metric-bad"):
         assert cls in css

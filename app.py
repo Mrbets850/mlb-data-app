@@ -1618,6 +1618,11 @@ label {
 .spc-card,
 .pbd-card,
 .pbd-split-card,
+.kgen-card,
+.kgen-board,
+.bw-wrap,
+.bw-row,
+.ds-tbl,
 .aip-card,
 .aip-leg,
 .rr-card,
@@ -2126,6 +2131,11 @@ label * {
 .spd-card :is(div,span,p,b,strong,small,a),
 .spc-card :is(div,span,p,b,strong,small,a),
 .pbd-card :is(div,span,p,b,strong,small,a),
+.kgen-card :is(div,span,p,b,strong,small,li,a),
+.kgen-board :is(div,span,p,b,strong,small,td,th,a),
+.bw-wrap :is(div,span,p,b,strong,small,a),
+.bw-row :is(div,span,p,b,strong,small,a),
+.ds-tbl :is(td,th,div,span,p,b,strong,small,a),
 .aip-card :is(div,span,p,b,strong,small,li,a),
 .rr-card :is(div,span,p,b,strong,small,li,a),
 .pws-card :is(div,span,p,b,strong,small,a),
@@ -2359,6 +2369,7 @@ label * {
 .scout-metric.metric-good,
 .pdc-hm-good,
 .pdc-chip.pdc-hm-good,
+.pbd-arsenal-metric-good,
 .pbd-glog-chip.pbd-metric-good {
   background: #15803d !important;
   background-color: #15803d !important;
@@ -2372,6 +2383,7 @@ label * {
 .scout-metric.metric-mid,
 .pdc-hm-okay,
 .pdc-chip.pdc-hm-okay,
+.pbd-arsenal-metric-warn,
 .pbd-glog-chip.pbd-metric-warn {
   background: #ffb612 !important;
   background-color: #ffb612 !important;
@@ -2385,6 +2397,7 @@ label * {
 .scout-metric.metric-bad,
 .pdc-hm-bad,
 .pdc-chip.pdc-hm-bad,
+.pbd-arsenal-metric-bad,
 .pbd-glog-chip.pbd-metric-bad {
   background: #b91c1c !important;
   background-color: #b91c1c !important;
@@ -2404,6 +2417,8 @@ label * {
 .pdc-hm-bad *,
 .pdc-chip.pdc-hm-good *,
 .pdc-chip.pdc-hm-bad *,
+.pbd-arsenal-metric-good *,
+.pbd-arsenal-metric-bad *,
 .pbd-glog-chip.pbd-metric-good *,
 .pbd-glog-chip.pbd-metric-bad * {
   color: #ffffff !important;
@@ -2415,6 +2430,7 @@ label * {
 .scout-metric.metric-mid *,
 .pdc-hm-okay *,
 .pdc-chip.pdc-hm-okay *,
+.pbd-arsenal-metric-warn *,
 .pbd-glog-chip.pbd-metric-warn * {
   color: #000000 !important;
   -webkit-text-fill-color: #000000 !important;
@@ -11530,6 +11546,30 @@ def render_pitcher_breakdown_arsenal(mix_df: pd.DataFrame) -> str:
         max_use = 0.0
     if not max_use or max_use <= 0:
         max_use = 100.0
+
+    def _arsenal_tone(value, *, good_high: bool, good, warn) -> str:
+        try:
+            x = float(value)
+        except Exception:
+            return "neutral"
+        if good_high:
+            if x >= good:
+                return "good"
+            if x >= warn:
+                return "warn"
+            return "bad"
+        if x <= good:
+            return "good"
+        if x <= warn:
+            return "warn"
+        return "bad"
+
+    def _arsenal_metric(label: str, value: str, tone: str) -> str:
+        return (
+            f'<div class="pbd-arsenal-metric pbd-arsenal-metric-{tone}">'
+            f'<span>{label}</span><b>{value}</b></div>'
+        )
+
     for _, r in mix_df.iterrows():
         pt = str(r.get("pitch_type", "")).strip().upper()
         name = PITCH_NAME_MAP.get(pt, str(r.get("pitch_name", pt)) or pt or "—")
@@ -11549,17 +11589,22 @@ def render_pitcher_breakdown_arsenal(mix_df: pd.DataFrame) -> str:
 
         try:
             w = float(woba)
-            if w <= 0.300: woba_col = "#34d399"
-            elif w <= 0.340: woba_col = "#a3e635"
-            elif w <= 0.380: woba_col = "#f59e0b"
-            else: woba_col = "#f87171"
             woba_str = f"{w:.3f}"
         except Exception:
-            woba_col, woba_str = "#94a3b8", "—"
-        try: whiff_str = f"{float(whiff):.0f}%"
-        except Exception: whiff_str = "—"
-        try: rv_str = f"{float(rv100):+.1f}"
-        except Exception: rv_str = "—"
+            woba_str = "—"
+        woba_tone = _arsenal_tone(woba, good_high=False, good=0.300, warn=0.360)
+        try:
+            whiff_f = float(whiff)
+            whiff_str = f"{whiff_f:.0f}%"
+        except Exception:
+            whiff_str = "—"
+        whiff_tone = _arsenal_tone(whiff, good_high=True, good=30.0, warn=20.0)
+        try:
+            rv = float(rv100)
+            rv_str = f"{rv:+.1f}"
+        except Exception:
+            rv_str = "—"
+        rv_tone = _arsenal_tone(rv100, good_high=False, good=0.0, warn=1.0)
         try: velo_str = f"{float(velo):.1f} mph"
         except Exception: velo_str = ""
 
@@ -11578,9 +11623,9 @@ def render_pitcher_breakdown_arsenal(mix_df: pd.DataFrame) -> str:
             f'<div class="pbd-arsenal-bar" style="width:{bar_width:.1f}%;"></div>'
             '</div>'
             '<div class="pbd-arsenal-stats">'
-            f'<div><span>wOBA</span><b style="color:{woba_col};">{woba_str}</b></div>'
-            f'<div><span>Whiff</span><b>{whiff_str}</b></div>'
-            f'<div><span>RV/100</span><b>{rv_str}</b></div>'
+            f'{_arsenal_metric("wOBA", woba_str, woba_tone)}'
+            f'{_arsenal_metric("Whiff", whiff_str, whiff_tone)}'
+            f'{_arsenal_metric("RV/100", rv_str, rv_tone)}'
             '</div>'
             '</div>'
         )
@@ -11886,6 +11931,14 @@ def render_pitcher_breakdown_styles() -> str:
         ".pbd-arsenal-stats span { display:block; font-size:.58rem; font-weight:800; "
         "  letter-spacing:.06em; color:#94a3b8; text-transform:uppercase; }"
         ".pbd-arsenal-stats b { font-size:.85rem; color:#f8fafc; font-variant-numeric: tabular-nums; }"
+        ".pbd-arsenal-metric { border:1px solid transparent; opacity:1 !important; }"
+        ".pbd-arsenal-metric-good { background:#15803d !important; border-color:#22c55e !important; }"
+        ".pbd-arsenal-metric-warn { background:#ffb612 !important; border-color:#facc15 !important; }"
+        ".pbd-arsenal-metric-bad { background:#b91c1c !important; border-color:#ef4444 !important; }"
+        ".pbd-arsenal-metric-neutral { background:#1f2933 !important; border-color:rgba(255,182,18,.34) !important; }"
+        ".pbd-arsenal-metric-good *, .pbd-arsenal-metric-bad * { color:#ffffff !important; -webkit-text-fill-color:#ffffff !important; }"
+        ".pbd-arsenal-metric-warn * { color:#000000 !important; -webkit-text-fill-color:#000000 !important; }"
+        ".pbd-arsenal-metric-neutral * { color:#f8fafc !important; -webkit-text-fill-color:#f8fafc !important; }"
         # ---- Game log ----
         ".pbd-glog { display:flex; flex-direction:column; gap:8px; }"
         ".pbd-glog-row { display:flex; align-items:center; gap:10px; "
